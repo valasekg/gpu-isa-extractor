@@ -25,6 +25,9 @@ blobstore.js  loaded cache files and their objects - never their bytes
 tree.js       the Shader Objects view (TreeDataProvider)
 browser.js    every command body; extension.js is only a registry
 review.js     which shaders you have already been through, keyed on sha1
+scoreboard.js follows a scoreboard between the instructions that arm it and the wait
+              that drains it (no editor API, so it is directly testable)
+highlight.js  wires that into DocumentHighlight and Definition providers
 ```
 
 ## Toolchain constraints
@@ -118,6 +121,15 @@ described the interface as verified; `git log --all -S` shows it never existed o
   Maxwell mask wording.
 - **The reuse tripwire's two directions mean different things.** See the comment at the top
   of `src/ctrl.js`. Treating them alike makes it fire on every graphics shader.
+- **A strict backward scan cannot resolve a wait at a branch target.** The instructions above
+  it belong to the path that jumps *over* it, so the scan stops at their drain and reports
+  that nothing armed the scoreboard. A compiler never emits a wait for nothing, so that empty
+  result is the tell: `scoreboard.js` continues from the drain and labels what it finds as
+  another path's. Measured on real output this is the difference between 82% and 100% of waits
+  resolving - if you ever "simplify" the fallback away, that ratio is the regression to watch,
+  and `test_scoreboard.js` asserts it.
+- **Scoreboards are counters.** One wait routinely drains several arms. Any code that assumes
+  a wait pairs with exactly one arm is wrong on ordinary compiler output.
 
 ### The browser
 
@@ -206,10 +218,10 @@ Deliberately out of scope for the first version, roughly in value order:
   it does not go looking. `dump_objects.js:51` already walks a whole cache root, and
   `doctor.js:40` has a second copy of the same walk - one shared module would retire both and
   back the command.
-- Jump from a wait to the instruction that armed the scoreboard - the flagship use of the
-  decoded columns, and the reason `era` is on the parse record. Needs a Definition or
-  Reference provider, plus honesty about it being a linear scan that is exact only on
-  straight-line code.
+- Per-shader metadata beyond entry name and size: register count, local/shared memory, shader
+  stage. Some may be in the NVuc sections nothing has looked at yet (only types 0x01 and 0x21
+  are read, and fields [3..7] of every section-table entry are unexamined); the rest is
+  derivable from the disassembly.
 - `BSSY`/`BSYNC` pairing and folding; a stats panel; a stall-count heatmap as a semantic
   token modifier (read the opcode-colour trap first).
 - Range and delta semantic token providers, which would retire `semanticMaxLines`.

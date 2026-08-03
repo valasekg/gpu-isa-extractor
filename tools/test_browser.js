@@ -132,6 +132,7 @@ const tree = require(path.join(__dirname, '..', 'src', 'tree.js'));
 const browser = require(path.join(__dirname, '..', 'src', 'browser.js'));
 const blobstore = require(path.join(__dirname, '..', 'src', 'blobstore.js'));
 const review = require(path.join(__dirname, '..', 'src', 'review.js'));
+const output = require(path.join(__dirname, '..', 'src', 'output.js'));
 
 /* ------------------------------------------------------------- fake records --- */
 
@@ -433,8 +434,30 @@ function loadRecords(records) {
       empty.map(e => e.kind).join(','));
 
     provider.setFilter('');
+    settings.nvIsaExtractor['tree.pageSize'] = 100;
+    settings.nvIsaExtractor['tree.autoGroupThreshold'] = 1000;
+    provider.refresh();
+
+    // Marking a shader reviewed must not throw away how far a level was paged. Doing so would
+    // snap the list back to page one every time the user ticked something off - in the middle
+    // of the very pass this view exists to support.
+    const page1 = provider.getChildren(provider.getChildren()[0]);
+    provider.loadMore(page1[page1.length - 1]);
+    const page2 = provider.getChildren(provider.getChildren()[0]);
+    check(page2.length > page1.length, 'a level can be expanded past its first page',
+      `${page1.length} -> ${page2.length}`);
+
+    await browser.toggleReviewed(page2[3]);
+    const afterMark = provider.getChildren(provider.getChildren()[0]);
+    check(afterMark.length === page2.length,
+      'and marking a shader reviewed keeps that expansion',
+      `${page2.length} -> ${afterMark.length}`);
+    await review.clear();
+
+    provider.setFilter('');
     settings.nvIsaExtractor['tree.pageSize'] = 500;
     settings.nvIsaExtractor['tree.autoGroupThreshold'] = 200;
+    provider.refresh();
   }
 
   section('6. Sort order');
@@ -495,6 +518,93 @@ function loadRecords(records) {
     loadRecords([]);
     await browser.syncContext();
     check(contextKeys['nvIsaExtractor.hasBlob'] === false, 'and clears when nothing is loaded');
+  }
+
+  section('9. Commands invoked without arguments');
+  {
+    // A keybinding and a Command Palette entry both call their command with NO arguments.
+    // A handler that only reads its parameters silently does nothing when triggered that way,
+    // which is precisely how the review shortcut is meant to be used.
+    await review.clear();
+    const objects = [fakeObject(1, { name: 'a' }), fakeObject(2, { name: 'b' })];
+    loadRecords([fakeRecord('kb.bin', objects)]);
+    const rows = provider.getChildren(provider.getChildren()[0]);
+
+    view.selection = [rows[1]];
+    await browser.toggleReviewed(undefined, undefined);
+    check(review.isReviewed(rows[1].object.sha1),
+      'the review shortcut falls back to the tree selection');
+
+    view.selection = [];
+    await browser.toggleReviewed(undefined, undefined);
+    check(review.isReviewed(rows[1].object.sha1),
+      'and with nothing selected and no listing open it changes nothing, quietly');
+
+    // From a listing, the shader is identified by the sha1 in its filename.
+    vscodeStub.window.activeTextEditor = {
+      document: { uri: { scheme: 'file', fsPath: path.join(storage, `x.${objects[0].sha1.slice(0, 8)}.SM86.nvsass`) } }
+    };
+    await browser.toggleReviewed(undefined, undefined);
+    check(review.isReviewed(objects[0].sha1),
+      'the shortcut works from the listing the user is reading');
+    vscodeStub.window.activeTextEditor = undefined;
+    await review.clear();
+  }
+
+  section('10. Walking');
+  {
+    const objects = [1, 2, 3, 4].map(i => fakeObject(i, { name: `s${i}`, codeBytes: 5000 - i }));
+    loadRecords([fakeRecord('walk.bin', objects)]);
+    const seen = [];
+    const originalShow = output.showListing;
+    output.showListing = async file => { seen.push(path.basename(file)); };
+    const originalDisassemble = browser.disassembleObject;
+    void originalDisassemble;
+
+    view.selection = [];
+    vscodeStub.window.activeTextEditor = undefined;
+    // Nothing selected: each direction starts at its own end, so "previous" gives the LAST
+    // shader rather than the second-to-last.
+    const visible = provider.visibleObjects();
+    const revealed = [];
+    view.reveal = async n => { revealed.push(n.id); };
+
+    await browser.walk(-1).catch(() => {});
+    check(revealed.length > 0 && revealed[revealed.length - 1] === visible[visible.length - 1].id,
+      'walking back from nowhere lands on the last shader, not the one before it',
+      `${revealed[revealed.length - 1]} vs ${visible[visible.length - 1].id}`);
+
+    revealed.length = 0;
+    await browser.walk(1).catch(() => {});
+    check(revealed.length > 0 && revealed[revealed.length - 1] === visible[0].id,
+      'and forward from nowhere lands on the first');
+
+    output.showListing = originalShow;
+    view.reveal = async () => {};
+  }
+
+  section('11. Finding a listing on disk');
+  {
+    const obj = { sha1: 'deadbeefcafe1234deadbeefcafe1234deadbeef' };
+    const names = new Set([
+      'evalGrid.deadbeef.SM86.nvsass',
+      'other.12345678.SM86.nvsass'
+    ]);
+    check(tree.findListingName(names, obj, 'SM86') === 'evalGrid.deadbeef.SM86.nvsass',
+      'a listing is found by its sha1 and architecture fields');
+    check(tree.findListingName(names, obj, 'SM75') === null,
+      'a listing built for another architecture is not this shader\'s');
+
+    // An entry name may itself contain dots, so the sha1 must be matched as a field rather
+    // than found anywhere in the string - otherwise this file would be mistaken for the
+    // listing of any shader whose hash starts `deadbeef`.
+    const decoy = new Set(['vs_main.deadbeef.opt.99999999.SM86.nvsass']);
+    check(tree.findListingName(decoy, obj, 'SM86') === null,
+      'a dotted entry name is not mistaken for another shader\'s hash');
+
+    const other = { sha1: '99999999aaaabbbbccccddddeeeeffff00001111' };
+    check(tree.findListingName(decoy, other, 'SM86') === 'vs_main.deadbeef.opt.99999999.SM86.nvsass',
+      'while the shader that listing really belongs to still finds it');
   }
 
   fs.rmSync(storage, { recursive: true, force: true });

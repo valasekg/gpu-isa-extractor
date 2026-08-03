@@ -5,6 +5,9 @@ const vscode = require('vscode');
 const { SassSemanticTokensProvider, legend } = require('./src/semantic');
 const { SassHoverProvider } = require('./src/hover');
 const { SassDocumentSymbolProvider } = require('./src/symbols');
+const {
+  ScoreboardHighlightProvider, ScoreboardDefinitionProvider
+} = require('./src/highlight');
 
 const blobstore = require('./src/blobstore');
 const browser = require('./src/browser');
@@ -75,7 +78,7 @@ function activate(context) {
     canSelectMany: true
   });
 
-  browser.init({ context, provider, view, log });
+  browser.init({ context, provider, view, log, showLog: () => channel.show(true) });
 
   context.subscriptions.push(
     channel,
@@ -86,6 +89,11 @@ function activate(context) {
     vscode.languages.registerDocumentSemanticTokensProvider(SELECTOR, semantic, legend),
     vscode.languages.registerHoverProvider(SELECTOR, new SassHoverProvider()),
     vscode.languages.registerDocumentSymbolProvider(SELECTOR, new SassDocumentSymbolProvider()),
+
+    // Put the cursor on a scoreboard in a control column and the other end of that dependency
+    // lights up; F12 peeks it, F7 walks it.
+    vscode.languages.registerDocumentHighlightProvider(SELECTOR, new ScoreboardHighlightProvider()),
+    vscode.languages.registerDefinitionProvider(SELECTOR, new ScoreboardDefinitionProvider()),
 
     // Every handler lives in src/browser.js; these registrations stay one per line and
     // single-quoted because tools/verify.py scrapes this file to prove that each declared
@@ -111,7 +119,12 @@ function activate(context) {
       // Semantic tokens are cached per document, so toggling the setting has to invalidate them.
       if (e.affectsConfiguration('nvidiaSass.semanticHighlighting') ||
           e.affectsConfiguration('nvidiaSass.semanticMaxLines')) semantic.refresh();
-      if (e.affectsConfiguration('nvIsaExtractor.arch')) pipeline.resetArchCache();
+      if (e.affectsConfiguration('nvIsaExtractor.arch')) {
+        // Listings are named after the architecture, so which ones count as already-generated
+        // changes with it.
+        pipeline.resetArchCache();
+        browser.refreshListingIndex();
+      }
       // These change what a sweep would find. Say so rather than silently re-reading every
       // loaded file on a settings keystroke.
       if (e.affectsConfiguration('nvIsaExtractor.minCodeBytes') ||

@@ -4,6 +4,7 @@ const vscode = require('vscode');
 const { parseLine } = require('./parse');
 const { explainOpcode } = require('./explain');
 const data = require('./data');
+const scoreboard = require('./scoreboard');
 
 const DOC_URL = 'https://docs.nvidia.com/cuda/cuda-binary-utilities/index.html#instruction-set-reference';
 
@@ -34,7 +35,8 @@ class SassHoverProvider {
 
     if (parsed.controlCode && at(parsed.controlCode.start, parsed.controlCode.end)) {
       const field = parsed.controlCode.fields.find(f => at(f.start, f.end));
-      return md(controlCodeMarkdown(parsed.controlCode, field),
+      const dependency = scoreboardMarkdown(document, position, parsed);
+      return md(controlCodeMarkdown(parsed.controlCode, field, dependency),
                 range(parsed.controlCode.start, parsed.controlCode.end));
     }
 
@@ -484,7 +486,93 @@ function voltaFieldNotes(field) {
   return notes;
 }
 
-function controlCodeMarkdown(controlCode, field) {
+/**
+ * Where the scoreboard under the cursor came from, or where it goes.
+ *
+ * This is the part of a control code that cannot be read off the instruction in front of you:
+ * a wait names a scoreboard, and the instructions that armed it are somewhere above. Scanning
+ * for them is exact within a straight-line run and a guess across a branch, so the wording
+ * distinguishes the two rather than presenting one count for both.
+ */
+function scoreboardMarkdown(document, position, parsed) {
+  let hit;
+  try {
+    hit = scoreboard.analyzeAt(document, position.line, position.character);
+  } catch (e) {
+    return null;
+  }
+  if (!hit || hit.sb === null) return null;
+
+  const lineRef = n => `line ${n + 1}`;
+  const parts = [];
+
+  if (hit.role === 'wait') {
+    if (!hit.active) {
+      return `Not waiting on **scoreboard ${hit.sb}**.`;
+    }
+    const a = hit.analysis;
+    if (!a.arms.length) {
+      parts.push(`Nothing above arms **scoreboard ${hit.sb}**` +
+        (a.drainLine !== null ? ` since it was drained on ${lineRef(a.drainLine)}` : '') + '.');
+    } else {
+      parts.push(`**Scoreboard ${hit.sb} stands at ${a.value}** here — ` +
+        `${a.value} outstanding arm${a.value === 1 ? '' : 's'} this instruction waits to drain:`);
+      parts.push('');
+      for (const arm of a.arms) {
+        parts.push(`- ${lineRef(arm.line)} · \`${arm.opcode || '?'}\` ` +
+          (arm.kind === 'write' ? 'arms it until its result is written back'
+            : 'arms it until its operands have been read'));
+      }
+      if (a.alternatePath) {
+        parts.push('', `Nothing between here and ${lineRef(a.pathJoin)} arms it, so this ` +
+          'instruction is reached by a branch and these are the arms outstanding before it. ' +
+          'Which path actually arrived here cannot be known from the listing alone.');
+      } else if (a.drainLine !== null) {
+        parts.push('', `Counted from ${lineRef(a.drainLine)}, the previous wait that drained it.`);
+      } else if (a.reachedStart) {
+        parts.push('', 'Counted from the start of the listing.');
+      }
+    }
+  } else {
+    const a = hit.analysis;
+    const armed = hit.role === 'write'
+      ? 'until this result is written back' : 'until these operands have been read';
+    if (a.waitLine === null) {
+      parts.push(`Arms **scoreboard ${hit.sb}** ${armed}. ` +
+        'Nothing below waits on it' + (a.truncated ? ' within the scanned range' : '') + '.');
+    } else {
+      parts.push(`Arms **scoreboard ${hit.sb}** ${armed}; ` +
+        `drained by the wait on ${lineRef(a.waitLine)}.`);
+      const others = a.siblings.filter(s => s.line !== position.line);
+      if (others.length) {
+        parts.push('', `That wait drains ${a.siblings.length} arms in total — scoreboards are ` +
+          'counters, so it blocks until every one of them has retired:');
+        for (const s of others) {
+          parts.push(`- ${lineRef(s.line)} · \`${s.opcode || '?'}\``);
+        }
+      }
+    }
+  }
+
+  const caveats = [];
+  if (hit.analysis && hit.analysis.crossedLabel !== null) {
+    caveats.push(`the scan crossed the label on ${lineRef(hit.analysis.crossedLabel)}, so ` +
+      'control may reach here by a path that skips some of these');
+  }
+  if (hit.analysis && hit.analysis.crossedBranch !== null) {
+    caveats.push(`it crossed a branch on ${lineRef(hit.analysis.crossedBranch)}`);
+  }
+  if (hit.analysis && hit.analysis.truncated) {
+    caveats.push(`it gave up after ${scoreboard.DEFAULT_LIMIT} instructions`);
+  }
+  if (caveats.length) {
+    parts.push('', `*Straight-line reading only: ${caveats.join('; ')}.*`);
+  }
+
+  return parts.join('\n');
+}
+
+function controlCodeMarkdown(controlCode, field, dependency) {
   const volta = controlCode.era === 'volta';
   const spec = volta ? data.registersDoc.controlCodeVolta : data.registersDoc.controlCode;
   const parts = [`### ${spec.title}`];
@@ -495,6 +583,7 @@ function controlCodeMarkdown(controlCode, field) {
     for (const note of volta ? voltaFieldNotes(field) : maxwellFieldNotes(field)) {
       parts.push('', note);
     }
+    if (dependency) parts.push('', '---', '', dependency);
     parts.push('', '---');
   }
 

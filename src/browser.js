@@ -21,6 +21,7 @@ let ctx = null;
 let provider = null;
 let view = null;
 let log = () => {};
+let showLog = () => {};
 let store = blobstore;
 
 function init(options) {
@@ -28,6 +29,7 @@ function init(options) {
   provider = options.provider;
   view = options.view;
   log = options.log || (() => {});
+  showLog = options.showLog || (() => {});
   // Defaults to the real store; taken as a parameter so the commands can be exercised
   // against fabricated records.
   store = options.store || blobstore;
@@ -119,7 +121,13 @@ async function withBusy(fn) {
 }
 
 async function refreshListingIndex() {
-  provider.setListings(await output.listingIndex(ctx));
+  // The architecture decides which listings count as this shader's, so resolve it if we can.
+  // It is cached after the first call, and a failure only means matching stays arch-agnostic.
+  let arch = null;
+  try {
+    arch = (await pipeline.resolveArch()).arch;
+  } catch (e) { /* no GPU and no override; fall back to matching on the hash alone */ }
+  provider.setListings(await output.listingIndex(ctx), arch);
 }
 
 function updateViewChrome() {
@@ -151,29 +159,49 @@ function updateViewChrome() {
 
 // --------------------------------------------------------------------------- open a blob
 
-async function openBlob(uri, { force = false } = {}) {
+async function openBlob(uri, options = {}) {
+  try {
+    return await openBlobInner(uri, options);
+  } catch (e) {
+    log(`open failed: ${e && e.stack ? e.stack : e}`);
+    const choice = await vscode.window.showErrorMessage(
+      `Could not open that shader cache: ${e && e.message ? e.message.split('\n')[0] : e}`,
+      'Show details');
+    if (choice === 'Show details') showLog();
+    return null;
+  }
+}
+
+async function openBlobInner(uri, { force = false } = {}) {
   const target = await resolveTarget(uri);
   if (!target) return null;
 
   return withBusy(async () => {
     log(`--- open ${target.fsPath}`);
+    const sweep = (progress, token) => store.open(target.fsPath, { progress, token, log, force });
+
     let record;
     try {
-      record = await vscode.window.withProgress({
-        location: { viewId: tree.VIEW_ID },
-        cancellable: true
-      }, (progress, token) => store.open(target.fsPath, {
-        progress, token, log, force
-      }));
+      record = await vscode.window.withProgress(
+        { location: { viewId: tree.VIEW_ID }, cancellable: true }, sweep);
     } catch (e) {
-      // A bad progress location is a wiring mistake, not a user-facing failure; fall back so
-      // the command still works while making the mistake visible in the log.
-      log(`progress in the view failed (${e && e.message}); falling back to a notification`);
+      // Only a bad progress location is worth retrying - it means this extension named a view
+      // that does not exist, which should degrade rather than break the command. Anything else
+      // came out of the sweep and must be reported as itself, not silently attempted twice.
+      if (!/progress location/i.test(e && e.message ? e.message : '')) throw e;
+      log(`progress in the view failed (${e.message}); falling back to a notification`);
       record = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Scanning ${path.basename(target.fsPath)}`,
         cancellable: true
-      }, (progress, token) => store.open(target.fsPath, { progress, token, log, force }));
+      }, sweep);
+    }
+
+    if (record.cancelled) {
+      log('the scan was cancelled; nothing was kept');
+      await syncContext();
+      updateViewChrome();
+      return record;
     }
 
     await refreshListingIndex();
@@ -280,12 +308,9 @@ async function openObject(node, { preview = true } = {}) {
 }
 
 async function findListing(object) {
-  const marker = `.${object.sha1.slice(0, 8)}.`;
   const names = await output.listingIndex(ctx);
-  for (const name of names) {
-    if (name.includes(marker)) return path.join(output.listingDir(ctx), name);
-  }
-  return null;
+  const name = tree.findListingName(names, object, provider.arch);
+  return name ? path.join(output.listingDir(ctx), name) : null;
 }
 
 /**
@@ -294,8 +319,13 @@ async function findListing(object) {
  */
 async function disassembleObject(node, selection, { preview = false } = {}) {
   const selected = Array.isArray(selection) && selection.length > 1 ? selection : null;
-  const targets = collectTargets(node, selected);
-  if (!targets.length) return;
+  let targets = collectTargets(node, selected);
+  if (!targets.length) targets = collectTargets(null, implicitNodes());
+  if (!targets.length) {
+    vscode.window.showInformationMessage(
+      'Select a shader in the Shader Objects view to disassemble it.');
+    return;
+  }
 
   if (targets.length === 1) {
     return withBusy(async () => {
@@ -320,7 +350,7 @@ async function disassembleObject(node, selection, { preview = false } = {}) {
 }
 
 function collectTargets(node, selection) {
-  const nodes = selection && selection.length ? selection : [node];
+  const nodes = selection && selection.length ? selection : (node ? [node] : []);
   const out = [];
   const seen = new Set();
 
@@ -466,9 +496,42 @@ function reportAnnotation(result, record) {
 
 // --------------------------------------------------------------------------- review
 
+/**
+ * What a command should act on when it was not invoked from a menu.
+ *
+ * A keybinding and a Command Palette entry both call their command with NO arguments, so a
+ * handler that only reads its parameters does nothing at all when triggered that way - which
+ * is exactly how the review shortcut is meant to be used. Fall back to what the user is
+ * plainly looking at: the tree selection, or the listing open in front of them.
+ */
+function implicitNodes() {
+  if (view && view.selection && view.selection.length) return [...view.selection];
+
+  const editor = vscode.window.activeTextEditor;
+  if (editor && editor.document.uri.scheme === 'file') {
+    const sha1 = listingSha1(editor.document.uri.fsPath);
+    if (sha1) {
+      const match = provider.visibleObjects().find(n => n.object.sha1.startsWith(sha1));
+      if (match) return [match];
+    }
+  }
+  return [];
+}
+
+/** The sha1 prefix a generated listing carries in its filename, or null. */
+function listingSha1(filePath) {
+  const m = /\.([0-9a-f]{8})\.[^.]+\.nvsass$/i.exec(path.basename(filePath));
+  return m ? m[1].toLowerCase() : null;
+}
+
 async function toggleReviewed(node, selection) {
-  const targets = collectTargets(node, Array.isArray(selection) ? selection : null);
-  if (!targets.length) return;
+  let targets = collectTargets(node, Array.isArray(selection) ? selection : null);
+  if (!targets.length) targets = collectTargets(null, implicitNodes());
+  if (!targets.length) {
+    vscode.window.showInformationMessage(
+      'Select a shader in the Shader Objects view, or open its listing, to mark it reviewed.');
+    return;
+  }
   // A mixed selection resolves one way: if anything is unreviewed, mark everything.
   const anyUnreviewed = targets.some(t => !review.isReviewed(t.object.sha1));
   await review.setMany(targets.map(t => t.object.sha1), anyUnreviewed);
@@ -508,10 +571,9 @@ function currentIndex(objects) {
   }
   const editor = vscode.window.activeTextEditor;
   if (editor && editor.document.uri.scheme === 'file') {
-    const name = path.basename(editor.document.uri.fsPath);
-    const m = /\.([0-9a-f]{8})\.[^.]+\.nvsass$/i.exec(name);
-    if (m) {
-      const at = objects.findIndex(n => n.object.sha1.startsWith(m[1].toLowerCase()));
+    const sha1 = listingSha1(editor.document.uri.fsPath);
+    if (sha1) {
+      const at = objects.findIndex(n => n.object.sha1.startsWith(sha1));
       if (at >= 0) return at;
     }
   }
@@ -525,11 +587,13 @@ async function walk(step, { unreviewedOnly = false } = {}) {
     return;
   }
 
+  const count = objects.length;
   const from = currentIndex(objects);
-  let index = from;
-  for (let n = 0; n < objects.length; n++) {
-    index = (index + step + objects.length * 2) % objects.length;
-    if (from < 0 && step > 0 && n === 0) index = 0;
+  // With nowhere to start from, each direction begins at its own end, so "next" gives the
+  // first shader and "previous" the last.
+  let index = from < 0 ? (step > 0 ? 0 : count - 1) : (from + step + count) % count;
+
+  for (let n = 0; n < count; n++, index = (index + step + count) % count) {
     const candidate = objects[index];
     if (!unreviewedOnly || !review.isReviewed(candidate.object.sha1)) {
       await goTo(candidate);

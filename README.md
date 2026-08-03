@@ -16,6 +16,27 @@ The column reads: scoreboards this instruction waits on, scoreboard armed at ope
 read-out, scoreboard armed until writeback, yield hint, and the stall count in cycles.
 Hover any field for an explanation.
 
+### Following a scoreboard
+
+Put the cursor on a scoreboard inside a control column and the other end of that dependency
+lights up. From a wait, the instructions that armed it; from an arm, the wait that drains it
+and everything else that wait covers. `F12` opens the same set in a peek window and `F7`
+steps through them.
+
+The hover says how deep the scoreboard is:
+
+> **Scoreboard 4 stands at 2** here — 2 outstanding arms this instruction waits to drain:
+> - line 61 · `LDG` arms it until its result is written back
+> - line 62 · `LDG` arms it until its result is written back
+
+Scoreboards are counters rather than flags, so one wait routinely drains several arms — two
+loads sharing a scoreboard and a single wait covering both is ordinary compiler output.
+
+The scan is exact within a straight-line run, which is where nearly all scoreboard scheduling
+happens. Where it crosses a label or a branch it says so rather than presenting a guess as a
+fact. At a branch target the arms genuinely live on the other side of the branch, and the
+hover reports them while making clear it cannot know which path arrived.
+
 ## Requirements
 
 - **CUDA Toolkit** for `nvdisasm` — located automatically (setting → `PATH` → `%CUDA_PATH%\bin`),

@@ -387,7 +387,7 @@ else:
 declared_settings = set(contributes.get("configuration", {}).get("properties", {}))
 JS_SOURCES = ("extension.js", "src/pipeline.js", "src/output.js", "src/doctor.js",
               "src/semantic.js", "src/hover.js", "src/blobstore.js", "src/tree.js",
-              "src/browser.js", "src/review.js")
+              "src/browser.js", "src/review.js", "src/scoreboard.js", "src/highlight.js")
 JS_SOURCES = tuple(s for s in JS_SOURCES if os.path.exists(rel(*s.split("/"))))
 
 # A configuration section is reached either directly (`getConfiguration('x').get('y')`) or
@@ -664,8 +664,8 @@ if not cmd:
          "Set VSCODE_EXE to a Code.exe, or install Node, to run the JavaScript suites.")
 else:
     for script in ("test_parse.js", "test_hover.js", "test_semantic.js", "test_explain.js",
-                   "test_ctrl.js", "test_zstd.js", "test_blobstore.js", "test_browser.js",
-                   "test_endtoend.js"):
+                   "test_ctrl.js", "test_zstd.js", "test_scoreboard.js", "test_blobstore.js",
+                   "test_browser.js", "test_endtoend.js"):
         proc = subprocess.run(cmd + [rel("tools", script)],
                               env=env, cwd=ROOT, capture_output=True, text=True)
         out = (proc.stdout or "") + (proc.stderr or "")

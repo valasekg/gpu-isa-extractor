@@ -84,7 +84,11 @@ const lines = [
   'LOP3.LUT R42, R42, 0xfffdffff, RZ, 0xc0, !PT ;',
   'PLOP3.LUT P0, PT, P1, P2, P3, 0x80, 0x0 ;',
   '        /*0020*/ [B--2---:R3:W0:Y:S04]  IMAD R2, R0, c[0x0][0x0], R3 ;',
-  '        /*0030*/ [B------:R-:W-:-:S00]  IADD3 R5, R2, UR4, RZ ;'
+  '        /*0030*/ [B------:R-:W-:-:S00]  IADD3 R5, R2, UR4, RZ ;',
+  // Two loads arm scoreboard 4; one wait drains both. Lines 15-17.
+  '        /*0040*/ [B------:R-:W4:Y:S04]  LDG.E R13, [UR4+0x1c] ;',
+  '        /*0050*/ [B------:R-:W4:Y:S01]  LDG.E R0, [UR4+0x18] ;',
+  '        /*0060*/ [B----4-:R-:W-:-:S02]  FADD.FTZ R5, R13, R0 ;'
 ];
 
 const document = {
@@ -196,6 +200,41 @@ console.log('\n3. Address and control-code tooltips');
   const hover = hoverAt(14, 'R-', 1);
   check(body(hover).includes('Arms no scoreboard'),
     'an unarmed Volta+ read scoreboard says so', body(hover));
+}
+
+console.log('\n3b. Scoreboard dependencies');
+
+{
+  // Hovering the scoreboard a wait names should say what it is waiting for. Two loads armed
+  // scoreboard 4, so it stands at 2 here.
+  const line = lines[17];
+  const hover = provider.provideHover(document,
+    { line: 17, character: line.indexOf('[B') + 2 + 4 });
+  const text = body(hover);
+  check(text.includes('stands at 2'),
+    'a wait reports how many arms are outstanding on that scoreboard', text);
+  check(text.includes('line 16') && text.includes('line 17'),
+    'and names the instructions that armed it', text);
+  check(text.includes('LDG'), 'with the opcode that did the arming', text);
+}
+{
+  // An empty slot in the same mask must not claim a dependency.
+  const line = lines[17];
+  const hover = provider.provideHover(document,
+    { line: 17, character: line.indexOf('[B') + 2 + 0 });
+  check(body(hover).includes('Not waiting on'),
+    'an empty slot in the wait mask reports no dependency', body(hover));
+}
+{
+  // From the other end: an arm should name the wait that drains it and its siblings.
+  const line = lines[15];
+  const hover = provider.provideHover(document,
+    { line: 15, character: line.indexOf(':W') + 2 });
+  const text = body(hover);
+  check(text.includes('drained by the wait on line 18'),
+    'an arm names the wait that drains it', text);
+  check(text.includes('counters'),
+    'and explains that the wait covers more than just this one', text);
 }
 
 console.log('\n4. Elaborate opcode tooltips');

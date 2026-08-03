@@ -2,7 +2,7 @@
   "name": "nv-isa-extractor",
   "displayName": "NVIDIA ISA Extractor",
   "description": "Turn NVIDIA driver shader-cache blobs into readable SASS with decoded scheduling control codes, syntax highlighting and tooltips.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "gvalasek",
   "license": "MIT",
   "engines": {
@@ -484,7 +484,7 @@
           "type": "number",
           "default": 500,
           "minimum": 0,
-          "markdownDescription": "How many rows a level shows before a `Load more…` entry. `0` shows everything at once.",
+          "markdownDescription": "How many rows a level shows before a `Load moreâ€¦` entry. `0` shows everything at once.",
           "scope": "window",
           "order": 197
         },

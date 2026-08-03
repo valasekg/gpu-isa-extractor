@@ -128,7 +128,24 @@ async function withBuffer(recordOrPath, fn) {
  * re-sweeping; `force` re-sweeps regardless, which is what Refresh does.
  */
 async function open(filePath, { progress, token, log, force = false, minCodeOverride } = {}) {
-  const kind = pipeline.classify(filePath);
+  // classify() rejects a .toc with no .bin beside it, with a message worth showing. It has to
+  // be caught here so it becomes a record the view can display, rather than escaping past
+  // every caller as an unhandled failure.
+  let kind;
+  try {
+    kind = pipeline.classify(filePath);
+  } catch (e) {
+    const key = keyFor(filePath);
+    const record = {
+      key, source: filePath, backend: 'raw', label: 'file', scanned: false, minCode: 0,
+      objects: [], stats: {}, frames: 0, stamp: null, stale: false,
+      error: e && e.message ? e.message : String(e)
+    };
+    records.set(key, record);
+    fire(record);
+    return record;
+  }
+
   const target = kind.redirect || filePath;
   const key = keyFor(target);
   const stamp = await stampOf(target);
@@ -152,9 +169,29 @@ async function open(filePath, { progress, token, log, force = false, minCodeOver
 
   let record;
   try {
-    const swept = await pipeline.sweep(target, {
-      progress, token, log, keepBuffer: false, minCodeOverride
+    // A sweep reads the whole file, so it takes the same slot a disassembly does. Without
+    // this, opening two large files at once would hold both in memory at the same moment -
+    // the exact thing this module exists to prevent.
+    const swept = await acquireSlot().then(async () => {
+      try {
+        return await pipeline.sweep(target, {
+          progress, token, log, keepBuffer: false, minCodeOverride
+        });
+      } finally {
+        releaseSlot();
+      }
     });
+
+    // A cancelled sweep has found only part of the file. Keeping it would present a truncated
+    // list as the whole truth, and - because the stamp still matches - every later open would
+    // short-circuit to it instead of scanning again.
+    if (token && token.isCancellationRequested) {
+      return {
+        key, source: target, backend: kind.backend, label: kind.label,
+        objects: [], stats: {}, frames: 0, stamp, stale: false, error: null, cancelled: true
+      };
+    }
+
     record = {
       key,
       source: swept.source,

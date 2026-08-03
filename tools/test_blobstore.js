@@ -274,6 +274,44 @@ const rssMB = () => process.memoryUsage().rss / MB;
     }
   }
 
+  section('6b. A cancelled scan is not mistaken for a finished one');
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvisa-cancel-'));
+    const blob = path.join(dir, 'partial.bin');
+    fs.writeFileSync(blob, Buffer.alloc(4096));
+
+    const cancelled = await blobstore.open(blob, {
+      token: { isCancellationRequested: true }
+    });
+    check(cancelled.cancelled === true, 'a cancelled scan says so', JSON.stringify(cancelled.cancelled));
+    // Keeping it would serve a truncated list as the whole file, and - because the file has
+    // not changed - every later open would short-circuit to it instead of scanning again.
+    check(!blobstore.has(blob), 'and its partial result is not kept');
+
+    const full = await blobstore.open(blob);
+    check(full.cancelled !== true && blobstore.has(blob),
+      'so opening it again really does scan');
+    blobstore.closeAll();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  section('6c. A .toc with no .bin explains itself');
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvisa-toc-'));
+    const orphan = path.join(dir, 'index.toc');
+    fs.writeFileSync(orphan, Buffer.alloc(64));
+
+    // classify() rejects this with a message worth showing. It has to arrive as a record the
+    // view can display, not as an exception escaping every caller.
+    const record = await blobstore.open(orphan);
+    check(record && !!record.error, 'it produces a record carrying the reason, not a throw',
+      record && record.error);
+    check(/only the index/.test(record.error || ''),
+      'and the reason is the helpful one', record && record.error);
+    blobstore.closeAll();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
   section('7. The list is bounded');
   {
     // Synthetic files, so this runs the same way on a machine with no cache at all. A file

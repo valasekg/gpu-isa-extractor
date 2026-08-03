@@ -45,6 +45,28 @@ const BUCKETS = [
   { key: 'xs', min: 0, label: 'under 8 KB' }
 ];
 
+/** Split a generated listing's filename into its sha1 and architecture fields, or null. */
+const LISTING_NAME_RE = /^(.*)\.([0-9a-f]{8})\.([^.]+)\.nvsass$/i;
+
+/**
+ * The listing on disk for this shader, or null.
+ * @param {Set<string>} names   filenames, as `output.listingIndex` returns them
+ * @param {?string} arch        the architecture in use, when it is known
+ */
+function findListingName(names, obj, arch) {
+  const wanted = obj.sha1.slice(0, 8).toLowerCase();
+  let loose = null;
+  for (const name of names) {
+    const m = LISTING_NAME_RE.exec(name);
+    if (!m || m[2].toLowerCase() !== wanted) continue;
+    if (!arch || m[3].toLowerCase() === String(arch).toLowerCase()) return name;
+    loose = loose || name;
+  }
+  // A listing for a different architecture is not this one, but saying so is the caller's
+  // business - report nothing rather than the wrong file.
+  return arch ? null : loose;
+}
+
 function humanBytes(n) {
   if (n >= 1024 * 1024 * 1024) return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
   if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(2)} MB`;
@@ -113,12 +135,18 @@ class ShaderObjectsProvider {
     this.pages = new Map();
     /** Listing filenames already on disk, refreshed with the tree. */
     this.listings = new Set();
+    /** The architecture listings are being generated for, once something has resolved it. */
+    this.arch = null;
     /** Node id -> node, so commands and reveal() can find a node again. */
     this.nodes = new Map();
 
     this.subscriptions = [
+      // A different set of objects invalidates how far each level was paged.
       this.store.onDidChange(() => this.refresh()),
-      review.onDidChange(() => this.refresh())
+      // A review mark does not. Clearing the paging here would snap a level the user had
+      // expanded with "Load more" back to its first page every time they marked a shader -
+      // in the middle of exactly the pass this view exists to support.
+      review.onDidChange(() => this.redraw())
     ];
   }
 
@@ -127,8 +155,14 @@ class ShaderObjectsProvider {
     this._onDidChangeTreeData.dispose();
   }
 
+  /** Rebuild, discarding how far each level was paged. */
   refresh(node) {
     if (!node) this.pages.clear();
+    this._onDidChangeTreeData.fire(node);
+  }
+
+  /** Re-render what is already there, keeping every level's paging. */
+  redraw(node) {
     this._onDidChangeTreeData.fire(node);
   }
 
@@ -138,18 +172,26 @@ class ShaderObjectsProvider {
     this._onDidChangeTreeData.fire();
   }
 
-  setListings(names) {
+  setListings(names, arch) {
     this.listings = names || new Set();
-    this._onDidChangeTreeData.fire();
+    if (arch !== undefined) this.arch = arch;
+    this.redraw();
   }
 
-  hasListing(obj, arch) {
-    // The arch is not known until a disassembly runs, so match on the sha1 field alone -
-    // listingName() is `<name>.<sha1[0:8]>.<arch>.nvsass`.
-    void arch;
-    const marker = `.${obj.sha1.slice(0, 8)}.`;
-    for (const name of this.listings) if (name.includes(marker)) return true;
-    return false;
+  /**
+   * Whether a listing for this shader is already on disk.
+   *
+   * `listingName` is `<entry>.<sha1[0:8]>.<arch>.nvsass`, and an entry name may itself contain
+   * dots - so the sha1 has to be matched as the second-to-last dotted field, not merely found
+   * somewhere in the string. A shader called `vs_main.deadbeef.opt` would otherwise be
+   * mistaken for the listing of any shader whose hash starts `deadbeef`, and clicking that
+   * shader would open somebody else's disassembly.
+   *
+   * The architecture is matched too when it is known, so changing `nvIsaExtractor.arch` does
+   * not keep serving listings built for the old one.
+   */
+  hasListing(obj) {
+    return findListingName(this.listings, obj, this.arch) !== null;
   }
 
   getNode(id) {
@@ -534,4 +576,6 @@ class ShaderObjectsProvider {
   }
 }
 
-module.exports = { ShaderObjectsProvider, VIEW_ID, distinctObjects, humanBytes, BUCKETS };
+module.exports = {
+  ShaderObjectsProvider, VIEW_ID, distinctObjects, humanBytes, BUCKETS, findListingName
+};
