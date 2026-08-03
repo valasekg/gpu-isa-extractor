@@ -28,16 +28,42 @@ Run **NVIDIA ISA: Doctor** to check all of this at once.
 
 ## Usage
 
-- Right-click a `.bin`, `.toc` or `.nvph` file in the Explorer → **Disassemble Shader-Cache Blob**.
-- Or run the command from the palette and pick a file — the dialog opens at
-  `%LOCALAPPDATA%\NVIDIA`, so cache files outside your workspace are reachable.
+Open a shader cache any of these ways:
 
-A cache file usually holds many shader objects; you pick one from a list sorted
-largest-first, labelled with its entry point name. The generated listing carries a
-provenance banner (source file, offset, sha1, architecture, nvdisasm version).
+- **Right-click** a `.bin`, `.toc` or `.nvph` in the Explorer.
+- **With the file already open** — a `.bin` shows as a binary placeholder, and the
+  circuit-board button in the editor title bar scans it. `Ctrl+Alt+Shift+D` does the same.
+- **From the palette** — *NVIDIA ISA: Open Shader-Cache File*. With a cache file in the
+  active tab it uses that; otherwise it asks, starting at `%LOCALAPPDATA%\NVIDIA`.
+- **From the view** — the NVIDIA ISA icon in the activity bar.
 
 Supported inputs: GLCache `.bin` with its `.toc` index (fast path), GLCache `.bin` without
 one (magic scan), DXCache `.nvph`, and any other blob containing zstd frames.
+
+### Going through them
+
+The **Shader Objects** view lists every shader in every cache file you have open, so the
+list stays put while you read a listing. Click one to disassemble and open it.
+
+A cache file holds hundreds of shaders, so the view is built for working through them:
+
+- **Walk them in order** with `Ctrl+Alt+PageDown` / `PageUp`, from either the view or a
+  listing. Each step replaces the listing tab rather than opening a new one, so stepping
+  through two hundred shaders leaves you with one tab, not two hundred.
+- **Mark what you have seen** with `Ctrl+Alt+Shift+M`. `Ctrl+Alt+Shift+PageDown` jumps to
+  the next shader you have not marked, and the activity-bar badge counts what is left.
+  Marks are keyed on shader contents, so they survive the driver rewriting the cache and
+  renumbering every offset.
+- **Filter** by entry name, sha1 prefix, or offset. Walking then covers only what matched.
+- **Disassemble in bulk** — right-click a file or a size group. It tells you how many
+  shaders, how much text and roughly how long before starting, and skips anything already
+  done.
+- Identical shaders stored at several offsets collapse into one row you can expand;
+  a quarter of DXCache entries are duplicates.
+- Files with thousands of shaders split into size buckets automatically.
+
+Every generated listing carries a provenance banner: source file, offset, sha1,
+architecture, and the exact nvdisasm command used.
 
 ## Language support
 
@@ -68,6 +94,11 @@ id, grammar and themes.
 | `nvIsaExtractor.keepRawMicrocode` | `false` | Keep the carved binary beside the listing |
 | `nvIsaExtractor.output.location` | `globalStorage` | Where listings are written |
 | `nvIsaExtractor.output.retentionDays` | `30` | Prune listings older than this; `0` = never |
+| `nvIsaExtractor.tree.sortBy` | `size` | Order in the view: `size`, `offset` (file order) or `name` |
+| `nvIsaExtractor.tree.autoGroupThreshold` | `200` | Above this many shaders, split into size buckets |
+| `nvIsaExtractor.tree.pageSize` | `500` | Rows per level before a `Load more…` entry; `0` = all |
+| `nvIsaExtractor.tree.maxBlobs` | `8` | How many cache files stay listed at once |
+| `nvIsaExtractor.batch.confirmAboveBytes` | `256 MB` | Ask before a batch producing more than this |
 
 The `nvidiaSass.*` settings (semantic highlighting, hover detail, architecture) carry over
 from the highlighter unchanged, plus `nvidiaSass.semanticMaxLines` which skips the semantic

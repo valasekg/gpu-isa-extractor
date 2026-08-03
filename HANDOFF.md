@@ -18,6 +18,15 @@ blob ──enumerate──> zstd frames ──decompress──> NVuc payload ─
      ──nvdisasm──> SASS text ──annotate──> listing with [B..:R.:W.:Y:S..] columns
 ```
 
+The browsing layer sits on top of that:
+
+```
+blobstore.js  loaded cache files and their objects - never their bytes
+tree.js       the Shader Objects view (TreeDataProvider)
+browser.js    every command body; extension.js is only a registry
+review.js     which shaders you have already been through, keyed on sha1
+```
+
 ## Toolchain constraints
 
 **There is no node/npm on this machine, and nothing here needs it.** No bundler, no
@@ -110,6 +119,43 @@ described the interface as verified; `git log --all -S` shows it never existed o
 - **The reuse tripwire's two directions mean different things.** See the comment at the top
   of `src/ctrl.js`. Treating them alike makes it fire on every graphics shader.
 
+### The browser
+
+- **A binary file has no `TextDocument`.** Opening a `.bin` gives you a placeholder editor,
+  so `window.activeTextEditor` is `undefined`, `visibleTextEditors` is empty, and the file
+  never appears in `workspace.textDocuments`. `workspace.openTextDocument` on it fails
+  outright. The tab still knows the resource:
+  `window.tabGroups.activeTabGroup.activeTab.input.uri`. That three-step chain in
+  `browser.resolveTarget` is the only reason the extension is reachable from an open file.
+  `Tab.input` is `undefined` for editor kinds VS Code does not model, so it must be
+  duck-typed, never assumed.
+- **Never retain a file buffer.** See `blobstore.js`. Measured: seven cache files held with
+  their buffers cost +560 MB resident; the same files' object records cost +30 MB. Re-reading
+  costs ~94 ms against nvdisasm's ~4.5 s. A DXCache live prefix is a *subarray* and pins the
+  whole 256 MB bucket, so trimming is not an alternative to dropping.
+- **Every tree node needs an explicit stable `id`.** Without one VS Code derives handles from
+  labels and loses expansion and selection whenever a label changes - which here is every
+  time a review mark flips. Duplicate ids throw.
+- **`resolveTreeItem` runs at most once per item.** A tooltip mentioning mutable state goes
+  stale and stays stale, so tooltips carry only immutable facts and everything that changes
+  lives in the icon and `contextValue`.
+- **Review marks are keyed on sha1, not on `source+offset`.** The driver rewrites cache files
+  constantly, so offsets move between sessions while the shader does not. This is the only
+  reason a review pass survives a rescan.
+- **`engines.vscode` is `^1.75.0` while this machine runs 1.131.** `TreeItem.checkboxState`
+  and friends are 1.80+ and are deliberately unused; `verify.py` greps for them, because
+  nothing else in the toolchain would notice.
+- **`verify.py` scrapes `extension.js` for `registerCommand('...')` with single quotes** and
+  demands set equality with the declared commands. Registering from another module, or in a
+  loop, or with double quotes, fails the gate even though the extension works. Keep
+  `extension.js` a thin registry.
+- **`withProgress({location: {viewId}})` throws "Bad progress location"** if the view id is
+  wrong. `browser.openBlob` catches it and falls back to a notification so a wiring mistake
+  degrades instead of breaking the command.
+- The provider and the command module both take their record source as a parameter,
+  defaulting to `blobstore`. That is what lets `tools/test_browser.js` drive the view over
+  ten-thousand-object files and unreadable files without such a cache existing.
+
 ### Extension
 
 - **`execFile` has a 1 MB default buffer.** A large kernel disassembles to tens of megabytes.
@@ -156,8 +202,10 @@ does not need to be registered anywhere - but a new *directory* does.
 
 Deliberately out of scope for the first version, roughly in value order:
 
-- A browse-the-whole-cache command (this works one file at a time; `dump_objects.js` already
-  walks a whole root and could back it).
+- A "find every cache file on this machine" command. The view browses files you point it at;
+  it does not go looking. `dump_objects.js:51` already walks a whole cache root, and
+  `doctor.js:40` has a second copy of the same walk - one shared module would retire both and
+  back the command.
 - Jump from a wait to the instruction that armed the scoreboard - the flagship use of the
   decoded columns, and the reason `era` is on the parse record. Needs a Definition or
   Reference provider, plus honesty about it being a linear scan that is exact only on

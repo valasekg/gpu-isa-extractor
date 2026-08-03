@@ -131,12 +131,26 @@ function resetArchCache() {
 
 // --------------------------------------------------------------------------- sweep
 
-/** Read a cache file and list the shader objects in it. */
-async function sweep(filePath, { progress, token, log } = {}) {
+/**
+ * Read a cache file and list the shader objects in it.
+ *
+ * `keepBuffer: false` returns the objects without the file buffer. A GLCache blob is up to
+ * 167 MB, and holding one per browsed file costs about its own size in resident memory;
+ * re-reading it when a disassembly actually needs it takes ~94 ms against the ~4.5 s that
+ * nvdisasm then spends, so the buffer is not worth keeping. The caller cannot drop it
+ * itself: for DXCache `buf` is a subarray of the whole preallocated bucket and pins all
+ * 256 MB of it, live prefix or not.
+ *
+ * `minCodeOverride` lets a caller re-sweep at a different size floor without writing the
+ * user's setting.
+ */
+async function sweep(filePath, { progress, token, log, keepBuffer = true, minCodeOverride } = {}) {
   const kind = classify(filePath);
   const target = kind.redirect || filePath;
   const settings = config();
-  const minCode = Number(settings.get('minCodeBytes') || 0);
+  const minCode = minCodeOverride === undefined
+    ? Number(settings.get('minCodeBytes') || 0)
+    : Number(minCodeOverride);
   const mode = settings.get('glcacheMode') || 'auto';
 
   let raw;
@@ -193,7 +207,7 @@ async function sweep(filePath, { progress, token, log } = {}) {
 
   return {
     ...result,
-    buf,
+    ...(keepBuffer ? { buf } : {}),
     source: target,
     backend: kind.backend,
     label: kind.label,
@@ -262,11 +276,16 @@ function runNvdisasm(exe, arch, rawPath, token) {
 }
 
 /**
- * Carve one object out of an already-swept buffer and disassemble it.
+ * Carve one object out of a loaded buffer and disassemble it.
  *
+ * @param {{buf: Buffer, source: string, backend: string, label: string, scanned: boolean}} source
+ *   The whole of what this and `output.banner` read. A live `sweep()` result satisfies it, and
+ *   so does a record rebuilt by `blobstore.materialize()` long after the sweep - which is what
+ *   lets the browser list objects without holding their file in memory.
  * @returns {{text, object, arch, nvdisasm, command, annotation, rawPath}}
  */
-async function disassemble(sweepResult, chosen, { token, log, scratchDir } = {}) {
+async function disassemble(source, chosen, { token, log, scratchDir } = {}) {
+  const sweepResult = source;
   const object = nvcache.carveAt(sweepResult.buf, chosen.offset, {
     source: sweepResult.source,
     backend: sweepResult.backend

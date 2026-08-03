@@ -337,18 +337,58 @@ else:
         % (" ".join(sorted(declared_commands - registered)) or "-",
            " ".join(sorted(registered - declared_commands)) or "-"))
 
-menu_commands = {m["command"] for group in contributes.get("menus", {}).values() for m in group}
+# A menu entry is either a command or a submenu reference. Indexing ["command"] blindly turns
+# a submenu into an uncaught KeyError that aborts this whole script instead of failing a check.
+menu_commands = {m["command"] for group in contributes.get("menus", {}).values()
+                 for m in group if "command" in m}
 if menu_commands <= declared_commands:
-    ok("every menu entry names a declared command")
+    ok("every menu entry names a declared command (%d)" % len(menu_commands))
 else:
     bad("a menu entry names an undeclared command",
         " ".join(sorted(menu_commands - declared_commands)))
+
+key_commands = {k["command"].lstrip("-") for k in contributes.get("keybindings", [])
+                if "command" in k}
+if key_commands <= declared_commands:
+    ok("every keybinding names a declared command (%d)" % len(key_commands))
+else:
+    bad("a keybinding names an undeclared command",
+        " ".join(sorted(key_commands - declared_commands)))
+
+# Views, their welcome content and the when-clauses that reference them have to agree, or a
+# welcome pane silently never renders and a toolbar button silently never appears.
+declared_views = {v["id"] for group in contributes.get("views", {}).values() for v in group}
+declared_containers = {c["id"] for group in contributes.get("viewsContainers", {}).values()
+                       for c in group}
+view_owners = set(contributes.get("views", {}))
+unknown_owner = view_owners - declared_containers - {"explorer", "scm", "debug", "test"}
+if unknown_owner:
+    bad("views contributed to an undeclared container", " ".join(sorted(unknown_owner)))
+elif declared_views:
+    ok("every view lives in a declared container (%d view(s))" % len(declared_views))
+
+welcome_views = {w["view"] for w in contributes.get("viewsWelcome", [])}
+if welcome_views <= declared_views:
+    ok("every viewsWelcome entry names a declared view")
+else:
+    bad("a viewsWelcome entry names an undeclared view",
+        " ".join(sorted(welcome_views - declared_views)))
+
+manifest_text = open(rel("package.json"), encoding="utf-8").read()
+referenced_views = set(re.findall(r"(?:view|focusedView)\s*==\s*([\w.]+)", manifest_text))
+if referenced_views <= declared_views:
+    ok("every view named in a when-clause exists")
+else:
+    bad("a when-clause names a view that is not declared",
+        " ".join(sorted(referenced_views - declared_views)))
 
 # Settings are read by string. A rename on one side only is silent: the code keeps reading
 # the old name and quietly gets the default forever.
 declared_settings = set(contributes.get("configuration", {}).get("properties", {}))
 JS_SOURCES = ("extension.js", "src/pipeline.js", "src/output.js", "src/doctor.js",
-              "src/semantic.js", "src/hover.js")
+              "src/semantic.js", "src/hover.js", "src/blobstore.js", "src/tree.js",
+              "src/browser.js", "src/review.js")
+JS_SOURCES = tuple(s for s in JS_SOURCES if os.path.exists(rel(*s.split("/"))))
 
 # A configuration section is reached either directly (`getConfiguration('x').get('y')`) or
 # through a local (`const s = getConfiguration('x'); ... s.get('y')`). Both forms are in use,
@@ -359,24 +399,50 @@ PIPELINE_SECTION = "nvIsaExtractor"
 def settings_read(text):
     found = set()
     bindings = {}                                   # local name -> section
+    helpers = {}                                    # zero-arg helper name -> section
 
     for name, section in re.findall(
             r"(?:const|let|var)\s+(\w+)\s*=\s*(?:vscode\.workspace\.)?"
             r"getConfiguration\(\s*['\"]([\w.]+)['\"]\s*\)", text):
         bindings[name] = section
+
+    # A module that reads several settings usually wraps the lookup:
+    #     function settings() { return vscode.workspace.getConfiguration('nvIsaExtractor'); }
+    # Resolve those, so the check does not depend on every module naming the helper alike.
+    for name, section in re.findall(
+            r"function\s+(\w+)\s*\(\s*\)\s*\{\s*return\s+(?:vscode\.workspace\.)?"
+            r"getConfiguration\(\s*['\"]([\w.]+)['\"]\s*\)", text):
+        helpers[name] = section
+    for name in re.findall(
+            r"function\s+(\w+)\s*\(\s*\)\s*\{\s*return\s+(?:vscode\.workspace\.)?"
+            r"getConfiguration\(\s*[\w.]*CONFIG\s*\)", text):
+        helpers[name] = PIPELINE_SECTION
+    for name, section in helpers.items():
+        for key in re.findall(r"\b%s\(\)\s*\.\s*get\(\s*['\"]([\w.]+)['\"]" % re.escape(name),
+                              text):
+            found.add("%s.%s" % (section, key))
+        # ...and the same helper's result stored in a local first.
+        for local in re.findall(r"(?:const|let|var)\s+(\w+)\s*=\s*%s\(\)" % re.escape(name),
+                                text):
+            bindings[local] = section
     # `getConfiguration(pipeline.CONFIG)` and the module-local `config()` helper.
     for name in re.findall(
             r"(?:const|let|var)\s+(\w+)\s*=\s*(?:vscode\.workspace\.)?"
             r"getConfiguration\(\s*[\w.]*CONFIG\s*\)", text):
         bindings[name] = PIPELINE_SECTION
     for name in re.findall(r"(?:const|let|var)\s+(\w+)\s*=\s*config\(\)", text):
-        bindings[name] = PIPELINE_SECTION
+        bindings.setdefault(name, PIPELINE_SECTION)
 
     for section, key in re.findall(
             r"getConfiguration\(\s*['\"]([\w.]+)['\"]\s*\)\s*\.\s*get\(\s*['\"]([\w.]+)['\"]",
             text):
         found.add("%s.%s" % (section, key))
     for key in re.findall(r"\bconfig\(\)\s*\.\s*get\(\s*['\"]([\w.]+)['\"]", text):
+        found.add("%s.%s" % (PIPELINE_SECTION, key))
+    # getConfiguration(pipeline.CONFIG).get('key') - chained through the constant rather than
+    # a literal section name.
+    for key in re.findall(
+            r"getConfiguration\(\s*[\w.]*CONFIG\s*\)\s*\.\s*get\(\s*['\"]([\w.]+)['\"]", text):
         found.add("%s.%s" % (PIPELINE_SECTION, key))
     for name, key in re.findall(r"\b(\w+)\s*\.\s*get\(\s*['\"]([\w.]+)['\"]", text):
         if name in bindings:
@@ -398,6 +464,47 @@ if unread:
     warn("declared settings nothing reads", " ".join(sorted(unread)))
 else:
     ok("every declared setting is read somewhere")
+
+# A when-clause naming a context key nothing ever sets is silently always false, so the menu
+# entry or welcome block it guards simply never appears.
+set_keys = set()
+for js in JS_SOURCES:
+    text = open(rel(*js.split("/")), encoding="utf-8").read()
+    set_keys.update(re.findall(r"setContext['\"]?\s*,\s*['\"`]nvIsaExtractor\.([\w.]+)", text))
+    set_keys.update(re.findall(r"setContext\(\s*['\"]([\w.]+)['\"]", text))
+    set_keys.update(re.findall(r"nvIsaExtractor\.\$\{?([\w.]+)", text))
+    # the template form: setContext(`nvIsaExtractor.${key}`) with the keys passed in
+    for call in re.findall(r"setContext\(\s*['\"]([\w.]+)['\"]\s*,", text):
+        set_keys.add(call)
+used_keys = set(re.findall(r"nvIsaExtractor\.(hasBlob|activeBlob|toolsReady|busy|blobCount|"
+                           r"filterActive)\b", manifest_text))
+missing_keys = used_keys - set_keys
+if missing_keys:
+    bad("a when-clause names a context key nothing sets", " ".join(sorted(missing_keys)))
+else:
+    ok("every context key used in a when-clause is set by the code (%d)" % len(used_keys))
+
+# The dev machine runs a much newer VS Code than the declared floor, so nothing else in this
+# toolchain would notice an API that does not exist on 1.75 creeping in.
+TOO_NEW = {
+    "checkboxState": "TreeItem.checkboxState (1.80)",
+    "TreeItemCheckboxState": "TreeItemCheckboxState (1.80)",
+    "onDidChangeCheckboxState": "TreeView.onDidChangeCheckboxState (1.80)",
+    "manageCheckboxStateManually": "TreeViewOptions.manageCheckboxStateManually (1.80)",
+    "secondarySidebar": "viewsContainers.secondarySidebar (much later)",
+}
+trespass = []
+for js in tuple(JS_SOURCES) + ("package.json",):
+    text = open(rel(*js.split("/")), encoding="utf-8").read()
+    for needle, what in TOO_NEW.items():
+        if needle in text:
+            trespass.append("%s uses %s" % (js, what))
+floor = manifest["engines"]["vscode"]
+if trespass:
+    bad("an API newer than the declared engine floor (%s) is in use" % floor,
+        "\n".join(trespass))
+else:
+    ok("no API newer than the declared engine floor (%s) is in use" % floor)
 
 hover_detail = contributes.get("configuration", {}).get("properties", {}).get(
     "nvidiaSass.hover.detail", {})
@@ -557,7 +664,8 @@ if not cmd:
          "Set VSCODE_EXE to a Code.exe, or install Node, to run the JavaScript suites.")
 else:
     for script in ("test_parse.js", "test_hover.js", "test_semantic.js", "test_explain.js",
-                   "test_ctrl.js", "test_zstd.js", "test_endtoend.js"):
+                   "test_ctrl.js", "test_zstd.js", "test_blobstore.js", "test_browser.js",
+                   "test_endtoend.js"):
         proc = subprocess.run(cmd + [rel("tools", script)],
                               env=env, cwd=ROOT, capture_output=True, text=True)
         out = (proc.stdout or "") + (proc.stderr or "")

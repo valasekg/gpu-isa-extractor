@@ -110,27 +110,70 @@ function banner(result, sweepResult) {
   return lines.join('\n');
 }
 
+/** Where a listing for this object would live, whether or not it has been generated. */
+function listingPathFor(context, object, arch) {
+  return path.join(listingDir(context), listingName(object, arch));
+}
+
+/**
+ * The names of every listing already on disk, in one readdir.
+ *
+ * `listingName` is deterministic, so this is enough to tell which objects have already been
+ * disassembled - which drives the browser's "already done" marker, lets a walk open an
+ * existing listing instead of re-running nvdisasm, and lets a batch skip finished work.
+ */
+async function listingIndex(context) {
+  try {
+    const names = await fs.promises.readdir(listingDir(context));
+    return new Set(names.filter(n => n.endsWith(LISTING_EXT)));
+  } catch (e) {
+    return new Set();
+  }
+}
+
+/**
+ * Write a listing to disk and return its path, without opening it.
+ *
+ * Separate from `openListing` because a batch run writes hundreds of these and must not open
+ * hundreds of editors. Note a batch cannot instead build one concatenated document: the
+ * largest cache file's listings total well over a gigabyte, and a single JavaScript string
+ * caps out at 536,870,888 characters in this runtime.
+ */
+async function writeListing(context, result, sourceRecord) {
+  const dir = listingDir(context);
+  await fs.promises.mkdir(dir, { recursive: true });
+
+  const file = path.join(dir, listingName(result.object, result.arch));
+  // Collisions are content-identical by construction - the sha1 is in the name.
+  await fs.promises.writeFile(file, banner(result, sourceRecord) + result.text, 'utf8');
+  return file;
+}
+
 /**
  * Write a listing and show it.
  *
  * The language is set explicitly rather than left to the file extension: `.sass` and
  * `.nvsass` may be claimed by a user's own `files.associations`, and a listing this
  * extension just generated should always open as the language it generated.
+ *
+ * `show` is forwarded to `showTextDocument`. Walking objects one after another passes
+ * `preview: true` so the listing tab is replaced rather than accumulating one tab per
+ * shader; an explicit "open" pins it with `preview: false`.
  */
-async function openListing(context, result, sweepResult) {
-  const dir = listingDir(context);
-  await fs.promises.mkdir(dir, { recursive: true });
+async function openListing(context, result, sourceRecord, show = { preview: false }) {
+  const file = await writeListing(context, result, sourceRecord);
+  await showListing(file, show);
+  return file;
+}
 
-  const file = path.join(dir, listingName(result.object, result.arch));
-  // Collisions are content-identical by construction - the sha1 is in the name.
-  await fs.promises.writeFile(file, banner(result, sweepResult) + result.text, 'utf8');
-
+/** Show a listing that is already on disk. */
+async function showListing(file, show = { preview: false }) {
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
   if (doc.languageId !== LANGUAGE_ID) {
     await vscode.languages.setTextDocumentLanguage(doc, LANGUAGE_ID);
   }
-  await vscode.window.showTextDocument(doc, { preview: false });
-  return file;
+  await vscode.window.showTextDocument(doc, show);
+  return doc;
 }
 
 /**
@@ -203,10 +246,14 @@ module.exports = {
   LANGUAGE_ID,
   sanitize,
   listingName,
+  listingPathFor,
+  listingIndex,
   listingDir,
   scratchDir,
   banner,
+  writeListing,
   openListing,
+  showListing,
   pruneListings,
   storageStats,
   clearListings

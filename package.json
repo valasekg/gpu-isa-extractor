@@ -2,7 +2,7 @@
   "name": "nv-isa-extractor",
   "displayName": "NVIDIA ISA Extractor",
   "description": "Turn NVIDIA driver shader-cache blobs into readable SASS with decoded scheduling control codes, syntax highlighting and tooltips.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "gvalasek",
   "license": "MIT",
   "engines": {
@@ -27,11 +27,126 @@
     "onLanguage:nvidia-sass"
   ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nvIsaExtractor",
+          "title": "NVIDIA ISA",
+          "icon": "$(circuit-board)"
+        }
+      ]
+    },
+    "views": {
+      "nvIsaExtractor": [
+        {
+          "id": "nvIsaExtractor.objects",
+          "name": "Shader Objects",
+          "icon": "$(symbol-method)",
+          "contextualTitle": "NVIDIA ISA",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "nvIsaExtractor.objects",
+        "when": "!nvIsaExtractor.hasBlob && !nvIsaExtractor.toolsReady",
+        "contents": "nvdisasm was not found, so nothing can be disassembled yet. It ships with the CUDA Toolkit and cannot be bundled with this extension.\n[Check the Environment](command:nvIsaExtractor.doctor)\n[Open Settings](command:nvIsaExtractor.openSettings)"
+      },
+      {
+        "view": "nvIsaExtractor.objects",
+        "when": "!nvIsaExtractor.hasBlob && nvIsaExtractor.activeBlob",
+        "enablement": "!nvIsaExtractor.busy",
+        "contents": "The file open in the editor looks like a shader cache.\n[$(circuit-board) Scan the Active File](command:nvIsaExtractor.disassemble)"
+      },
+      {
+        "view": "nvIsaExtractor.objects",
+        "when": "default",
+        "enablement": "!nvIsaExtractor.busy",
+        "contents": "No shader-cache file is open.\n[Open a Shader Cache...](command:nvIsaExtractor.openBlobDialog)\nYou can also right-click a .bin, .toc or .nvph file in the Explorer, or use the button in the editor title bar when one is already open.\n[Check the Environment](command:nvIsaExtractor.doctor)"
+      }
+    ],
     "commands": [
       {
         "command": "nvIsaExtractor.disassemble",
-        "title": "Disassemble Shader-Cache Blob...",
+        "title": "Open Shader-Cache File",
+        "category": "NVIDIA ISA",
+        "icon": "$(circuit-board)"
+      },
+      {
+        "command": "nvIsaExtractor.openBlobDialog",
+        "title": "Open Shader-Cache File (Choose File)...",
+        "category": "NVIDIA ISA",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "nvIsaExtractor.refreshBlob",
+        "title": "Rescan",
+        "category": "NVIDIA ISA",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nvIsaExtractor.closeBlob",
+        "title": "Remove from the List",
+        "category": "NVIDIA ISA",
+        "icon": "$(close)"
+      },
+      {
+        "command": "nvIsaExtractor.filter",
+        "title": "Filter Shader Objects...",
+        "category": "NVIDIA ISA",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "nvIsaExtractor.openObject",
+        "title": "Open Listing",
+        "category": "NVIDIA ISA",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "nvIsaExtractor.disassembleObject",
+        "title": "Disassemble",
+        "category": "NVIDIA ISA",
+        "icon": "$(play)"
+      },
+      {
+        "command": "nvIsaExtractor.toggleReviewed",
+        "title": "Toggle Reviewed",
+        "category": "NVIDIA ISA",
+        "icon": "$(check)"
+      },
+      {
+        "command": "nvIsaExtractor.clearReviewed",
+        "title": "Clear Review Marks",
+        "category": "NVIDIA ISA",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "nvIsaExtractor.nextObject",
+        "title": "Next Shader Object",
         "category": "NVIDIA ISA"
+      },
+      {
+        "command": "nvIsaExtractor.previousObject",
+        "title": "Previous Shader Object",
+        "category": "NVIDIA ISA"
+      },
+      {
+        "command": "nvIsaExtractor.nextUnreviewed",
+        "title": "Next Unreviewed Shader Object",
+        "category": "NVIDIA ISA"
+      },
+      {
+        "command": "nvIsaExtractor.loadMore",
+        "title": "Load More",
+        "category": "NVIDIA ISA",
+        "icon": "$(ellipsis)"
+      },
+      {
+        "command": "nvIsaExtractor.openSettings",
+        "title": "Open Settings",
+        "category": "NVIDIA ISA",
+        "icon": "$(settings-gear)"
       },
       {
         "command": "nvIsaExtractor.doctor",
@@ -44,6 +159,28 @@
         "category": "NVIDIA ISA"
       }
     ],
+    "keybindings": [
+      {
+        "command": "nvIsaExtractor.nextObject",
+        "key": "ctrl+alt+pagedown",
+        "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
+      },
+      {
+        "command": "nvIsaExtractor.previousObject",
+        "key": "ctrl+alt+pageup",
+        "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
+      },
+      {
+        "command": "nvIsaExtractor.nextUnreviewed",
+        "key": "ctrl+alt+shift+pagedown",
+        "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
+      },
+      {
+        "command": "nvIsaExtractor.toggleReviewed",
+        "key": "ctrl+alt+shift+m",
+        "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
+      }
+    ],
     "menus": {
       "explorer/context": [
         {
@@ -51,6 +188,125 @@
           "group": "navigation@50",
           "when": "resourceExtname =~ /^\\.(bin|toc|nvph)$/i"
         }
+      ],
+      "editor/title": [
+        {
+          "command": "nvIsaExtractor.disassemble",
+          "group": "navigation@50",
+          "when": "resourceExtname =~ /^\\.(bin|toc|nvph)$/i"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "nvIsaExtractor.disassemble",
+          "group": "navigation@10",
+          "when": "view == nvIsaExtractor.objects && nvIsaExtractor.activeBlob"
+        },
+        {
+          "command": "nvIsaExtractor.openBlobDialog",
+          "group": "navigation@20",
+          "when": "view == nvIsaExtractor.objects"
+        },
+        {
+          "command": "nvIsaExtractor.filter",
+          "group": "navigation@30",
+          "when": "view == nvIsaExtractor.objects && nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.refreshBlob",
+          "group": "navigation@40",
+          "when": "view == nvIsaExtractor.objects && nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.clearReviewed",
+          "group": "1_review@10",
+          "when": "view == nvIsaExtractor.objects && nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.doctor",
+          "group": "2_tools@10",
+          "when": "view == nvIsaExtractor.objects"
+        },
+        {
+          "command": "nvIsaExtractor.clearOutput",
+          "group": "2_tools@20",
+          "when": "view == nvIsaExtractor.objects"
+        },
+        {
+          "command": "nvIsaExtractor.openSettings",
+          "group": "2_tools@30",
+          "when": "view == nvIsaExtractor.objects"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nvIsaExtractor.disassembleObject",
+          "group": "inline@10",
+          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+        },
+        {
+          "command": "nvIsaExtractor.toggleReviewed",
+          "group": "inline@20",
+          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+        },
+        {
+          "command": "nvIsaExtractor.openObject",
+          "group": "1_open@10",
+          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+        },
+        {
+          "command": "nvIsaExtractor.disassembleObject",
+          "group": "1_open@20",
+          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+        },
+        {
+          "command": "nvIsaExtractor.toggleReviewed",
+          "group": "1_open@30",
+          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+        },
+        {
+          "command": "nvIsaExtractor.disassembleObject",
+          "group": "1_open@10",
+          "when": "view == nvIsaExtractor.objects && viewItem == nvCopy"
+        },
+        {
+          "command": "nvIsaExtractor.refreshBlob",
+          "group": "inline@10",
+          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvFile/"
+        },
+        {
+          "command": "nvIsaExtractor.closeBlob",
+          "group": "inline@20",
+          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvFile/"
+        },
+        {
+          "command": "nvIsaExtractor.disassembleObject",
+          "group": "1_batch@10",
+          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvFile/"
+        },
+        {
+          "command": "nvIsaExtractor.clearReviewed",
+          "group": "2_review@10",
+          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvFile/"
+        },
+        {
+          "command": "nvIsaExtractor.disassembleObject",
+          "group": "1_batch@10",
+          "when": "view == nvIsaExtractor.objects && viewItem == nvGroup"
+        }
+      ],
+      "commandPalette": [
+        { "command": "nvIsaExtractor.openObject", "when": "false" },
+        { "command": "nvIsaExtractor.loadMore", "when": "false" },
+        { "command": "nvIsaExtractor.closeBlob", "when": "false" },
+        { "command": "nvIsaExtractor.refreshBlob", "when": "nvIsaExtractor.hasBlob" },
+        { "command": "nvIsaExtractor.disassembleObject", "when": "nvIsaExtractor.hasBlob" },
+        { "command": "nvIsaExtractor.toggleReviewed", "when": "nvIsaExtractor.hasBlob" },
+        { "command": "nvIsaExtractor.clearReviewed", "when": "nvIsaExtractor.hasBlob" },
+        { "command": "nvIsaExtractor.nextObject", "when": "nvIsaExtractor.hasBlob" },
+        { "command": "nvIsaExtractor.previousObject", "when": "nvIsaExtractor.hasBlob" },
+        { "command": "nvIsaExtractor.nextUnreviewed", "when": "nvIsaExtractor.hasBlob" },
+        { "command": "nvIsaExtractor.filter", "when": "nvIsaExtractor.hasBlob" }
       ]
     },
     "languages": [
@@ -201,6 +457,52 @@
           "markdownDescription": "Keep the carved microcode next to the listing. It is always kept when nvdisasm fails, so that failure can be reproduced.",
           "scope": "window",
           "order": 150
+        },
+        "nvIsaExtractor.tree.sortBy": {
+          "type": "string",
+          "default": "size",
+          "enum": ["size", "offset", "name"],
+          "enumItemLabels": ["Largest first", "File order", "Entry name"],
+          "enumDescriptions": [
+            "Biggest shaders first - the ones most likely to be worth reading.",
+            "The order they appear in the file, which is roughly the order they were compiled. Use this for a systematic front-to-back pass.",
+            "Alphabetical by entry point. Most DXCache objects are unnamed and sort together at the end."
+          ],
+          "markdownDescription": "How shader objects are ordered in the Shader Objects view.",
+          "scope": "window",
+          "order": 190
+        },
+        "nvIsaExtractor.tree.autoGroupThreshold": {
+          "type": "number",
+          "default": 200,
+          "minimum": 1,
+          "markdownDescription": "Above this many shader objects, a file's contents are split into size buckets instead of one flat list. A DXCache bucket can hold ten thousand objects, which is not a list anyone can read.",
+          "scope": "window",
+          "order": 195
+        },
+        "nvIsaExtractor.tree.pageSize": {
+          "type": "number",
+          "default": 500,
+          "minimum": 0,
+          "markdownDescription": "How many rows a level shows before a `Load more…` entry. `0` shows everything at once.",
+          "scope": "window",
+          "order": 197
+        },
+        "nvIsaExtractor.batch.confirmAboveBytes": {
+          "type": "number",
+          "default": 268435456,
+          "minimum": 0,
+          "markdownDescription": "Ask before a batch disassembly whose listings would total more than this many bytes. Disassembling a whole cache file can produce gigabytes. `0` never asks.",
+          "scope": "window",
+          "order": 205
+        },
+        "nvIsaExtractor.tree.maxBlobs": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "markdownDescription": "How many cache files stay listed in the Shader Objects view at once. The least recently opened is dropped past this. Only the objects are kept, never the file's bytes, so this bounds a list rather than memory.",
+          "scope": "window",
+          "order": 200
         },
         "nvIsaExtractor.output.location": {
           "type": "string",
