@@ -151,10 +151,20 @@ function parseNvuc(payload) {
   const sections = [];
   for (let i = 0; i < count; i++) {
     const at = anchor + SECTION_TABLE_OFFSET + i * SECTION_ENTRY_SIZE;
+    // All eight words, not just the three that address a payload. Several section types are
+    // typed *slots* rather than sections: they carry their whole value in words 4 and 5 and
+    // leave `len` at zero, so anything that reaches them through `sectionData` - which needs
+    // a non-zero length - cannot see them at all. Local memory, shared memory and the driver
+    // flag word all live there.
     sections.push({
       type: payload.readUInt32LE(at),
       len: payload.readUInt32LE(at + 4),
-      off: payload.readUInt32LE(at + 8)
+      off: payload.readUInt32LE(at + 8),
+      w3: payload.readUInt32LE(at + 12),
+      w4: payload.readUInt32LE(at + 16),
+      w5: payload.readUInt32LE(at + 20),
+      w6: payload.readUInt32LE(at + 24),
+      w7: payload.readUInt32LE(at + 28)
     });
   }
 
@@ -183,6 +193,111 @@ function sectionData(payload, anchor, sections, type) {
   const end = start + best.len;
   if (start < 0 || end > payload.length) return null;
   return payload.subarray(start, end);
+}
+
+/**
+ * The first section-table entry of a given type, whether or not it addresses any payload.
+ *
+ * Separate from `sectionData` because the types worth reading this way have `len == 0` - the
+ * value is in the entry itself.
+ */
+function sectionEntry(sections, type) {
+  return sections.find(s => s.type === type) || null;
+}
+
+/**
+ * What the container says about a shader, beyond its code.
+ *
+ * All of it is reverse-engineered, so each field below records how far it has been checked.
+ * Measured across 10,950 objects from both caches on driver 596.72 / SM86:
+ *
+ *   stage      u32 at anchor+0x10, low half. Present and non-zero on every object, and
+ *              agrees with an independent classifier built from the instruction mix on all
+ *              8,068 that could be classified both ways - including 19 stubs too small for
+ *              the instruction-based rule to judge. The high half is always 0x0002.
+ *   registers  section 0x03, `{u32 count; u32 cap}`. Present on every object. `count` was
+ *              never below the highest register the disassembly actually uses.
+ *   local      section 0x15, word 4. Its presence is a perfect predictor of LDL/STL in the
+ *              code (no misses, no false alarms), and the value matches the highest static
+ *              local offset exactly wherever that can be computed.
+ *   shared     section 0x3c, word 5. Reliable where present, but effectively Vulkan/GL only -
+ *              see `sharedNote` for why absence must not be read as zero.
+ */
+const SECTION_REGISTERS = 0x03;
+const SECTION_LOCAL_MEM = 0x15;
+const SECTION_SHARED_MEM = 0x3c;
+const SECTION_PROGRAM_HEADER = 0x2d;
+
+const STAGE_NAMES = {
+  1: 'vertex', 2: 'pixel', 5: 'compute', 6: 'hull', 7: 'domain'
+};
+
+const STAGE_LABELS = {
+  vertex: 'VS', pixel: 'PS', compute: 'CS', hull: 'HS', domain: 'DS'
+};
+
+function readMetadata(payload, anchor, sections) {
+  const meta = {
+    stage: null, stageCode: null, registers: null, registerCap: null,
+    localBytes: null, sharedBytes: null, killsPixels: null
+  };
+
+  if (anchor + 0x14 <= payload.length) {
+    const code = payload.readUInt32LE(anchor + 0x10) & 0xffff;
+    meta.stageCode = code;
+    meta.stage = STAGE_NAMES[code] || null;
+  }
+
+  const regs = sectionEntry(sections, SECTION_REGISTERS);
+  if (regs && regs.len >= 8 && anchor + regs.off + 8 <= payload.length) {
+    meta.registers = payload.readUInt32LE(anchor + regs.off);
+    meta.registerCap = payload.readUInt32LE(anchor + regs.off + 4);
+  }
+
+  const local = sectionEntry(sections, SECTION_LOCAL_MEM);
+  if (local) meta.localBytes = local.w4;
+
+  const shared = sectionEntry(sections, SECTION_SHARED_MEM);
+  if (shared) meta.sharedBytes = shared.w5;
+
+  // Bit 15 of the shader program header's first word. Checked against the KILL instruction
+  // on 7,809 graphics objects with no disagreement either way. Compute objects have no
+  // program header, hence the null.
+  const sph = sectionEntry(sections, SECTION_PROGRAM_HEADER);
+  if (sph && sph.len >= 4 && anchor + sph.off + 4 <= payload.length) {
+    meta.killsPixels = !!(payload.readUInt32LE(anchor + sph.off) & (1 << 15));
+  }
+
+  return meta;
+}
+
+/** A short human summary of a shader's metadata, for a list row. */
+function describeMetadata(meta) {
+  if (!meta) return '';
+  const parts = [];
+  if (meta.stage) parts.push(STAGE_LABELS[meta.stage] || meta.stage);
+  if (meta.registers !== null) parts.push(`${meta.registers} regs`);
+  if (meta.localBytes) parts.push(`${meta.localBytes} B local`);
+  if (meta.sharedBytes) parts.push(`${meta.sharedBytes} B shared`);
+  return parts.join('  ·  ');
+}
+
+/**
+ * How to talk about shared memory, which is the one field that cannot be read as a number.
+ *
+ * The section carrying it is effectively Vulkan/GL only: of the compute objects that clearly
+ * use shared memory, the D3D12 ones simply have no such section. Printing "0 B" for those
+ * would be a plain falsehood, so absence and zero have to stay distinguishable, and the
+ * instruction mix is what tells them apart.
+ *
+ * @param {?number} sharedBytes  from the container, or null when the section is absent
+ * @param {?boolean} usesShared  whether the disassembly contains shared-memory accesses
+ */
+function sharedNote(sharedBytes, usesShared) {
+  if (sharedBytes !== null && sharedBytes !== undefined) return `${sharedBytes} bytes`;
+  if (usesShared) return 'used, but this cache does not record the size';
+  if (usesShared === false) return '0 bytes (no shared-memory access in the code)';
+  return 'not recorded';
 }
 
 /** Structural warnings about a carved object; empty when it looks right. */
@@ -230,6 +345,7 @@ function objectFromPayload(payload, source, offset, backend, stats) {
     codeBytes: microcode.length,
     instructions: Math.floor(microcode.length / INSTRUCTION_BYTES),
     sha1: crypto.createHash('sha1').update(microcode).digest('hex'),
+    metadata: readMetadata(payload, anchor, sections),
     warnings: validate(microcode)
   };
 }
@@ -338,10 +454,16 @@ module.exports = {
   SECTION_ENTRY_NAME,
   INSTRUCTION_BYTES,
   SKIP_REASONS,
+  STAGE_NAMES,
+  STAGE_LABELS,
   readTocEntries,
   dxLivePrefix,
   parseNvuc,
   sectionData,
+  sectionEntry,
+  readMetadata,
+  describeMetadata,
+  sharedNote,
   objectFromPayload,
   planFrames,
   enumerateObjects,

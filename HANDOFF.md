@@ -95,6 +95,26 @@ described the interface as verified; `git log --all -S` shows it never existed o
   0 and every microcode offset is a multiple of 16, so a payload truncated on a block
   boundary yields a shortfall that is *also* a multiple of 16 - it would pass validation and
   hold wrong instructions.
+- **Several section types have `len == 0` and carry their value in the entry itself.** They
+  are typed *slots*, not sections: `0x15` holds the local-memory size in word 4, `0x3c` the
+  shared-memory size in word 5, `0x45` a driver flag word. `sectionData` needs a non-zero
+  length, so anything reaching them that way sees nothing — which is why the container looked
+  like it held only microcode and a name. Use `sectionEntry` for these.
+- **Metadata field provenance** (measured over 10,950 objects, driver 596.72 / SM86): stage is
+  the low half of the `u32` at `anchor+0x10` (`1=VS 2=PS 5=CS 6=HS 7=DS`, high half always
+  `0x0002`); registers are `{count, cap}` in section `0x03`; local memory is `0x15` word 4;
+  shared memory is `0x3c` word 5; "discards pixels" is bit 15 of the shader program header
+  (`0x2d`) word 0. Geometry shaders never appeared in the corpus, so that enum value is a
+  guess — an unrecognised code is printed as a number rather than named.
+- **Never print `0 B` of shared memory just because `0x3c` is absent.** That section is
+  effectively Vulkan/GL-only; D3D12 compute shaders that clearly use shared memory have no
+  such section at all. `sharedNote()` keeps absent and zero distinguishable using the
+  instruction mix.
+- **Never subtract the register margin.** The declared count sits ~2 above the highest
+  register used, but the offset is empirical and is not always 2.
+- **`--print-life-ranges` is a silent no-op on raw microcode** — accepted, exit 0, output
+  byte-identical, no warning. The control-flow-graph flags are worse: they SIGSEGV. Neither
+  works without an ELF, so do not wire them in expecting output.
 - **The `.toc` stride is version-dependent** (24 bytes/u32 at v3, 32/u64 at v4). Both occur,
   and a freshly created cache is written as v3, so a v4-only reader silently finds nothing.
   Synthetic fixtures for both are in `test_zstd.js`; this machine's caches are all v4.

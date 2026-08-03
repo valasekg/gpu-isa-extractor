@@ -255,8 +255,36 @@ function glBlobs() {
           'the extension parses back every line it generated',
           `${parsedOk.length} of ${instructionLines.length}`);
 
+        // What the container states about the shader, cross-checked against its own code.
+        const meta = result.object.metadata;
+        check(!!meta, 'the carved object carries the container\'s metadata');
+        check(meta.stage !== null,
+          `the shader stage is recorded: ${meta.stage} (code ${meta.stageCode})`,
+          JSON.stringify(meta));
+        check(meta.registers !== null && meta.registers > 0,
+          `the register count is recorded: ${meta.registers} (cap ${meta.registerCap})`);
+
+        // The declared count must cover every register the code actually touches. If it did
+        // not, the field would be something else.
+        let maxR = -1;
+        const re = /\bR(\d+)\b/g;
+        let m;
+        while ((m = re.exec(result.text)) !== null) maxR = Math.max(maxR, Number(m[1]));
+        check(meta.registers >= maxR + 1,
+          'and it covers the highest register the disassembly uses',
+          `${meta.registers} declared vs R${maxR} used`);
+
+        // Local memory: the container's answer and the instruction mix must agree.
+        const usesLocal = /\b(?:LDL|STL)\b/.test(result.text);
+        check(usesLocal === (meta.localBytes !== null && meta.localBytes > 0),
+          'the declared local memory agrees with whether the code spills',
+          `declared ${meta.localBytes}, LDL/STL present: ${usesLocal}`);
+
         const file = await output.openListing(context, result, swept);
         const written = fs.readFileSync(file, 'utf8');
+        check(/^\/\/ stage      : /m.test(written) && /^\/\/ local mem  : /m.test(written),
+          'and all of it reaches the listing banner',
+          written.split('\n').slice(0, 12).join('\n'));
         check(opened.includes(file), 'the listing is opened in an editor');
         check(written.includes(`sha1 ${result.object.sha1}`) &&
               written.includes(result.object.source),

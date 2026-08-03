@@ -109,6 +109,12 @@ function matchesFilter(obj, filter) {
   const needle = filter.toLowerCase();
   if (obj.name && obj.name.toLowerCase().includes(needle)) return true;
   if (obj.sha1.startsWith(needle)) return true;
+  // A stage, by either its name or its short label - "pixel" and "ps" both work.
+  const meta = obj.metadata;
+  if (meta && meta.stage) {
+    if (meta.stage === needle) return true;
+    if ((nvcache.STAGE_LABELS[meta.stage] || '').toLowerCase() === needle) return true;
+  }
   if (/^(0x)?[0-9a-f]+$/i.test(filter)) {
     const wanted = filter.toLowerCase().startsWith('0x')
       ? parseInt(filter, 16) : Number(filter);
@@ -422,7 +428,14 @@ class ShaderObjectsProvider {
         : vscode.TreeItemCollapsibleState.None);
     item.id = node.id;
 
-    const parts = [`${obj.instructions.toLocaleString()} instr`, humanBytes(obj.codeBytes)];
+    const meta = obj.metadata;
+    const parts = [];
+    if (meta && meta.stage) parts.push(nvcache.STAGE_LABELS[meta.stage] || meta.stage);
+    parts.push(`${obj.instructions.toLocaleString()} instr`);
+    if (meta && meta.registers !== null) parts.push(`${meta.registers} regs`);
+    if (meta && meta.localBytes) parts.push(`${humanBytes(meta.localBytes)} local`);
+    if (meta && meta.sharedBytes) parts.push(`${humanBytes(meta.sharedBytes)} shared`);
+    parts.push(humanBytes(obj.codeBytes));
     if (obj.copies.length > 1) parts.push(`×${obj.copies.length}`);
     item.description = parts.join('  ·  ');
 
@@ -462,6 +475,21 @@ class ShaderObjectsProvider {
     const md = new vscode.MarkdownString();
     md.appendMarkdown(`**${obj.name || '(unnamed shader)'}**\n\n`);
     md.appendMarkdown(`|   |   |\n|---|---|\n`);
+    const meta = obj.metadata;
+    if (meta) {
+      if (meta.stage) md.appendMarkdown(`| stage | ${meta.stage} shader |\n`);
+      if (meta.registers !== null) {
+        md.appendMarkdown(`| registers | ${meta.registers} declared` +
+          (meta.registerCap !== null ? `, cap ${meta.registerCap}` : '') + ' |\n');
+      }
+      if (meta.localBytes !== null) {
+        md.appendMarkdown(`| local memory | ${meta.localBytes.toLocaleString()} bytes |\n`);
+      }
+      if (meta.sharedBytes !== null) {
+        md.appendMarkdown(`| shared memory | ${meta.sharedBytes.toLocaleString()} bytes |\n`);
+      }
+      if (meta.killsPixels) md.appendMarkdown(`| discards pixels | yes |\n`);
+    }
     md.appendMarkdown(`| microcode | ${obj.codeBytes.toLocaleString()} bytes |\n`);
     md.appendMarkdown(`| instructions | ${obj.instructions.toLocaleString()} |\n`);
     md.appendMarkdown(`| sha1 | \`${obj.sha1}\` |\n`);

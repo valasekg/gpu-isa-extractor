@@ -15,6 +15,8 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 
+const nvcache = require('./nvcache');
+
 const LISTING_EXT = '.nvsass';
 const LANGUAGE_ID = 'nvidia-sass';
 
@@ -56,8 +58,61 @@ function scratchDir(context) {
   return path.join(context.globalStorageUri.fsPath, 'scratch');
 }
 
+/**
+ * What the container states about a shader, as banner lines.
+ *
+ * These are the driver's own numbers, not anything derived from the disassembly - so they are
+ * printed as declared. In particular the register count is never adjusted: it sits a couple
+ * above the highest register the code touches, and quietly "correcting" for that would be
+ * inventing precision the format does not offer.
+ */
+function metadataLines(object, text) {
+  const meta = object.metadata;
+  if (!meta) return [];
+
+  const usesLocal = text === undefined ? undefined : /\b(?:LDL|STL)\b/.test(text);
+  const usesShared = text === undefined ? undefined : /\b(?:LDS|STS|ATOMS)\b/.test(text);
+
+  const lines = [];
+  const stage = meta.stage
+    ? `${meta.stage}${meta.stageCode !== null ? ` (code ${meta.stageCode})` : ''}`
+    : (meta.stageCode !== null ? `unrecognised stage code ${meta.stageCode}` : 'not recorded');
+  lines.push(`// stage      : ${stage}`);
+
+  if (meta.registers !== null) {
+    lines.push(`// registers  : ${meta.registers} declared` +
+      (meta.registerCap !== null ? `, cap ${meta.registerCap}` : ''));
+  }
+
+  lines.push(`// local mem  : ${meta.localBytes !== null ? `${meta.localBytes} bytes`
+    : (usesLocal ? 'used, but this cache does not record the size' : '0 bytes')}`);
+  lines.push(`// shared mem : ${nvcache.sharedNote(meta.sharedBytes, usesShared)}`);
+
+  if (meta.killsPixels !== null) {
+    lines.push(`// discards   : ${meta.killsPixels ? 'yes' : 'no'} (per the shader header)`);
+  }
+
+  // The container and the code are two independent statements about the same shader, so a
+  // disagreement means one of them was read wrong - which is worth knowing about.
+  const mismatches = [];
+  if (usesLocal === false && meta.localBytes) {
+    mismatches.push(`${meta.localBytes} bytes of local memory are declared, but no LDL/STL ` +
+      'appears in the code');
+  }
+  if (usesLocal === true && meta.localBytes === null) {
+    mismatches.push('the code uses local memory but the container declares none');
+  }
+  if (usesShared === false && meta.sharedBytes) {
+    mismatches.push(`${meta.sharedBytes} bytes of shared memory are declared, but no ` +
+      'shared-memory access appears in the code');
+  }
+  for (const note of mismatches) lines.push(`// NOTE: ${note}.`);
+
+  return lines;
+}
+
 function banner(result, sweepResult) {
-  const { object, arch, nvdisasm, nvdisasmVersion, command, annotation } = result;
+  const { object, arch, nvdisasm, nvdisasmVersion, command, annotation, text } = result;
   const pkg = require('../package.json');
   const lines = [
     `// Disassembled by ${pkg.displayName} ${pkg.version}`,
@@ -65,6 +120,7 @@ function banner(result, sweepResult) {
     `//              frame at offset ${object.offset}` +
       (sweepResult ? ` (${sweepResult.label}${sweepResult.scanned ? ', found by magic scan' : ''})` : ''),
     `// entry      : ${object.name || '(unnamed)'}`,
+    ...metadataLines(object, text),
     `// microcode  : ${object.codeBytes} bytes, ${object.instructions} instructions, ` +
       `sha1 ${object.sha1}`,
     // The literal EF_CUDA_<arch> token is what this extension's own hovers read to decide
@@ -251,6 +307,7 @@ module.exports = {
   listingDir,
   scratchDir,
   banner,
+  metadataLines,
   writeListing,
   openListing,
   showListing,

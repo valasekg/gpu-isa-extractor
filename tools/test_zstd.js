@@ -337,6 +337,54 @@ for (const prefixLen of [8, 0]) {
     'and is described for the user', JSON.stringify(nvcache.describeSkips(stats)));
 }
 
+section('7b. What the container says about a shader');
+
+{
+  // Several section types carry their whole value in the table entry and leave `len` at zero.
+  // Anything that reaches them through sectionData - which needs a length - cannot see them.
+  const payload = makeNvuc([
+    { type: 0x01, data: microcode },
+    { type: 0x21, data: entryName },
+    { type: 0x15, data: Buffer.alloc(0) },
+    { type: 0x03, data: Buffer.from([49, 0, 0, 0, 255, 0, 0, 0]) }
+  ], 8);
+  const parsed = nvcache.parseNvuc(payload);
+  check(!!parsed, 'the object parses');
+  check(parsed.sections.every(s => 'w4' in s && 'w7' in s),
+    'every section entry keeps all eight of its words');
+
+  const zeroLength = nvcache.sectionEntry(parsed.sections, 0x15);
+  check(!!zeroLength && zeroLength.len === 0,
+    'a zero-length slot is still reachable by type',
+    JSON.stringify(zeroLength));
+  check(nvcache.sectionData(payload, parsed.anchor, parsed.sections, 0x15) === null,
+    'while the length-based accessor cannot see it at all - which is why it was invisible');
+
+  const meta = nvcache.readMetadata(payload, parsed.anchor, parsed.sections);
+  check(meta.registers === 49 && meta.registerCap === 255,
+    'the declared register count and cap are read', JSON.stringify(meta));
+  check(meta.localBytes === 0, 'a local-memory slot is read from the entry, not a payload');
+
+  const withoutLocal = nvcache.parseNvuc(makeNvuc([{ type: 0x01, data: microcode }], 8));
+  const bare = nvcache.readMetadata(payload.subarray(0, 0), 0, withoutLocal.sections);
+  check(bare.localBytes === null,
+    'an absent slot reads as unknown, not as zero - the two are not the same thing');
+}
+
+{
+  // Shared memory is the one field that must never be printed as a bare number, because the
+  // section carrying it is effectively Vulkan-only and absent does not mean none.
+  check(nvcache.sharedNote(2048, true) === '2048 bytes', 'a recorded size is reported as such');
+  check(/does not record/.test(nvcache.sharedNote(null, true)),
+    'code that uses shared memory with no recorded size says exactly that',
+    nvcache.sharedNote(null, true));
+  check(/^0 bytes/.test(nvcache.sharedNote(null, false)),
+    'only code that demonstrably uses none is reported as zero',
+    nvcache.sharedNote(null, false));
+  check(nvcache.sharedNote(null, undefined) === 'not recorded',
+    'and with no disassembly to check, nothing is claimed');
+}
+
 check(nvcache.validate(Buffer.alloc(24))[0].includes('multiple of 16'),
   'microcode that is not a whole number of instructions is flagged');
 check(nvcache.validate(Buffer.alloc(0))[0].includes('empty'),

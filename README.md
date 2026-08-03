@@ -83,8 +83,27 @@ A cache file holds hundreds of shaders, so the view is built for working through
   a quarter of DXCache entries are duplicates.
 - Files with thousands of shaders split into size buckets automatically.
 
-Every generated listing carries a provenance banner: source file, offset, sha1,
-architecture, and the exact nvdisasm command used.
+Every generated listing carries a provenance banner: source file, offset, sha1, architecture,
+the exact nvdisasm command used, and what the cache itself records about the shader:
+
+```
+// stage      : pixel (code 2)
+// registers  : 8 declared, cap 255
+// local mem  : 0 bytes
+// shared mem : 0 bytes (no shared-memory access in the code)
+// discards   : no (per the shader header)
+```
+
+Stage, register count and local memory also appear in the view's rows, and you can filter by
+stage (`ps`, `vertex`, `cs`…). These are the driver's own numbers rather than anything guessed
+from the code — but the format is undocumented, so the extension checks them against the
+disassembly and says so in the banner if the two ever disagree.
+
+Two honesty notes. The register count is printed as declared; it runs a little above the
+highest register the code touches, and quietly subtracting that margin would invent precision
+the format does not offer. And shared memory is only recorded by the Vulkan/GL cache, so an
+absent value is reported as *"used, but this cache does not record the size"* rather than as
+zero whenever the code plainly uses it.
 
 ## Language support
 
