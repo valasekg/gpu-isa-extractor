@@ -130,6 +130,14 @@ described the interface as verified; `git log --all -S` shows it never existed o
   and `test_scoreboard.js` asserts it.
 - **Scoreboards are counters.** One wait routinely drains several arms. Any code that assumes
   a wait pairs with exactly one arm is wrong on ordinary compiler output.
+- **Do not implement this as a `DocumentHighlightProvider`.** It was, and it only worked on
+  part of the column. VS Code's occurrence highlighter resolves the *word* at the cursor and
+  gives up before calling any provider when there is none — so in `[B01-3--:…]` the leading
+  `B01` is one word and highlighted, while the `3` after a dash belongs to no word and the
+  provider was never invoked. A fixed-width field of single characters does not fit the
+  word-highlight model; `src/highlight.js` drives decorations off the selection instead.
+  `verify.py` also asserts the language's `wordPattern` matches a lone digit, which is what
+  ctrl+click and double-click need.
 
 ### The browser
 

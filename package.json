@@ -2,7 +2,7 @@
   "name": "nv-isa-extractor",
   "displayName": "NVIDIA ISA Extractor",
   "description": "Turn NVIDIA driver shader-cache blobs into readable SASS with decoded scheduling control codes, syntax highlighting and tooltips.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "gvalasek",
   "license": "MIT",
   "engines": {
@@ -296,17 +296,50 @@
         }
       ],
       "commandPalette": [
-        { "command": "nvIsaExtractor.openObject", "when": "false" },
-        { "command": "nvIsaExtractor.loadMore", "when": "false" },
-        { "command": "nvIsaExtractor.closeBlob", "when": "false" },
-        { "command": "nvIsaExtractor.refreshBlob", "when": "nvIsaExtractor.hasBlob" },
-        { "command": "nvIsaExtractor.disassembleObject", "when": "nvIsaExtractor.hasBlob" },
-        { "command": "nvIsaExtractor.toggleReviewed", "when": "nvIsaExtractor.hasBlob" },
-        { "command": "nvIsaExtractor.clearReviewed", "when": "nvIsaExtractor.hasBlob" },
-        { "command": "nvIsaExtractor.nextObject", "when": "nvIsaExtractor.hasBlob" },
-        { "command": "nvIsaExtractor.previousObject", "when": "nvIsaExtractor.hasBlob" },
-        { "command": "nvIsaExtractor.nextUnreviewed", "when": "nvIsaExtractor.hasBlob" },
-        { "command": "nvIsaExtractor.filter", "when": "nvIsaExtractor.hasBlob" }
+        {
+          "command": "nvIsaExtractor.openObject",
+          "when": "false"
+        },
+        {
+          "command": "nvIsaExtractor.loadMore",
+          "when": "false"
+        },
+        {
+          "command": "nvIsaExtractor.closeBlob",
+          "when": "false"
+        },
+        {
+          "command": "nvIsaExtractor.refreshBlob",
+          "when": "nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.disassembleObject",
+          "when": "nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.toggleReviewed",
+          "when": "nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.clearReviewed",
+          "when": "nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.nextObject",
+          "when": "nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.previousObject",
+          "when": "nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.nextUnreviewed",
+          "when": "nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.filter",
+          "when": "nvIsaExtractor.hasBlob"
+        }
       ]
     },
     "languages": [
@@ -345,63 +378,183 @@
       }
     ],
     "semanticTokenTypes": [
-      { "id": "sassOpcode", "description": "SASS instruction mnemonic" },
-      { "id": "sassModifier", "description": "Instruction postfix (.FTZ, .U32, ...)" },
-      { "id": "sassVectorReg", "description": "Per-thread (vector) register R0-R254, RZ" },
-      { "id": "sassUniformReg", "description": "Uniform (scalar) register UR0-UR63, URZ" },
-      { "id": "sassPredicate", "description": "Predicate register P0-P7, PT" },
-      { "id": "sassUniformPredicate", "description": "Uniform predicate UP0-UP7, UPT" },
-      { "id": "sassSpecialReg", "description": "Special system register SR_*, SRZ" },
-      { "id": "sassBarrier", "description": "Convergence / scoreboard barrier B0-B15, SB0-SB7" },
-      { "id": "sassConstBank", "description": "Constant memory reference c[][] / cx[UR][]" },
-      { "id": "sassAttribute", "description": "Attribute / interpolant space a[]" },
-      { "id": "sassImmediate", "description": "Immediate literal" },
-      { "id": "sassGuard", "description": "Guard predicate @P0 / @!P0" },
-      { "id": "sassLabel", "description": "Branch target label" }
+      {
+        "id": "sassOpcode",
+        "description": "SASS instruction mnemonic"
+      },
+      {
+        "id": "sassModifier",
+        "description": "Instruction postfix (.FTZ, .U32, ...)"
+      },
+      {
+        "id": "sassVectorReg",
+        "description": "Per-thread (vector) register R0-R254, RZ"
+      },
+      {
+        "id": "sassUniformReg",
+        "description": "Uniform (scalar) register UR0-UR63, URZ"
+      },
+      {
+        "id": "sassPredicate",
+        "description": "Predicate register P0-P7, PT"
+      },
+      {
+        "id": "sassUniformPredicate",
+        "description": "Uniform predicate UP0-UP7, UPT"
+      },
+      {
+        "id": "sassSpecialReg",
+        "description": "Special system register SR_*, SRZ"
+      },
+      {
+        "id": "sassBarrier",
+        "description": "Convergence / scoreboard barrier B0-B15, SB0-SB7"
+      },
+      {
+        "id": "sassConstBank",
+        "description": "Constant memory reference c[][] / cx[UR][]"
+      },
+      {
+        "id": "sassAttribute",
+        "description": "Attribute / interpolant space a[]"
+      },
+      {
+        "id": "sassImmediate",
+        "description": "Immediate literal"
+      },
+      {
+        "id": "sassGuard",
+        "description": "Guard predicate @P0 / @!P0"
+      },
+      {
+        "id": "sassLabel",
+        "description": "Branch target label"
+      }
     ],
     "semanticTokenModifiers": [
-      { "id": "dst", "description": "Operand is written by this instruction" },
-      { "id": "src", "description": "Operand is read by this instruction" },
-      { "id": "discard", "description": "Destination is RZ/URZ - the result is discarded" },
-      { "id": "tier1", "description": "First postfix after the opcode" },
-      { "id": "tier2", "description": "Second postfix" },
-      { "id": "tier3", "description": "Third and later postfixes" },
-      { "id": "reuse", "description": "Operand served from the reuse cache" }
+      {
+        "id": "dst",
+        "description": "Operand is written by this instruction"
+      },
+      {
+        "id": "src",
+        "description": "Operand is read by this instruction"
+      },
+      {
+        "id": "discard",
+        "description": "Destination is RZ/URZ - the result is discarded"
+      },
+      {
+        "id": "tier1",
+        "description": "First postfix after the opcode"
+      },
+      {
+        "id": "tier2",
+        "description": "Second postfix"
+      },
+      {
+        "id": "tier3",
+        "description": "Third and later postfixes"
+      },
+      {
+        "id": "reuse",
+        "description": "Operand served from the reuse cache"
+      }
     ],
     "semanticTokenScopes": [
       {
         "language": "nvidia-sass",
         "scopes": {
-          "sassOpcode": ["keyword.other.opcode.sass"],
-          "sassModifier": ["storage.modifier.postfix.sass"],
-          "sassModifier.tier1": ["storage.modifier.postfix.tier1.sass"],
-          "sassModifier.tier2": ["storage.modifier.postfix.tier2.sass"],
-          "sassModifier.tier3": ["storage.modifier.postfix.tier3.sass"],
-          "sassVectorReg": ["variable.other.register.vector.sass"],
-          "sassVectorReg.dst": ["variable.other.register.vector.sass"],
-          "sassVectorReg.src": ["variable.other.register.vector.sass"],
-          "sassVectorReg.discard": ["variable.other.register.vector.zero.sass"],
-          "sassUniformReg": ["variable.other.register.uniform.sass"],
-          "sassUniformReg.dst": ["variable.other.register.uniform.sass"],
-          "sassUniformReg.src": ["variable.other.register.uniform.sass"],
-          "sassUniformReg.discard": ["variable.other.register.uniform.zero.sass"],
-          "sassPredicate": ["variable.other.register.predicate.sass"],
-          "sassPredicate.dst": ["variable.other.register.predicate.sass"],
-          "sassPredicate.src": ["variable.other.register.predicate.sass"],
-          "sassPredicate.discard": ["variable.other.register.predicate.true.sass"],
-          "sassUniformPredicate": ["variable.other.register.uniform-predicate.sass"],
-          "sassUniformPredicate.dst": ["variable.other.register.uniform-predicate.sass"],
-          "sassUniformPredicate.src": ["variable.other.register.uniform-predicate.sass"],
-          "sassUniformPredicate.discard": ["variable.other.register.uniform-predicate.true.sass"],
-          "sassSpecialReg": ["variable.language.register.special.sass"],
-          "sassBarrier": ["variable.other.register.barrier.sass"],
-          "sassBarrier.dst": ["variable.other.register.barrier.sass"],
-          "sassBarrier.src": ["variable.other.register.barrier.sass"],
-          "sassConstBank": ["variable.other.constant-bank.sass"],
-          "sassAttribute": ["variable.other.attribute-space.sass"],
-          "sassImmediate": ["constant.numeric.sass"],
-          "sassGuard": ["keyword.control.guard.sass"],
-          "sassLabel": ["entity.name.label.sass"]
+          "sassOpcode": [
+            "keyword.other.opcode.sass"
+          ],
+          "sassModifier": [
+            "storage.modifier.postfix.sass"
+          ],
+          "sassModifier.tier1": [
+            "storage.modifier.postfix.tier1.sass"
+          ],
+          "sassModifier.tier2": [
+            "storage.modifier.postfix.tier2.sass"
+          ],
+          "sassModifier.tier3": [
+            "storage.modifier.postfix.tier3.sass"
+          ],
+          "sassVectorReg": [
+            "variable.other.register.vector.sass"
+          ],
+          "sassVectorReg.dst": [
+            "variable.other.register.vector.sass"
+          ],
+          "sassVectorReg.src": [
+            "variable.other.register.vector.sass"
+          ],
+          "sassVectorReg.discard": [
+            "variable.other.register.vector.zero.sass"
+          ],
+          "sassUniformReg": [
+            "variable.other.register.uniform.sass"
+          ],
+          "sassUniformReg.dst": [
+            "variable.other.register.uniform.sass"
+          ],
+          "sassUniformReg.src": [
+            "variable.other.register.uniform.sass"
+          ],
+          "sassUniformReg.discard": [
+            "variable.other.register.uniform.zero.sass"
+          ],
+          "sassPredicate": [
+            "variable.other.register.predicate.sass"
+          ],
+          "sassPredicate.dst": [
+            "variable.other.register.predicate.sass"
+          ],
+          "sassPredicate.src": [
+            "variable.other.register.predicate.sass"
+          ],
+          "sassPredicate.discard": [
+            "variable.other.register.predicate.true.sass"
+          ],
+          "sassUniformPredicate": [
+            "variable.other.register.uniform-predicate.sass"
+          ],
+          "sassUniformPredicate.dst": [
+            "variable.other.register.uniform-predicate.sass"
+          ],
+          "sassUniformPredicate.src": [
+            "variable.other.register.uniform-predicate.sass"
+          ],
+          "sassUniformPredicate.discard": [
+            "variable.other.register.uniform-predicate.true.sass"
+          ],
+          "sassSpecialReg": [
+            "variable.language.register.special.sass"
+          ],
+          "sassBarrier": [
+            "variable.other.register.barrier.sass"
+          ],
+          "sassBarrier.dst": [
+            "variable.other.register.barrier.sass"
+          ],
+          "sassBarrier.src": [
+            "variable.other.register.barrier.sass"
+          ],
+          "sassConstBank": [
+            "variable.other.constant-bank.sass"
+          ],
+          "sassAttribute": [
+            "variable.other.attribute-space.sass"
+          ],
+          "sassImmediate": [
+            "constant.numeric.sass"
+          ],
+          "sassGuard": [
+            "keyword.control.guard.sass"
+          ],
+          "sassLabel": [
+            "entity.name.label.sass"
+          ]
         }
       }
     ],
@@ -433,8 +586,16 @@
         "nvIsaExtractor.glcacheMode": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "toc", "scan"],
-          "enumItemLabels": ["Automatic", "Index only", "Scan only"],
+          "enum": [
+            "auto",
+            "toc",
+            "scan"
+          ],
+          "enumItemLabels": [
+            "Automatic",
+            "Index only",
+            "Scan only"
+          ],
           "enumDescriptions": [
             "Use the .toc index, and fall back to scanning if it yields nothing.",
             "Use the .toc index only. Finds nothing if its layout has changed.",
@@ -461,8 +622,16 @@
         "nvIsaExtractor.tree.sortBy": {
           "type": "string",
           "default": "size",
-          "enum": ["size", "offset", "name"],
-          "enumItemLabels": ["Largest first", "File order", "Entry name"],
+          "enum": [
+            "size",
+            "offset",
+            "name"
+          ],
+          "enumItemLabels": [
+            "Largest first",
+            "File order",
+            "Entry name"
+          ],
           "enumDescriptions": [
             "Biggest shaders first - the ones most likely to be worth reading.",
             "The order they appear in the file, which is roughly the order they were compiled. Use this for a systematic front-to-back pass.",
@@ -507,8 +676,14 @@
         "nvIsaExtractor.output.location": {
           "type": "string",
           "default": "globalStorage",
-          "enum": ["globalStorage", "temp"],
-          "enumItemLabels": ["Extension storage", "System temp directory"],
+          "enum": [
+            "globalStorage",
+            "temp"
+          ],
+          "enumItemLabels": [
+            "Extension storage",
+            "System temp directory"
+          ],
           "markdownDescription": "Where generated listings are written.",
           "scope": "window",
           "order": 160
@@ -529,6 +704,13 @@
           "scope": "window",
           "order": 15
         },
+        "nvidiaSass.scoreboard.highlight": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Highlight scoreboard dependencies as you move the cursor. Putting the caret on a scoreboard inside a control column marks the instructions on the other end of that dependency - the arms a wait is waiting to drain, or the wait that drains an arm.",
+          "scope": "window",
+          "order": 16
+        },
         "nvidiaSass.semanticHighlighting": {
           "type": "boolean",
           "default": true,
@@ -546,8 +728,14 @@
         "nvidiaSass.hover.detail": {
           "type": "string",
           "default": "concise",
-          "enum": ["concise", "elaborate"],
-          "enumItemLabels": ["Concise", "Elaborate"],
+          "enum": [
+            "concise",
+            "elaborate"
+          ],
+          "enumItemLabels": [
+            "Concise",
+            "Elaborate"
+          ],
           "enumDescriptions": [
             "Show the sourced opcode/postfix description and architecture availability.",
             "Also show an algorithmic model, operand behavior, execution domain, scheduling notes, current operand roles, and decoded active postfixes."
@@ -559,7 +747,14 @@
         "nvidiaSass.hover.architecture": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "turing", "ampere", "hopper", "blackwell", "any"],
+          "enum": [
+            "auto",
+            "turing",
+            "ampere",
+            "hopper",
+            "blackwell",
+            "any"
+          ],
           "markdownDescription": "Which architecture's instruction set to check opcodes against. `auto` reads the SM version from the file's `.headerflags` and falls back to `any`.",
           "scope": "window",
           "order": 40

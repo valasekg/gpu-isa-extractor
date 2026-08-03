@@ -3,20 +3,52 @@
 /**
  * Scoreboard dependencies, as editor navigation.
  *
- * Put the cursor on a scoreboard in a control column and the instructions on the other end of
- * that dependency light up: from a wait, the arms it is waiting to drain; from an arm, the
- * wait that drains it and everything else that wait covers. `F12` opens the same set in a peek
- * window, and `F7` steps through them, because VS Code drives both off these providers.
+ * Move the cursor onto a scoreboard inside a control column and the other end of that
+ * dependency lights up: from a wait, the instructions that armed it; from an arm, the wait
+ * that drains it and everything else that wait covers. `F12` opens the same set in a peek
+ * window.
  *
- * The analysis itself is in `src/scoreboard.js`, deliberately free of any editor API so it can
- * be tested directly. This file is only the wiring.
+ * **Why this draws its own decorations instead of implementing DocumentHighlightProvider.**
+ * VS Code's occurrence highlighter asks the language for the *word* at the cursor and gives up
+ * before calling any provider when there is none. A control column is a fixed-width field of
+ * single characters, and this language's word pattern only matches identifier-shaped runs - so
+ * in `[B01-3--:...]` the leading `B01` is one word and highlights fine, while the `3` after a
+ * dash is not part of any word and the provider was never invoked at all. That is a poor
+ * foundation for a feature whose whole subject is individual characters, so the selection
+ * drives the decorations directly and every position behaves the same way.
+ *
+ * The analysis itself is in `src/scoreboard.js`, deliberately free of any editor API.
  */
 
 const vscode = require('vscode');
 
 const scoreboard = require('./scoreboard');
 
-/** The instruction on a line, without its indentation. */
+const LANGUAGE_ID = 'nvidia-sass';
+
+/**
+ * How the two ends are drawn. Built on construction rather than at module load: touching the
+ * editor API while the module is merely being required makes it impossible to load this file
+ * for anything else, tests included.
+ */
+function decorationStyles() {
+  return {
+    /** The scoreboard the cursor is on. */
+    anchor: {
+      backgroundColor: new vscode.ThemeColor('editor.wordHighlightStrongBackground'),
+      borderRadius: '2px'
+    },
+    /** The instructions on the other end of the dependency. */
+    related: {
+      isWholeLine: true,
+      backgroundColor: new vscode.ThemeColor('editor.rangeHighlightBackground'),
+      overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.rangeHighlightForeground'),
+      overviewRulerLane: vscode.OverviewRulerLane.Center
+    }
+  };
+}
+
+/** The instruction text on a line, without its indentation. */
 function contentRange(document, line) {
   const text = document.lineAt(line);
   const start = typeof text.firstNonWhitespaceCharacterIndex === 'number'
@@ -33,33 +65,62 @@ function analyze(document, position) {
   }
 }
 
-class ScoreboardHighlightProvider {
-  /**
-   * Highlight both ends of the dependency.
-   *
-   * The arming instructions get `Write` and the waiting one `Read`, which is how VS Code
-   * colours a definition against its uses - and is the right way round here, since an arm
-   * increments the scoreboard and a wait only observes it.
-   */
-  provideDocumentHighlights(document, position) {
-    const hit = analyze(document, position);
-    if (!hit || hit.sb === null || !hit.related.length) return null;
+/**
+ * The ranges to decorate for a cursor position: the scoreboard it is on, and the instructions
+ * related to it. Split out from the editor plumbing so it can be tested directly.
+ */
+function decorationsFor(document, position) {
+  const hit = analyze(document, position);
+  if (!hit || hit.sb === null || !hit.related.length) return { anchor: [], related: [] };
 
-    const highlights = [
-      new vscode.DocumentHighlight(
-        new vscode.Range(position.line, hit.field.start, position.line, hit.field.end),
-        hit.role === 'wait' ? vscode.DocumentHighlightKind.Read
-          : vscode.DocumentHighlightKind.Write)
+  return {
+    anchor: [new vscode.Range(position.line, hit.field.start, position.line, hit.field.end)],
+    related: hit.related
+      .filter(line => line !== position.line)
+      .map(line => contentRange(document, line))
+  };
+}
+
+class ScoreboardHighlighter {
+  constructor() {
+    const styles = decorationStyles();
+    this.anchorType = vscode.window.createTextEditorDecorationType(styles.anchor);
+    this.relatedType = vscode.window.createTextEditorDecorationType(styles.related);
+    this.disposables = [
+      vscode.window.onDidChangeTextEditorSelection(e => this.update(e.textEditor)),
+      vscode.window.onDidChangeActiveTextEditor(editor => this.update(editor))
     ];
+  }
 
-    for (const line of hit.related) {
-      if (line === position.line) continue;
-      highlights.push(new vscode.DocumentHighlight(
-        contentRange(document, line),
-        hit.role === 'wait' ? vscode.DocumentHighlightKind.Write
-          : vscode.DocumentHighlightKind.Read));
-    }
-    return highlights;
+  enabled() {
+    return vscode.workspace.getConfiguration('nvidiaSass')
+      .get('scoreboard.highlight', true);
+  }
+
+  clear(editor) {
+    if (!editor) return;
+    editor.setDecorations(this.anchorType, []);
+    editor.setDecorations(this.relatedType, []);
+  }
+
+  update(editor) {
+    if (!editor || !editor.document || editor.document.languageId !== LANGUAGE_ID) return;
+    if (!this.enabled()) return this.clear(editor);
+
+    const { anchor, related } = decorationsFor(editor.document, editor.selection.active);
+    editor.setDecorations(this.anchorType, anchor);
+    editor.setDecorations(this.relatedType, related);
+  }
+
+  /** Redraw every visible editor, for when the setting changes. */
+  refresh() {
+    for (const editor of vscode.window.visibleTextEditors) this.update(editor);
+  }
+
+  dispose() {
+    for (const d of this.disposables) d.dispose();
+    this.anchorType.dispose();
+    this.relatedType.dispose();
   }
 }
 
@@ -68,7 +129,7 @@ class ScoreboardDefinitionProvider {
    * "Go to Definition" on a scoreboard means "show me what put it there".
    *
    * From a wait that is one location per arm, so the peek window lists them all; from an arm
-   * it is the single wait that drains it.
+   * it is the wait that drains it.
    */
   provideDefinition(document, position) {
     const hit = analyze(document, position);
@@ -79,4 +140,4 @@ class ScoreboardDefinitionProvider {
   }
 }
 
-module.exports = { ScoreboardHighlightProvider, ScoreboardDefinitionProvider };
+module.exports = { ScoreboardHighlighter, ScoreboardDefinitionProvider, decorationsFor };

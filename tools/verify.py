@@ -262,6 +262,26 @@ if re.search(r"CONTROL_COLUMN_VOLTA_RE\s*=\s*/\^\\\[\(B\[0-5-\]\{6\}\)", parse_s
 else:
     bad("parse.js has no CONTROL_COLUMN_VOLTA_RE matching the grammar's column shape")
 
+# A scoreboard slot inside a control column is a bare digit sitting between dashes. Editor
+# features that resolve "the word at the cursor" - ctrl+click, double-click, and VS Code's own
+# occurrence highlighter - give up entirely when the position is not inside a word, so a word
+# pattern that cannot match a lone digit makes `[B01-3--]` behave differently on the `3` than
+# on the `01`. That was a real bug; this keeps it from coming back.
+word_pattern = docs["language-configuration.json"].get("wordPattern", "")
+if word_pattern:
+    try:
+        wp = re.compile(word_pattern)
+        column = "[B01-3--:R-:W0:Y:S01]"
+        digit_at = column.index("3")
+        covered = any(m.start() <= digit_at < m.end() for m in wp.finditer(column))
+        if covered:
+            ok("the word pattern covers a lone scoreboard slot in a control column")
+        else:
+            bad("the word pattern cannot match a lone scoreboard digit",
+                "cursor features that resolve a word will skip it in %r" % column)
+    except re.error as e:
+        bad("wordPattern does not compile", e)
+
 # Also check the language-configuration and firstLine patterns.
 for where, pattern in [("languages[0].firstLine",
                         manifest["contributes"]["languages"][0].get("firstLine", ""))]:

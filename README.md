@@ -18,10 +18,10 @@ Hover any field for an explanation.
 
 ### Following a scoreboard
 
-Put the cursor on a scoreboard inside a control column and the other end of that dependency
-lights up. From a wait, the instructions that armed it; from an arm, the wait that drains it
-and everything else that wait covers. `F12` opens the same set in a peek window and `F7`
-steps through them.
+Move the cursor onto a scoreboard inside a control column — arrow keys are enough — and the
+other end of that dependency lights up. From a wait, the instructions that armed it; from an
+arm, the wait that drains it and everything else that wait covers. `F12` opens the same set in
+a peek window. Turn it off with `nvidiaSass.scoreboard.highlight`.
 
 The hover says how deep the scoreboard is:
 

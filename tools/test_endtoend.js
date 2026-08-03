@@ -80,13 +80,21 @@ const vscodeStub = {
     showInformationMessage() {},
     createOutputChannel() {
       return { appendLine() {}, clear() {}, show() {}, dispose() {} };
-    }
+    },
+    createTextEditorDecorationType: o => ({ o, dispose() {} }),
+    onDidChangeTextEditorSelection: () => ({ dispose() {} }),
+    onDidChangeActiveTextEditor: () => ({ dispose() {} }),
+    visibleTextEditors: []
   },
   languages: { async setTextDocumentLanguage() {} },
   extensions: { getExtension: () => null },
   commands: { registerCommand() { return { dispose() {} }; } },
   SemanticTokensBuilder: class { build() { return {}; } },
   SemanticTokensLegend: class { constructor(types, mods) { this.types = types; this.mods = mods; } },
+  Range: class { constructor(sl, sc, el, ec) { Object.assign(this, { sl, sc, el, ec }); } },
+  Location: class { constructor(uri, range) { Object.assign(this, { uri, range }); } },
+  ThemeColor: class { constructor(id) { this.id = id; } },
+  OverviewRulerLane: { Center: 2 },
   EventEmitter: class {
     constructor() { this.event = () => ({ dispose() {} }); }
     fire() {}

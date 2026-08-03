@@ -19,7 +19,7 @@
     ["\"", "\""],
     ["|", "|"]
   ],
-  "wordPattern": "(@!?)?[A-Za-z_][A-Za-z0-9_.]*|0[xX][0-9a-fA-F]+",
+  "wordPattern": "(@!?)?[A-Za-z_][A-Za-z0-9_.]*|0[xX][0-9a-fA-F]+|[0-9]+",
   "folding": {
     "markers": {
       "start": "^\\s*(?://-+\\s*\\.text\\.|\\.section\\b|\\s*(?:code|Function)\\s*(?:for|:)\\s)",

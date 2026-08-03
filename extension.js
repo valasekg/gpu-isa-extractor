@@ -6,7 +6,7 @@ const { SassSemanticTokensProvider, legend } = require('./src/semantic');
 const { SassHoverProvider } = require('./src/hover');
 const { SassDocumentSymbolProvider } = require('./src/symbols');
 const {
-  ScoreboardHighlightProvider, ScoreboardDefinitionProvider
+  ScoreboardHighlighter, ScoreboardDefinitionProvider
 } = require('./src/highlight');
 
 const blobstore = require('./src/blobstore');
@@ -71,6 +71,7 @@ function activate(context) {
   review.load(context.globalState);
 
   const semantic = new SassSemanticTokensProvider();
+  const highlighter = new ScoreboardHighlighter();
   const provider = new tree.ShaderObjectsProvider(context);
   const view = vscode.window.createTreeView(tree.VIEW_ID, {
     treeDataProvider: provider,
@@ -91,8 +92,8 @@ function activate(context) {
     vscode.languages.registerDocumentSymbolProvider(SELECTOR, new SassDocumentSymbolProvider()),
 
     // Put the cursor on a scoreboard in a control column and the other end of that dependency
-    // lights up; F12 peeks it, F7 walks it.
-    vscode.languages.registerDocumentHighlightProvider(SELECTOR, new ScoreboardHighlightProvider()),
+    // lights up; F12 peeks the same set.
+    highlighter,
     vscode.languages.registerDefinitionProvider(SELECTOR, new ScoreboardDefinitionProvider()),
 
     // Every handler lives in src/browser.js; these registrations stay one per line and
@@ -119,6 +120,7 @@ function activate(context) {
       // Semantic tokens are cached per document, so toggling the setting has to invalidate them.
       if (e.affectsConfiguration('nvidiaSass.semanticHighlighting') ||
           e.affectsConfiguration('nvidiaSass.semanticMaxLines')) semantic.refresh();
+      if (e.affectsConfiguration('nvidiaSass.scoreboard.highlight')) highlighter.refresh();
       if (e.affectsConfiguration('nvIsaExtractor.arch')) {
         // Listings are named after the architecture, so which ones count as already-generated
         // changes with it.

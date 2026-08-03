@@ -398,5 +398,78 @@ section('7. A real listing');
   }
 }
 
+/* ------------------------------------------------ 8. what the cursor lights up --- */
+
+section('8. Decorations follow the cursor');
+
+{
+  // The regression this section exists for: every slot in the mask must behave the same way.
+  // A digit sitting between dashes is not part of any word, and anything that resolves "the
+  // word at the cursor" first will skip it - which made `B01` highlight and `3` do nothing.
+  const Module = require('module');
+  const realResolve = Module._resolveFilename;
+  Module._resolveFilename = function (request, ...rest) {
+    if (request === 'vscode') return 'vscode';
+    return realResolve.call(this, request, ...rest);
+  };
+  require.cache.vscode = {
+    id: 'vscode',
+    filename: 'vscode',
+    loaded: true,
+    exports: {
+      Range: class { constructor(sl, sc, el, ec) { Object.assign(this, { sl, sc, el, ec }); } },
+      ThemeColor: class { constructor(id) { this.id = id; } },
+      OverviewRulerLane: { Center: 2 },
+      window: {
+        createTextEditorDecorationType: o => ({ o, dispose() {} }),
+        onDidChangeTextEditorSelection: () => ({ dispose() {} }),
+        onDidChangeActiveTextEditor: () => ({ dispose() {} }),
+        visibleTextEditors: []
+      },
+      workspace: { getConfiguration: () => ({ get: (k, d) => d }) },
+      languages: {},
+      Location: class { constructor(uri, range) { Object.assign(this, { uri, range }); } }
+    }
+  };
+  const highlight = require(path.join(__dirname, '..', 'src', 'highlight.js'));
+
+  const lines = [
+    ins(0x00, col({ write: 0 }), 'LDG.E R1, [UR4]'),
+    ins(0x10, col({ write: 1 }), 'LDG.E R2, [UR6]'),
+    ins(0x20, col({ write: 3 }), 'LDG.E R4, [UR8]'),
+    ins(0x30, col({ wait: [0, 1, 3] }), 'FMUL.FTZ R3, R1, R2')
+  ];
+  const d = doc(lines);
+  const waitLine = lines[3];
+
+  // Every armed slot, including the ones a word-based lookup would never reach.
+  for (const [sb, armLine] of [[0, 0], [1, 1], [3, 2]]) {
+    const at = { line: 3, character: waitCursor(waitLine, sb) };
+    const { anchor, related } = highlight.decorationsFor(d, at);
+    check(anchor.length === 1,
+      `the cursor on slot ${sb} marks the scoreboard it is on`, JSON.stringify(anchor));
+    check(related.length === 1 && related[0].sl === armLine,
+      `and lights up the instruction that armed scoreboard ${sb}`,
+      JSON.stringify(related.map(r => r.sl)));
+  }
+
+  // Slot 3 is the one that used to do nothing: it sits after a dash, so it belongs to no word.
+  const dashNeighbour = { line: 3, character: waitCursor(waitLine, 2) };
+  check(highlight.decorationsFor(d, dashNeighbour).related.length === 0,
+    'an unarmed slot between armed ones lights up nothing');
+
+  const outside = { line: 3, character: 0 };
+  check(highlight.decorationsFor(d, outside).anchor.length === 0,
+    'and a cursor outside the column marks nothing');
+
+  // The line the cursor is on is never listed as related to itself.
+  const armAt = { line: 0, character: fieldCursor(lines[0], 'W') };
+  const fromArm = highlight.decorationsFor(d, armAt);
+  check(fromArm.related.length === 1 && fromArm.related[0].sl === 3,
+    'from an arm, the wait that drains it lights up',
+    JSON.stringify(fromArm.related.map(r => r.sl)));
+  check(!fromArm.related.some(r => r.sl === 0), 'and never the cursor\'s own line');
+}
+
 console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);
