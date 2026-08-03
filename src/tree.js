@@ -588,6 +588,28 @@ class ShaderObjectsProvider {
     return out;
   }
 
+  /**
+   * Build every level down to `id` and return the node this provider actually handed out,
+   * or null.
+   *
+   * `reveal()` will only accept a node whose whole parent chain the editor has already been
+   * given. The walk works from `visibleObjects()`, which describes rows that may sit inside a
+   * collapsed group or past a "Load more" boundary and so have never been built - revealing
+   * one of those fails, and fails *silently*, because the editor logs the rejection rather
+   * than raising it. Walking the levels here is what makes the tree follow along.
+   */
+  materialize(id) {
+    let level = this.getChildren();
+    for (let depth = 0; depth < 8; depth++) {
+      const exact = level.find(n => n.id === id);
+      if (exact) return exact;
+      const branch = level.find(n => id.startsWith(`${n.id}/`));
+      if (!branch) return null;
+      level = this.getChildren(branch);
+    }
+    return null;
+  }
+
   /** Expand paging until `id` is actually rendered, so reveal() can find it. */
   ensureVisible(id) {
     const pageSize = Number(settings().get('tree.pageSize'));

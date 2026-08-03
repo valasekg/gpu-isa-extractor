@@ -407,7 +407,8 @@ else:
 declared_settings = set(contributes.get("configuration", {}).get("properties", {}))
 JS_SOURCES = ("extension.js", "src/pipeline.js", "src/output.js", "src/doctor.js",
               "src/semantic.js", "src/hover.js", "src/blobstore.js", "src/tree.js",
-              "src/browser.js", "src/review.js", "src/scoreboard.js", "src/highlight.js")
+              "src/browser.js", "src/review.js", "src/scoreboard.js", "src/highlight.js",
+              "src/symbols.js", "src/stats.js", "src/nvcache.js")
 JS_SOURCES = tuple(s for s in JS_SOURCES if os.path.exists(rel(*s.split("/"))))
 
 # A configuration section is reached either directly (`getConfiguration('x').get('y')`) or
@@ -496,8 +497,15 @@ for js in JS_SOURCES:
     # the template form: setContext(`nvIsaExtractor.${key}`) with the keys passed in
     for call in re.findall(r"setContext\(\s*['\"]([\w.]+)['\"]\s*,", text):
         set_keys.add(call)
-used_keys = set(re.findall(r"nvIsaExtractor\.(hasBlob|activeBlob|toolsReady|busy|blobCount|"
-                           r"filterActive)\b", manifest_text))
+# Every own context key the manifest tests, found rather than listed - a hand-kept whitelist
+# quietly stops covering a key the moment one is renamed or mistyped.
+used_keys = set()
+for clause in re.findall(r'"(?:when|enablement)"\s*:\s*"((?:[^"\\]|\\.)*)"', manifest_text):
+    for name in re.findall(r"nvIsaExtractor\.([A-Za-z][\w.]*)", clause):
+        # `view == nvIsaExtractor.objects` names a view, not a context key, and views are
+        # checked separately above.
+        if "nvIsaExtractor.%s" % name not in declared_views:
+            used_keys.add(name)
 missing_keys = used_keys - set_keys
 if missing_keys:
     bad("a when-clause names a context key nothing sets", " ".join(sorted(missing_keys)))
@@ -684,7 +692,8 @@ if not cmd:
          "Set VSCODE_EXE to a Code.exe, or install Node, to run the JavaScript suites.")
 else:
     for script in ("test_parse.js", "test_hover.js", "test_semantic.js", "test_explain.js",
-                   "test_ctrl.js", "test_zstd.js", "test_scoreboard.js", "test_blobstore.js",
+                   "test_ctrl.js", "test_zstd.js", "test_scoreboard.js", "test_stats.js",
+                   "test_blobstore.js",
                    "test_browser.js", "test_endtoend.js"):
         proc = subprocess.run(cmd + [rel("tools", script)],
                               env=env, cwd=ROOT, capture_output=True, text=True)

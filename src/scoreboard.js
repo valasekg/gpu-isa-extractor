@@ -33,10 +33,9 @@
  * One consequence is worth handling rather than merely disclaiming. At a branch target the
  * instructions immediately above belong to the path that jumps *over* this one, so a strict
  * scan stops at their drain and reports that nothing armed the scoreboard. A compiler does
- * not emit a wait for nothing, so that result is a tell: the scan continues from the drain to
- * find the arms that were outstanding before the branch, and reports them as a reading of
- * another path. Measured on real output, this is what separates 82% of waits resolving from
- * 100%.
+ * not emit a wait for nothing, so that result is a tell: the branches naming this
+ * instruction's address are found, and the scoreboard is read as it stood when each jumped.
+ * Measured on real output, this is what separates 82% of waits resolving from 100%.
  */
 
 const { parseLine } = require('./parse');
@@ -47,11 +46,21 @@ const DEFAULT_LIMIT = 4000;
 /** A branch target: control can arrive here from somewhere the scan cannot see. */
 const LABEL_RE = /^\s*(\.?[A-Za-z_][\w.$]*)\s*:\s*$/;
 
-/** Instructions that move control somewhere other than the next address. */
+/**
+ * Instructions that move control somewhere other than the next address.
+ *
+ * Only real transfers belong here. `BSSY` merely records where divergent paths will
+ * reconverge, and `KILL`, `YIELD` and `BPT` do not redirect control at all - counting any of
+ * them would make ordinary straight-line code report itself as uncertain and point the reader
+ * at an instruction that branches nowhere.
+ */
 const BRANCH_OPCODES = new Set([
-  'BRA', 'BRX', 'BRXU', 'JMP', 'JMX', 'JMXU', 'CALL', 'RET', 'EXIT',
-  'BSSY', 'BSYNC', 'BREAK', 'BPT', 'RTT', 'WARPSYNC', 'YIELD', 'KILL'
+  'BRA', 'BRX', 'BRXU', 'JMP', 'JMX', 'JMXU', 'CALL', 'RET', 'EXIT', 'BREAK', 'BSYNC'
 ]);
+
+/** A branch and the address it names, on one listing line. */
+const BRANCH_TARGET_RE = /\b(?:BRA|BRX|JMP|JMX|CALL)\b[^;]*?0x([0-9a-fA-F]+)/;
+const ADDRESS_RE = /\/\*([0-9a-fA-F]+)\*\//;
 
 const NO_SCOREBOARD = '-';
 
@@ -127,28 +136,64 @@ function classify(text) {
  * @returns {{sb, waitLine, arms, value, drainLine, truncated, reachedStart, crossedLabel,
  *            crossedBranch, exact}}
  */
-function armsFor(document, line, sb, { limit = DEFAULT_LIMIT, hops = 2 } = {}) {
+function armsFor(document, line, sb, { limit = DEFAULT_LIMIT } = {}) {
   const strict = scanBack(document, line, sb, limit);
+  if (strict.arms.length || strict.drainLine === null) {
+    return { ...strict, waitLine: line, alternatePath: false, pathJoin: null };
+  }
 
-  // A wait that resolves to nothing is not something a compiler emits, so when the strict
-  // scan comes up empty it has almost certainly stopped at a drain belonging to a different
-  // control-flow path. That happens at branch targets: the instructions immediately above are
-  // the tail of the path that jumps *over* this one, and the arms being waited on are further
-  // back, before the branch. Continuing from that drain finds them - as a reading of another
-  // path, which is what the caller is told.
-  if (!strict.arms.length && strict.drainLine !== null && hops > 0) {
-    const earlier = armsFor(document, strict.drainLine, sb, { limit, hops: hops - 1 });
-    if (earlier.arms.length) {
+  // A compiler does not emit a wait for nothing, so a wait that resolves to nothing means the
+  // scan followed a path that never reaches it. That happens at a branch target: the
+  // instructions immediately above are the tail of the path that jumps *over* this one, and
+  // their drain is not ours.
+  //
+  // The arms have to be looked for where control actually came from. Simply resuming at the
+  // drain is not good enough - anything armed between the branch and that drain belongs to
+  // the path that was skipped, and reporting it would name arms outstanding on no path at
+  // all. So find the branches that name this instruction's address and read the scoreboard as
+  // it stood when each of them jumped.
+  for (const source of branchSourcesTo(document, line, limit)) {
+    const viaBranch = scanBack(document, source + 1, sb, limit);
+    if (viaBranch.arms.length) {
       return {
-        ...earlier,
+        ...viaBranch,
         waitLine: line,
         alternatePath: true,
-        pathJoin: strict.drainLine,
+        pathJoin: source,
         exact: false
       };
     }
   }
   return { ...strict, waitLine: line, alternatePath: false, pathJoin: null };
+}
+
+/** The address in a line's `/*…*\/` comment, or null. */
+function addressOf(text) {
+  const m = ADDRESS_RE.exec(text);
+  return m ? parseInt(m[1], 16) : null;
+}
+
+/**
+ * Lines holding a branch that jumps to the instruction on `line`, nearest first.
+ *
+ * Bounded like every other scan here. Only looks backwards: a branch that skips a block jumps
+ * forward, which is the shape that creates a join point. A loop header reached from below is
+ * not resolved this way, and is reported as unresolved rather than guessed at.
+ */
+function branchSourcesTo(document, line, limit) {
+  const target = addressOf(lineText(document, line));
+  if (target === null) return [];
+
+  const sources = [];
+  let scanned = 0;
+  for (let at = line - 1; at >= 0 && scanned < limit; at--) {
+    const text = lineText(document, at);
+    const m = BRANCH_TARGET_RE.exec(text);
+    if (!m) continue;
+    scanned++;
+    if (parseInt(m[1], 16) === target) sources.push(at);
+  }
+  return sources;
 }
 
 function scanBack(document, line, sb, limit) {

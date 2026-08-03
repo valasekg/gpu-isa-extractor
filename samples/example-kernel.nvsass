@@ -1,9 +1,29 @@
-// Disassembled by NVIDIA ISA Extractor 0.1.0
-// source     : C:\Users\gvalasek\AppData\Local\NVIDIA\GLCache\a1b087166f9d5c0f449a8f5cbe970210\722c2402948fda93\648bf5c69af8e551.bin
-//              frame at offset 265348 (GLCache blob)
-// entry      : colorizeOverlayMain_2
-// microcode  : 3200 bytes, 200 instructions, sha1 fd89076810a481d90484c8064415908f512f9b38
-// arch       : SM86 (.headerflags @"EF_CUDA_64BIT_ADDRESS EF_CUDA_SM86")
+//============================================================================
+// colorizeOverlayMain_2 - compute shader
+//============================================================================
+// stage         : compute (code 5)
+// registers     : 24 declared, cap 255
+// local mem     : 0 bytes
+// shared mem    : 0 bytes (no shared-memory access in the code)
+// instructions  : 200, 188 live (12 trailing NOP pad)
+// mix           : Floating Point 59%   Integer 12%   Movement 9.0%   Miscellaneous 8.0%   Load/Store 5.0%
+// uses          : textures
+// control flow  : 1 BSSY/BSYNC pair;  no backward branches
+// scheduling    : 1.98 stall cycles/instr   11% wait   14% arm   79% yield   10% reuse
+//                 395 static issue cycles - one warp on a straight line, ignoring memory
+//                 latency, occupancy and loop counts. A floor on issue, not a performance figure.
+// registers used: R0-R21   UR0-UR4   P0-P4
+// const banks   : c[0x0]
+// predicated    : 19% of instructions
+//----------------------------------------------------------------------------
+// source        : C:\Users\gvalasek\AppData\Local\NVIDIA\GLCache\a1b087166f9d5c0f449a8f5cbe970210\722c2402948fda93\648bf5c69af8e551.bin
+//                 frame at offset 265348 (GLCache blob)
+// microcode     : 3200 bytes, sha1 fd89076810a481d90484c8064415908f512f9b38
+// arch          : SM86 (.headerflags @"EF_CUDA_64BIT_ADDRESS EF_CUDA_SM86")
+// nvdisasm      : nvdisasm.exe
+//                 Cuda compilation tools, release 13.1, V13.1.115
+//                 nvdisasm.exe --binary SM86 --no-dataflow <carved>.bin
+// tool          : NVIDIA ISA Extractor 0.4.0
 //
 // Control codes decoded from bits [105,126) of each instruction and printed as
 //   [B<wait 0-5>:R<read>:W<write>:<yield>:S<stall>]

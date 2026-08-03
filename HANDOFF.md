@@ -150,6 +150,23 @@ described the interface as verified; `git log --all -S` shows it never existed o
   and `test_scoreboard.js` asserts it.
 - **Scoreboards are counters.** One wait routinely drains several arms. Any code that assumes
   a wait pairs with exactly one arm is wrong on ordinary compiler output.
+- **Resolving a join point by resuming at the drain is wrong.** An arm between the branch and
+  that drain belongs to the path that was jumped over, so it is outstanding on *no* path
+  reaching the target. `branchSourcesTo()` finds the branches naming the target's address and
+  reads the scoreboard as it stood when each jumped; `test_scoreboard.js` has the case.
+- **Generated listings stay plain ASCII.** They get opened by whatever the user has to hand,
+  not only by an editor that knows the file is UTF-8. `test_endtoend.js` asserts it.
+- **`viewsWelcome` has no `"when": "default"`.** VS Code deserialises the string as a context
+  key before it ever compares it to the literal, so such a block never renders and the pane is
+  simply blank. Every welcome block here carries an explicit condition, and between them they
+  cover every state.
+- **`reveal()` reports failure by logging, not by rejecting.** It only accepts a node whose
+  whole parent chain the editor has already been given, and `visibleObjects()` describes rows
+  that may never have been built — inside a collapsed bucket, or past a "Load more". Revealing
+  one of those silently does nothing, which pinned the walk at every bucket boundary because
+  the position was then read back off a selection that had not moved. `provider.materialize()`
+  walks the levels first, and `browser.walkCursor` tracks the position independently of the
+  selection. Neither is optional; a stubbed `reveal()` in a test cannot catch this.
 - **Do not implement this as a `DocumentHighlightProvider`.** It was, and it only worked on
   part of the column. VS Code's occurrence highlighter resolves the *word* at the cursor and
   gives up before calling any provider when there is none — so in `[B01-3--:…]` the leading

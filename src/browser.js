@@ -23,6 +23,8 @@ let view = null;
 let log = () => {};
 let showLog = () => {};
 let store = blobstore;
+/** The shader the walk is on, which is not always the one the tree has selected. */
+let walkCursor = null;
 
 function init(options) {
   ctx = options.context;
@@ -33,6 +35,15 @@ function init(options) {
   // Defaults to the real store; taken as a parameter so the commands can be exercised
   // against fabricated records.
   store = options.store || blobstore;
+  walkCursor = null;
+
+  // Clicking a row is the other way the walk gets repositioned.
+  if (view && typeof view.onDidChangeSelection === 'function') {
+    view.onDidChangeSelection(e => {
+      const first = e && e.selection && e.selection.length ? e.selection[0] : null;
+      if (first && first.kind === 'nvObject') walkCursor = first.id;
+    });
+  }
 }
 
 // --------------------------------------------------------------------------- target
@@ -564,6 +575,10 @@ async function clearReviewed(node) {
  * out which shader it is.
  */
 function currentIndex(objects) {
+  if (walkCursor) {
+    const at = objects.findIndex(n => n.id === walkCursor);
+    if (at >= 0) return at;
+  }
   const selected = view && view.selection && view.selection.length ? view.selection[0] : null;
   if (selected && selected.kind === 'nvObject') {
     const at = objects.findIndex(n => n.id === selected.id);
@@ -606,11 +621,19 @@ async function walk(step, { unreviewedOnly = false } = {}) {
 }
 
 async function goTo(node) {
+  // Where the walk is, tracked independently of the tree selection. `reveal()` reports a
+  // failure by logging it rather than rejecting, so a selection that did not move is
+  // indistinguishable from one that did - and reading the position back off the selection
+  // would then hand out the same shader on every press.
+  walkCursor = node.id;
+
   provider.ensureVisible(node.id);
-  const live = provider.getNode(node.id) || node;
-  try {
-    await view.reveal(live, { select: true, focus: false });
-  } catch (e) { /* the node may not be materialised yet; opening it still works */ }
+  const live = provider.materialize(node.id);
+  if (live) {
+    try {
+      await view.reveal(live, { select: true, focus: false });
+    } catch (e) { /* the view may be hidden; the listing still opens */ }
+  }
   // preview: true replaces the listing tab instead of stacking one per shader.
   await openObject(node, { preview: true });
 }

@@ -283,18 +283,67 @@ section('5. Control-flow honesty');
     ins(0x50, col({}), 'EXIT')
   ]);
 
-  const strict = scoreboard.armsFor(d, 4, 0, { hops: 0 });
-  check(strict.value === 0,
-    'a strict scan from a branch target finds nothing - it stopped at another path\'s drain');
-
   const a = scoreboard.armsFor(d, 4, 0);
   check(a.value === 1 && a.arms[0].line === 0,
-    'continuing past that drain finds the arm the branch path is really waiting on',
+    'the arm the branch path is really waiting on is found',
     JSON.stringify({ value: a.value, arms: a.arms.map(x => x.line) }));
-  check(a.alternatePath === true && a.pathJoin === 2,
-    'and says so, naming where the paths join',
+  check(a.alternatePath === true && a.pathJoin === 1,
+    'and it says so, naming the branch control actually came from',
     JSON.stringify({ alternatePath: a.alternatePath, pathJoin: a.pathJoin }));
   check(a.exact === false, 'such an answer is never presented as exact');
+}
+
+{
+  // The trap in resolving a join point by simply resuming at the drain: an arm sitting
+  // BETWEEN the branch and that drain belongs to the path that was jumped over. It is
+  // outstanding on no path that reaches the target, and naming it would be worse than saying
+  // nothing. Only the scoreboard as it stood when the branch jumped is a real answer.
+  const d = doc([
+    ins(0x00, col({}), '@P0 BRA 0x50'),                      // jumps to line 4, skipping 1-3
+    ins(0x10, col({ write: 0 }), 'LDG.E R1, [UR4]'),         // fall-through only
+    ins(0x20, col({ wait: [0] }), 'IADD3 R5, R1, RZ, RZ'),   // fall-through drain
+    ins(0x30, col({}), 'BRA 0x60'),
+    ins(0x50, col({ wait: [0] }), 'FADD R6, R2, RZ'),        // the branch target
+    ins(0x60, col({}), 'EXIT')
+  ]);
+
+  const a = scoreboard.armsFor(d, 4, 0);
+  check(a.value === 0,
+    'an arm that only the skipped path executed is not reported',
+    JSON.stringify({ value: a.value, arms: a.arms.map(x => x.line) }));
+  check(a.alternatePath === false,
+    'and no false claim is made about where control came from');
+}
+
+{
+  // Several branches can converge on one target; the arms outstanding at the one that has
+  // any must be found rather than the search stopping at the first.
+  const d = doc([
+    ins(0x00, col({}), '@P0 BRA 0x40'),
+    ins(0x10, col({ write: 2 }), 'LDG.E R1, [UR4]'),
+    ins(0x20, col({}), '@P1 BRA 0x40'),
+    ins(0x30, col({ wait: [2] }), 'IADD3 R9, R1, RZ, RZ'),
+    ins(0x40, col({ wait: [2] }), 'FADD R6, R1, RZ')
+  ]);
+  const a = scoreboard.armsFor(d, 4, 2);
+  check(a.value === 1 && a.arms[0].line === 1 && a.pathJoin === 2,
+    'the nearest branch that leaves an arm outstanding is the one reported',
+    JSON.stringify({ value: a.value, arms: a.arms.map(x => x.line), join: a.pathJoin }));
+}
+
+{
+  // BSSY records a reconvergence point and KILL discards a pixel; neither redirects control,
+  // so neither should cost a straight-line answer its exactness.
+  const d = doc([
+    ins(0x00, col({ write: 1 }), 'LDG.E R1, [UR4]'),
+    ins(0x10, col({}), 'BSSY B0, 0x40'),
+    ins(0x20, col({}), '@P0 KILL'),
+    ins(0x30, col({ wait: [1] }), 'FADD R2, R1, RZ')
+  ]);
+  const a = scoreboard.armsFor(d, 3, 1);
+  check(a.value === 1 && a.crossedBranch === null && a.exact === true,
+    'BSSY and KILL do not make a straight-line answer uncertain',
+    JSON.stringify({ crossedBranch: a.crossedBranch, exact: a.exact }));
 }
 
 {

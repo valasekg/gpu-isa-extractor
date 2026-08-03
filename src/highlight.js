@@ -81,15 +81,34 @@ function decorationsFor(document, position) {
   };
 }
 
+/**
+ * How long to wait after the cursor stops before looking anything up.
+ *
+ * Holding an arrow key down fires a selection change per repeat, and resolving a dependency
+ * means walking back over as many as a few thousand instructions - fine once, wasteful sixty
+ * times a second while the caret is still moving.
+ */
+const SETTLE_MS = 50;
+
 class ScoreboardHighlighter {
   constructor() {
     const styles = decorationStyles();
     this.anchorType = vscode.window.createTextEditorDecorationType(styles.anchor);
     this.relatedType = vscode.window.createTextEditorDecorationType(styles.related);
+    this.timer = null;
+    this.lastKey = null;
     this.disposables = [
-      vscode.window.onDidChangeTextEditorSelection(e => this.update(e.textEditor)),
-      vscode.window.onDidChangeActiveTextEditor(editor => this.update(editor))
+      vscode.window.onDidChangeTextEditorSelection(e => this.schedule(e.textEditor)),
+      vscode.window.onDidChangeActiveTextEditor(editor => this.schedule(editor))
     ];
+  }
+
+  schedule(editor) {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.update(editor);
+    }, SETTLE_MS);
   }
 
   enabled() {
@@ -107,17 +126,24 @@ class ScoreboardHighlighter {
     if (!editor || !editor.document || editor.document.languageId !== LANGUAGE_ID) return;
     if (!this.enabled()) return this.clear(editor);
 
-    const { anchor, related } = decorationsFor(editor.document, editor.selection.active);
+    const at = editor.selection.active;
+    const key = `${editor.document.uri.toString()}:${editor.document.version}:${at.line}:${at.character}`;
+    if (key === this.lastKey) return;
+    this.lastKey = key;
+
+    const { anchor, related } = decorationsFor(editor.document, at);
     editor.setDecorations(this.anchorType, anchor);
     editor.setDecorations(this.relatedType, related);
   }
 
   /** Redraw every visible editor, for when the setting changes. */
   refresh() {
+    this.lastKey = null;
     for (const editor of vscode.window.visibleTextEditors) this.update(editor);
   }
 
   dispose() {
+    if (this.timer) clearTimeout(this.timer);
     for (const d of this.disposables) d.dispose();
     this.anchorType.dispose();
     this.relatedType.dispose();

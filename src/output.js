@@ -16,6 +16,10 @@ const path = require('path');
 const vscode = require('vscode');
 
 const nvcache = require('./nvcache');
+const stats = require('./stats');
+
+/** Banner label column, shared by every section so the fields line up. */
+const FIELD_WIDTH = 14;
 
 const LISTING_EXT = '.nvsass';
 const LANGUAGE_ID = 'nvidia-sass';
@@ -74,62 +78,81 @@ function metadataLines(object, text) {
   const usesShared = text === undefined ? undefined : /\b(?:LDS|STS|ATOMS)\b/.test(text);
 
   const lines = [];
+  const field = label => `// ${label.padEnd(FIELD_WIDTH)}: `;
   const stage = meta.stage
     ? `${meta.stage}${meta.stageCode !== null ? ` (code ${meta.stageCode})` : ''}`
     : (meta.stageCode !== null ? `unrecognised stage code ${meta.stageCode}` : 'not recorded');
-  lines.push(`// stage      : ${stage}`);
+  lines.push(field('stage') + stage);
 
   if (meta.registers !== null) {
-    lines.push(`// registers  : ${meta.registers} declared` +
+    lines.push(field('registers') + `${meta.registers} declared` +
       (meta.registerCap !== null ? `, cap ${meta.registerCap}` : ''));
   }
 
-  lines.push(`// local mem  : ${meta.localBytes !== null ? `${meta.localBytes} bytes`
-    : (usesLocal ? 'used, but this cache does not record the size' : '0 bytes')}`);
-  lines.push(`// shared mem : ${nvcache.sharedNote(meta.sharedBytes, usesShared)}`);
+  lines.push(field('local mem') + (meta.localBytes !== null ? `${meta.localBytes} bytes`
+    : (usesLocal ? 'used, but this cache does not record the size' : '0 bytes')));
+  lines.push(field('shared mem') + nvcache.sharedNote(meta.sharedBytes, usesShared));
 
   if (meta.killsPixels !== null) {
-    lines.push(`// discards   : ${meta.killsPixels ? 'yes' : 'no'} (per the shader header)`);
+    lines.push(field('discards') + `${meta.killsPixels ? 'yes' : 'no'} (per the shader header)`);
   }
 
-  // The container and the code are two independent statements about the same shader, so a
-  // disagreement means one of them was read wrong - which is worth knowing about.
-  const mismatches = [];
-  if (usesLocal === false && meta.localBytes) {
-    mismatches.push(`${meta.localBytes} bytes of local memory are declared, but no LDL/STL ` +
-      'appears in the code');
-  }
-  if (usesLocal === true && meta.localBytes === null) {
-    mismatches.push('the code uses local memory but the container declares none');
-  }
-  if (usesShared === false && meta.sharedBytes) {
-    mismatches.push(`${meta.sharedBytes} bytes of shared memory are declared, but no ` +
-      'shared-memory access appears in the code');
-  }
-  for (const note of mismatches) lines.push(`// NOTE: ${note}.`);
-
+  // Disagreements between this and the code are reported once, by `stats.crossCheck`, which
+  // sees the full instruction histogram rather than these two regexes.
   return lines;
 }
+
+const RULE = `//${'='.repeat(76)}`;
+const THIN_RULE = `//${'-'.repeat(76)}`;
 
 function banner(result, sweepResult) {
   const { object, arch, nvdisasm, nvdisasmVersion, command, annotation, text } = result;
   const pkg = require('../package.json');
+
+  let measured = null;
+  try {
+    measured = text ? stats.analyze(text, object.microcode) : null;
+  } catch (e) {
+    measured = null;                       // a banner is never worth failing a disassembly for
+  }
+
+  // What the shader IS comes first; where it came from follows. The identifying line names
+  // the entry point and its stage, so the top of the file answers "what am I looking at".
+  const meta = object.metadata || {};
+  const stageLabel = meta.stage
+    ? `${meta.stage} shader` : (meta.stageCode !== null && meta.stageCode !== undefined
+      ? `stage code ${meta.stageCode}` : 'shader');
+
+  const field = label => `// ${label.padEnd(FIELD_WIDTH)}: `;
   const lines = [
-    `// Disassembled by ${pkg.displayName} ${pkg.version}`,
-    `// source     : ${object.source}`,
-    `//              frame at offset ${object.offset}` +
-      (sweepResult ? ` (${sweepResult.label}${sweepResult.scanned ? ', found by magic scan' : ''})` : ''),
-    `// entry      : ${object.name || '(unnamed)'}`,
+    RULE,
+    `// ${object.name || '(unnamed)'} - ${stageLabel}`,
+    RULE,
     ...metadataLines(object, text),
-    `// microcode  : ${object.codeBytes} bytes, ${object.instructions} instructions, ` +
-      `sha1 ${object.sha1}`,
+    ...(measured ? stats.summaryLines(measured, object.metadata) : [])
+  ];
+
+  const disagreements = measured ? stats.crossCheck(measured, object.metadata) : [];
+  if (disagreements.length) {
+    lines.push('//');
+    lines.push('// The cache and the code disagree, so one of them is being read wrong:');
+    for (const note of disagreements) lines.push(`//   - ${note}`);
+  }
+
+  lines.push(
+    THIN_RULE,
+    field('source') + `${object.source}`,
+    `// ${' '.repeat(FIELD_WIDTH)}  frame at offset ${object.offset}` +
+      (sweepResult ? ` (${sweepResult.label}${sweepResult.scanned ? ', found by magic scan' : ''})` : ''),
+    field('microcode') + `${object.codeBytes} bytes, sha1 ${object.sha1}`,
     // The literal EF_CUDA_<arch> token is what this extension's own hovers read to decide
     // which architecture's instruction set to describe. Keep the spelling.
-    `// arch       : ${arch} (.headerflags @"EF_CUDA_64BIT_ADDRESS EF_CUDA_${arch}")`,
-    `// nvdisasm   : ${nvdisasm}`,
-    `//              ${nvdisasmVersion}`,
-    `//              ${command}`
-  ];
+    field('arch') + `${arch} (.headerflags @"EF_CUDA_64BIT_ADDRESS EF_CUDA_${arch}")`,
+    field('nvdisasm') + `${nvdisasm}`,
+    `// ${' '.repeat(FIELD_WIDTH)}  ${nvdisasmVersion}`,
+    `// ${' '.repeat(FIELD_WIDTH)}  ${command}`,
+    field('tool') + `${pkg.displayName} ${pkg.version}`
+  );
 
   if (annotation) {
     lines.push(

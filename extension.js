@@ -139,10 +139,13 @@ function activate(context) {
     view.onDidChangeVisibility(e => { if (e.visible) blobstore.checkStamps(); })
   );
 
-  // The tools probe decides which welcome message the empty view shows.
+  // The tools probe decides which welcome message the empty view shows. It is phrased as
+  // "missing" rather than "ready" so the unset state - which is what the view renders during
+  // the probe - reads as "nothing wrong yet" instead of accusing the user of a missing
+  // toolkit for the moment it takes to find one.
   pipeline.resolveNvdisasm()
-    .then(() => vscode.commands.executeCommand('setContext', 'nvIsaExtractor.toolsReady', true))
-    .catch(() => vscode.commands.executeCommand('setContext', 'nvIsaExtractor.toolsReady', false));
+    .then(() => vscode.commands.executeCommand('setContext', 'nvIsaExtractor.toolsMissing', false))
+    .catch(() => vscode.commands.executeCommand('setContext', 'nvIsaExtractor.toolsMissing', true));
 
   browser.syncContext();
   browser.refreshListingIndex();

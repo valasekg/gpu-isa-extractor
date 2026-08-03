@@ -282,9 +282,17 @@ function glBlobs() {
 
         const file = await output.openListing(context, result, swept);
         const written = fs.readFileSync(file, 'utf8');
-        check(/^\/\/ stage      : /m.test(written) && /^\/\/ local mem  : /m.test(written),
+        check(/^\/\/ stage\s+: /m.test(written) && /^\/\/ local mem\s+: /m.test(written),
           'and all of it reaches the listing banner',
           written.split('\n').slice(0, 12).join('\n'));
+        check(/^\/\/ instructions\s+: /m.test(written) && /^\/\/ scheduling\s+: /m.test(written),
+          'along with what the code is made of',
+          written.split('\n').slice(0, 20).join('\n'));
+        // A generated listing should stay plain ASCII: it is read by whatever the user
+        // opens it with, not only by an editor that knows it is UTF-8.
+        const nonAscii = written.split('\n').filter(l => /[^\x00-\x7f]/.test(l));
+        check(nonAscii.length === 0, 'and the listing is plain ASCII throughout',
+          nonAscii.slice(0, 3).join('\n'));
         check(opened.includes(file), 'the listing is opened in an editor');
         check(written.includes(`sha1 ${result.object.sha1}`) &&
               written.includes(result.object.source),

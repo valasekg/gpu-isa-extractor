@@ -83,27 +83,52 @@ A cache file holds hundreds of shaders, so the view is built for working through
   a quarter of DXCache entries are duplicates.
 - Files with thousands of shaders split into size buckets automatically.
 
-Every generated listing carries a provenance banner: source file, offset, sha1, architecture,
-the exact nvdisasm command used, and what the cache itself records about the shader:
+Every listing opens with what the shader *is*, then where it came from:
 
 ```
-// stage      : pixel (code 2)
-// registers  : 8 declared, cap 255
-// local mem  : 0 bytes
-// shared mem : 0 bytes (no shared-memory access in the code)
-// discards   : no (per the shader header)
+//============================================================================
+// colorizeOverlayMain_2 - compute shader
+//============================================================================
+// stage         : compute (code 5)
+// registers     : 24 declared, cap 255
+// local mem     : 0 bytes
+// shared mem    : 0 bytes (no shared-memory access in the code)
+// instructions  : 200, 188 live (12 trailing NOP pad)
+// mix           : Floating Point 59%   Integer 12%   Movement 9.0%   Load/Store 5.0%
+// uses          : textures
+// control flow  : 1 BSSY/BSYNC pair;  no backward branches
+// scheduling    : 1.98 stall cycles/instr   11% wait   14% arm   79% yield   10% reuse
+//                 395 static issue cycles - one warp on a straight line, ignoring memory
+//                 latency, occupancy and loop counts. A floor on issue, not a performance figure.
+// registers used: R0-R21   UR0-UR4   P0-P4
+// const banks   : c[0x0]
+// predicated    : 19% of instructions
+//----------------------------------------------------------------------------
+// source        : ...\648bf5c69af8e551.bin
+//                 frame at offset 265348 (GLCache blob)
+// microcode     : 3200 bytes, sha1 fd89076810a481d90484c8064415908f512f9b38
+// arch          : SM86
 ```
 
-Stage, register count and local memory also appear in the view's rows, and you can filter by
-stage (`ps`, `vertex`, `cs`…). These are the driver's own numbers rather than anything guessed
-from the code — but the format is undocumented, so the extension checks them against the
-disassembly and says so in the banner if the two ever disagree.
+The first four fields are the cache's own record of the shader; the rest is counted from the
+disassembly and the instruction words. Stage, register count and memory sizes also appear in
+the view's rows, and you can filter by stage (`ps`, `vertex`, `cs`…).
 
-Two honesty notes. The register count is printed as declared; it runs a little above the
-highest register the code touches, and quietly subtracting that margin would invent precision
-the format does not offer. And shared memory is only recorded by the Vulkan/GL cache, so an
-absent value is reported as *"used, but this cache does not record the size"* rather than as
-zero whenever the code plainly uses it.
+Because those two sources are independent, the extension compares them and says so in the
+banner when they disagree — a declared register count the code exceeds, or local memory
+declared for a shader that never spills, means one of the two is being read wrong.
+
+Some things are deliberately not said:
+
+- **The register count is printed as declared.** It runs a little above the highest register
+  the code touches, but that margin is not constant, so subtracting it would invent precision.
+- **Shared memory is only recorded by the Vulkan/GL cache.** Where it is absent and the code
+  plainly uses shared memory, the banner says *"used, but this cache does not record the
+  size"* rather than `0 B`.
+- **The stall total is a floor on issue, not a cost.** It assumes one warp on a straight line
+  and knows nothing about memory latency, occupancy or how many times a loop runs.
+- **A backward branch is reported as a backward branch,** not as "has a loop" — if/else
+  lowering produces them too. The self-branch trap every shader ends with is excluded.
 
 ## Language support
 

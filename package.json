@@ -2,7 +2,7 @@
   "name": "nv-isa-extractor",
   "displayName": "NVIDIA ISA Extractor",
   "description": "Turn NVIDIA driver shader-cache blobs into readable SASS with decoded scheduling control codes, syntax highlighting and tooltips.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "gvalasek",
   "license": "MIT",
   "engines": {
@@ -50,18 +50,18 @@
     "viewsWelcome": [
       {
         "view": "nvIsaExtractor.objects",
-        "when": "!nvIsaExtractor.hasBlob && !nvIsaExtractor.toolsReady",
+        "when": "!nvIsaExtractor.hasBlob && nvIsaExtractor.toolsMissing",
         "contents": "nvdisasm was not found, so nothing can be disassembled yet. It ships with the CUDA Toolkit and cannot be bundled with this extension.\n[Check the Environment](command:nvIsaExtractor.doctor)\n[Open Settings](command:nvIsaExtractor.openSettings)"
       },
       {
         "view": "nvIsaExtractor.objects",
-        "when": "!nvIsaExtractor.hasBlob && nvIsaExtractor.activeBlob",
+        "when": "!nvIsaExtractor.hasBlob && !nvIsaExtractor.toolsMissing && nvIsaExtractor.activeBlob",
         "enablement": "!nvIsaExtractor.busy",
         "contents": "The file open in the editor looks like a shader cache.\n[$(circuit-board) Scan the Active File](command:nvIsaExtractor.disassemble)"
       },
       {
         "view": "nvIsaExtractor.objects",
-        "when": "default",
+        "when": "!nvIsaExtractor.hasBlob && !nvIsaExtractor.toolsMissing && !nvIsaExtractor.activeBlob",
         "enablement": "!nvIsaExtractor.busy",
         "contents": "No shader-cache file is open.\n[Open a Shader Cache...](command:nvIsaExtractor.openBlobDialog)\nYou can also right-click a .bin, .toc or .nvph file in the Explorer, or use the button in the editor title bar when one is already open.\n[Check the Environment](command:nvIsaExtractor.doctor)"
       }
@@ -172,7 +172,7 @@
       },
       {
         "command": "nvIsaExtractor.nextUnreviewed",
-        "key": "ctrl+alt+shift+pagedown",
+        "key": "ctrl+alt+shift+n",
         "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
       },
       {
@@ -653,7 +653,7 @@
           "type": "number",
           "default": 500,
           "minimum": 0,
-          "markdownDescription": "How many rows a level shows before a `Load moreâ€¦` entry. `0` shows everything at once.",
+          "markdownDescription": "How many rows a level shows before a `Load more…` entry. `0` shows everything at once.",
           "scope": "window",
           "order": 197
         },
