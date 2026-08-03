@@ -289,11 +289,115 @@ for path in referenced:
     else:
         bad("manifest references a missing file: %s" % path)
 
-for name in ("README.md", "LICENSE", "tools/package_vsix.py"):
+for name in ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "tools/package_vsix.py",
+             "src/vendor/fzstd.js", "src/vendor/fzstd-LICENSE.txt"):
     if os.path.exists(rel(*name.split("/"))):
         ok("release artifact exists: %s" % name)
     else:
         bad("release artifact is missing: %s" % name)
+
+# Every module the extension requires at run time has to ship, or the VSIX installs and then
+# fails on first use. Walk the requires rather than trusting a hand-maintained list.
+sys.path.insert(0, rel("tools"))
+package_vsix = __import__("package_vsix")
+shipped = {arc[len("extension/"):] for arc, _ in package_vsix.collect()}
+missing_ship = []
+for src_name in sorted(os.listdir(rel("src"))) + ["extension.js"]:
+    src_path = rel("src", src_name) if src_name != "extension.js" else rel("extension.js")
+    if not src_path.endswith(".js"):
+        continue
+    base = os.path.dirname(src_path)
+    for req in re.findall(r"require\(['\"](\.[^'\"]+)['\"]\)",
+                          open(src_path, encoding="utf-8").read()):
+        target = os.path.normpath(os.path.join(base, req))
+        if not os.path.splitext(target)[1]:
+            target += ".js"
+        arc = os.path.relpath(target, ROOT).replace(os.sep, "/")
+        if not os.path.exists(target):
+            missing_ship.append("%s requires %s, which does not exist" % (src_name, req))
+        elif arc not in shipped:
+            missing_ship.append("%s requires %s, which the VSIX does not ship" % (src_name, arc))
+if missing_ship:
+    bad("a module required at run time would be missing from the package",
+        "\n".join(missing_ship))
+else:
+    ok("every module required at run time is packaged")
+
+# Commands, their menu entries and their handlers must agree; a typo in any one of them
+# produces a command that is visible and does nothing, or invisible and works.
+declared_commands = {c["id"] if "id" in c else c["command"]
+                     for c in contributes.get("commands", [])}
+extension_src = open(rel("extension.js"), encoding="utf-8").read()
+registered = set(re.findall(r"registerCommand\(\s*'([^']+)'", extension_src))
+if declared_commands and declared_commands == registered:
+    ok("every declared command is registered (%d)" % len(declared_commands))
+else:
+    bad("declared commands and registered handlers disagree",
+        "declared only: %s\nregistered only: %s"
+        % (" ".join(sorted(declared_commands - registered)) or "-",
+           " ".join(sorted(registered - declared_commands)) or "-"))
+
+menu_commands = {m["command"] for group in contributes.get("menus", {}).values() for m in group}
+if menu_commands <= declared_commands:
+    ok("every menu entry names a declared command")
+else:
+    bad("a menu entry names an undeclared command",
+        " ".join(sorted(menu_commands - declared_commands)))
+
+# Settings are read by string. A rename on one side only is silent: the code keeps reading
+# the old name and quietly gets the default forever.
+declared_settings = set(contributes.get("configuration", {}).get("properties", {}))
+JS_SOURCES = ("extension.js", "src/pipeline.js", "src/output.js", "src/doctor.js",
+              "src/semantic.js", "src/hover.js")
+
+# A configuration section is reached either directly (`getConfiguration('x').get('y')`) or
+# through a local (`const s = getConfiguration('x'); ... s.get('y')`). Both forms are in use,
+# so resolve the locals rather than only matching the chained call.
+PIPELINE_SECTION = "nvIsaExtractor"
+
+
+def settings_read(text):
+    found = set()
+    bindings = {}                                   # local name -> section
+
+    for name, section in re.findall(
+            r"(?:const|let|var)\s+(\w+)\s*=\s*(?:vscode\.workspace\.)?"
+            r"getConfiguration\(\s*['\"]([\w.]+)['\"]\s*\)", text):
+        bindings[name] = section
+    # `getConfiguration(pipeline.CONFIG)` and the module-local `config()` helper.
+    for name in re.findall(
+            r"(?:const|let|var)\s+(\w+)\s*=\s*(?:vscode\.workspace\.)?"
+            r"getConfiguration\(\s*[\w.]*CONFIG\s*\)", text):
+        bindings[name] = PIPELINE_SECTION
+    for name in re.findall(r"(?:const|let|var)\s+(\w+)\s*=\s*config\(\)", text):
+        bindings[name] = PIPELINE_SECTION
+
+    for section, key in re.findall(
+            r"getConfiguration\(\s*['\"]([\w.]+)['\"]\s*\)\s*\.\s*get\(\s*['\"]([\w.]+)['\"]",
+            text):
+        found.add("%s.%s" % (section, key))
+    for key in re.findall(r"\bconfig\(\)\s*\.\s*get\(\s*['\"]([\w.]+)['\"]", text):
+        found.add("%s.%s" % (PIPELINE_SECTION, key))
+    for name, key in re.findall(r"\b(\w+)\s*\.\s*get\(\s*['\"]([\w.]+)['\"]", text):
+        if name in bindings:
+            found.add("%s.%s" % (bindings[name], key))
+    return found
+
+
+used_settings = set()
+for js in JS_SOURCES:
+    used_settings |= settings_read(open(rel(*js.split("/")), encoding="utf-8").read())
+unknown = used_settings - declared_settings
+if unknown:
+    bad("the code reads settings the manifest does not declare", " ".join(sorted(unknown)))
+else:
+    ok("every setting the code reads is declared (%d)" % len(used_settings))
+
+unread = declared_settings - used_settings
+if unread:
+    warn("declared settings nothing reads", " ".join(sorted(unread)))
+else:
+    ok("every declared setting is read somewhere")
 
 hover_detail = contributes.get("configuration", {}).get("properties", {}).get(
     "nvidiaSass.hover.detail", {})
@@ -452,7 +556,8 @@ if not cmd:
     warn("no JS runtime found - skipped",
          "Set VSCODE_EXE to a Code.exe, or install Node, to run the JavaScript suites.")
 else:
-    for script in ("test_parse.js", "test_hover.js", "test_semantic.js", "test_explain.js"):
+    for script in ("test_parse.js", "test_hover.js", "test_semantic.js", "test_explain.js",
+                   "test_ctrl.js", "test_zstd.js", "test_endtoend.js"):
         proc = subprocess.run(cmd + [rel("tools", script)],
                               env=env, cwd=ROOT, capture_output=True, text=True)
         out = (proc.stdout or "") + (proc.stderr or "")

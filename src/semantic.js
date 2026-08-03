@@ -72,7 +72,17 @@ class SassSemanticTokensProvider {
 
   provideDocumentSemanticTokens(document) {
     const builder = new vscode.SemanticTokensBuilder(legend);
-    if (!vscode.workspace.getConfiguration('nvidiaSass').get('semanticHighlighting', true)) {
+    const settings = vscode.workspace.getConfiguration('nvidiaSass');
+    if (!settings.get('semanticHighlighting', true)) {
+      return builder.build();
+    }
+
+    // This pass re-reads the whole document every time VS Code asks for tokens, which it does
+    // after every edit. That is fine for a hand-sized listing and not fine for a megakernel
+    // dump of several hundred thousand lines, so past a threshold the TextMate grammar - which
+    // only ever colours the visible viewport - is left to do the job alone.
+    const maxLines = settings.get('semanticMaxLines', 100000);
+    if (maxLines > 0 && document.lineCount > maxLines) {
       return builder.build();
     }
 

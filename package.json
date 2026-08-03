@@ -27,6 +27,32 @@
     "onLanguage:nvidia-sass"
   ],
   "contributes": {
+    "commands": [
+      {
+        "command": "nvIsaExtractor.disassemble",
+        "title": "Disassemble Shader-Cache Blob...",
+        "category": "NVIDIA ISA"
+      },
+      {
+        "command": "nvIsaExtractor.doctor",
+        "title": "Doctor (Check Environment)",
+        "category": "NVIDIA ISA"
+      },
+      {
+        "command": "nvIsaExtractor.clearOutput",
+        "title": "Clear Generated Listings",
+        "category": "NVIDIA ISA"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "nvIsaExtractor.disassemble",
+          "group": "navigation@50",
+          "when": "resourceExtname =~ /^\\.(bin|toc|nvph)$/i"
+        }
+      ]
+    },
     "languages": [
       {
         "id": "nvidia-sass",
@@ -124,8 +150,83 @@
       }
     ],
     "configuration": {
-      "title": "NVIDIA SASS",
+      "title": "NVIDIA ISA Extractor",
       "properties": {
+        "nvIsaExtractor.nvdisasmPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to `nvdisasm`. Leave empty to look on `PATH` and then in `%CUDA_PATH%\\bin`. It ships with the CUDA Toolkit and cannot be bundled with this extension.",
+          "scope": "machine",
+          "order": 100
+        },
+        "nvIsaExtractor.arch": {
+          "type": "string",
+          "default": "auto",
+          "markdownDescription": "Architecture to disassemble for, e.g. `SM86`. `auto` reads the compute capability of this machine's GPU, which is what compiled the cached shaders in the first place. Set it explicitly when there is no GPU, or more than one.",
+          "scope": "machine",
+          "order": 110
+        },
+        "nvIsaExtractor.minCodeBytes": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "markdownDescription": "Ignore shader objects with less microcode than this. Applied from the compressed frame header before anything is decompressed, so raising it makes a sweep markedly faster - `65536` is a good floor for DXCache, which holds thousands of small objects.",
+          "scope": "window",
+          "order": 120
+        },
+        "nvIsaExtractor.glcacheMode": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "toc", "scan"],
+          "enumItemLabels": ["Automatic", "Index only", "Scan only"],
+          "enumDescriptions": [
+            "Use the .toc index, and fall back to scanning if it yields nothing.",
+            "Use the .toc index only. Finds nothing if its layout has changed.",
+            "Ignore the .toc entirely and find frames by their magic bytes. Slower, but immune to an index-layout change."
+          ],
+          "markdownDescription": "How to find shader objects in a GLCache `.bin`. The cache format is undocumented and does change across driver releases; `auto` notices an index that yields nothing and scans instead.",
+          "scope": "window",
+          "order": 130
+        },
+        "nvIsaExtractor.decodeControlCodes": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Decode each instruction's scheduling control fields and print them as a `[B------:R-:W0:Y:S04]` column. Turn off to get nvdisasm's output verbatim.",
+          "scope": "window",
+          "order": 140
+        },
+        "nvIsaExtractor.keepRawMicrocode": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Keep the carved microcode next to the listing. It is always kept when nvdisasm fails, so that failure can be reproduced.",
+          "scope": "window",
+          "order": 150
+        },
+        "nvIsaExtractor.output.location": {
+          "type": "string",
+          "default": "globalStorage",
+          "enum": ["globalStorage", "temp"],
+          "enumItemLabels": ["Extension storage", "System temp directory"],
+          "markdownDescription": "Where generated listings are written.",
+          "scope": "window",
+          "order": 160
+        },
+        "nvIsaExtractor.output.retentionDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "markdownDescription": "Delete generated listings older than this many days, checked when the extension starts. `0` keeps them indefinitely. Listings open in an editor are never removed.",
+          "scope": "window",
+          "order": 170
+        },
+        "nvidiaSass.semanticMaxLines": {
+          "type": "number",
+          "default": 100000,
+          "minimum": 0,
+          "markdownDescription": "Skip the semantic pass on documents longer than this. A large kernel disassembles to several hundred thousand lines, and the semantic provider re-reads the whole document each time it is asked. Syntax highlighting is unaffected - it only ever colours what is on screen.",
+          "scope": "window",
+          "order": 15
+        },
         "nvidiaSass.semanticHighlighting": {
           "type": "boolean",
           "default": true,
