@@ -1,0 +1,2321 @@
+{
+ "_meta": {
+  "source": "https://docs.nvidia.com/cuda/cuda-binary-utilities/index.html",
+  "docs_version": "13.3",
+  "generated_by": "tools/fetch_opcodes.py",
+  "opcode_count": 255,
+  "note": "First-party opcode list. NVIDIA documents mnemonics only; postfix semantics live in data/modifiers.json."
+ },
+ "opcodes": {
+  "ACQBULK": {
+   "desc": "Wait for Bulk Release Status Warp State",
+   "cat": "Control",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ACQSHMINIT": {
+   "desc": "Wait for Shared Memory Initialization Release Status Warp State",
+   "cat": "Control",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "ATOM": {
+   "desc": "Atomic Operation on Generic Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ATOMG": {
+   "desc": "Atomic Operation on Global Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ATOMS": {
+   "desc": "Atomic Operation on Shared Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "B2R": {
+   "desc": "Move Barrier To Register",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BAR": {
+   "desc": "Barrier Synchronization",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BGMMA": {
+   "desc": "Bit Matrix Multiply and Accumulate Across Warps",
+   "cat": "Warpgroup",
+   "archs": [
+    "hopper"
+   ]
+  },
+  "BMMA": {
+   "desc": "Bit Matrix Multiply and Accumulate",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper"
+   ]
+  },
+  "BMOV": {
+   "desc": "Move Convergence Barrier State",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BMSK": {
+   "desc": "Bitfield Mask",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BPT": {
+   "desc": "BreakPoint/Trap",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BRA": {
+   "desc": "Relative Branch",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BREAK": {
+   "desc": "Break out of the Specified Convergence Barrier",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BREV": {
+   "desc": "Bit Reverse",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BRX": {
+   "desc": "Relative Branch Indirect",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BRXU": {
+   "desc": "Relative Branch with Uniform Register Based Offset",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BSSY": {
+   "desc": "Barrier Set Convergence Synchronization Point",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "BSYNC": {
+   "desc": "Synchronize Threads on a Convergence Barrier",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "CALL": {
+   "desc": "Call Function",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "CCTL": {
+   "desc": "Cache Control",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "CCTLL": {
+   "desc": "Cache Control",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "CCTLT": {
+   "desc": "Texture Cache Control",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "CGAERRBAR": {
+   "desc": "CGA Error Barrier",
+   "cat": "Control",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "CREDUX": {
+   "desc": "Coupled Reduction of a Vector Register into a Uniform Register",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "CS2R": {
+   "desc": "Move Special Register to Register",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "CS2UR": {
+   "desc": "Load a Value from Constant Memory into a Uniform Register",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "DADD": {
+   "desc": "FP64 Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "DEPBAR": {
+   "desc": "Dependency Barrier",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "DFMA": {
+   "desc": "FP64 Fused Mutiply Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "DMMA": {
+   "desc": "Matrix Multiply and Accumulate",
+   "cat": "Floating Point",
+   "archs": [
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "DMUL": {
+   "desc": "FP64 Multiply",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "DSETP": {
+   "desc": "FP64 Compare And Set Predicate",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ELECT": {
+   "desc": "Elect a Leader Thread",
+   "cat": "Control",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ENDCOLLECTIVE": {
+   "desc": "Reset the MCOLLECTIVE mask",
+   "cat": "Control",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ERRBAR": {
+   "desc": "Error Barrier",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "EXIT": {
+   "desc": "Exit Program",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "F2F": {
+   "desc": "Floating Point To Floating Point Conversion",
+   "cat": "Conversion",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "F2I": {
+   "desc": "Floating Point To Integer Conversion",
+   "cat": "Conversion",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "F2IP": {
+   "desc": "FP32 Down-Convert to Integer and Pack",
+   "cat": "Conversion",
+   "archs": [
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FADD": {
+   "desc": "FP32 Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FADD2": {
+   "desc": "FP32 Add",
+   "cat": "Floating Point",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "FADD32I": {
+   "desc": "FP32 Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FCHK": {
+   "desc": "Floating-point Range Check",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FENCE": {
+   "desc": "Memory Visibility Guarantee for Shared or Global Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FFMA": {
+   "desc": "FP32 Fused Multiply and Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FFMA2": {
+   "desc": "FP32 Fused Multiply and Add",
+   "cat": "Floating Point",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "FFMA32I": {
+   "desc": "FP32 Fused Multiply and Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FHADD": {
+   "desc": "FP32 Addition",
+   "cat": "Floating Point",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "FHFMA": {
+   "desc": "FP32 Fused Multiply and Add",
+   "cat": "Floating Point",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "FLO": {
+   "desc": "Find Leading One",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FMNMX": {
+   "desc": "FP32 Minimum/Maximum",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FMNMX3": {
+   "desc": "3-Input Floating-point Minimum / Maximum",
+   "cat": "Floating Point",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "FMUL": {
+   "desc": "FP32 Multiply",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FMUL2": {
+   "desc": "FP32 Multiply",
+   "cat": "Floating Point",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "FMUL32I": {
+   "desc": "FP32 Multiply",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FRND": {
+   "desc": "Round To Integer",
+   "cat": "Conversion",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FSEL": {
+   "desc": "Floating Point Select",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FSET": {
+   "desc": "FP32 Compare And Set",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FSETP": {
+   "desc": "FP32 Compare And Set Predicate",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "FSWZADD": {
+   "desc": "FP32 Swizzle Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "GETLMEMBASE": {
+   "desc": "Get Local Memory Base Address",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HADD2": {
+   "desc": "FP16 Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HADD2_32I": {
+   "desc": "FP16 Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HFMA2": {
+   "desc": "FP16 Fused Mutiply Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HFMA2_32I": {
+   "desc": "FP16 Fused Mutiply Add",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HGMMA": {
+   "desc": "Matrix Multiply and Accumulate Across a Warpgroup",
+   "cat": "Warpgroup",
+   "archs": [
+    "hopper"
+   ]
+  },
+  "HMMA": {
+   "desc": "Matrix Multiply and Accumulate",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HMNMX2": {
+   "desc": "FP16 Minimum / Maximum",
+   "cat": "Floating Point",
+   "archs": [
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HMUL2": {
+   "desc": "FP16 Multiply",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HMUL2_32I": {
+   "desc": "FP16 Multiply",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HSET2": {
+   "desc": "FP16 Compare And Set",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "HSETP2": {
+   "desc": "FP16 Compare And Set Predicate",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "I2F": {
+   "desc": "Integer To Floating Point Conversion",
+   "cat": "Conversion",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "I2FP": {
+   "desc": "Integer to FP32 Convert and Pack",
+   "cat": "Conversion",
+   "archs": [
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "I2I": {
+   "desc": "Integer To Integer Conversion",
+   "cat": "Conversion",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "I2IP": {
+   "desc": "Integer To Integer Conversion and Packing",
+   "cat": "Conversion",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IABS": {
+   "desc": "Integer Absolute Value",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IADD": {
+   "desc": "Integer Addition",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IADD3": {
+   "desc": "3-input Integer Addition",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IADD32I": {
+   "desc": "Integer Addition",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IDP": {
+   "desc": "Integer Dot Product and Accumulate",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IDP4A": {
+   "desc": "Integer Dot Product and Accumulate",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IGMMA": {
+   "desc": "Integer Matrix Multiply and Accumulate Across a Warpgroup",
+   "cat": "Warpgroup",
+   "archs": [
+    "hopper"
+   ]
+  },
+  "IMAD": {
+   "desc": "Integer Multiply And Add",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IMMA": {
+   "desc": "Integer Matrix Multiply and Accumulate",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IMNMX": {
+   "desc": "Integer Minimum/Maximum",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IMUL": {
+   "desc": "Integer Multiply",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "IMUL32I": {
+   "desc": "Integer Multiply",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ISCADD": {
+   "desc": "Scaled Integer Addition",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ISCADD32I": {
+   "desc": "Scaled Integer Addition",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ISETP": {
+   "desc": "Integer Compare And Set Predicate",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "JMP": {
+   "desc": "Absolute Jump",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "JMX": {
+   "desc": "Absolute Jump Indirect",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "JMXU": {
+   "desc": "Absolute Jump with Uniform Register Based Offset",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "KILL": {
+   "desc": "Kill Thread",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LD": {
+   "desc": "Load from generic Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LDC": {
+   "desc": "Load Constant",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LDCU": {
+   "desc": "Load a Value from Constant Memory into a Uniform Register",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "LDG": {
+   "desc": "Load from Global Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LDGDEPBAR": {
+   "desc": "Global Load Dependency Barrier",
+   "cat": "Load/Store",
+   "archs": [
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LDGMC": {
+   "desc": "Reducing Load",
+   "cat": "Load/Store",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LDGSTS": {
+   "desc": "Asynchronous Global to Shared Memcopy",
+   "cat": "Load/Store",
+   "archs": [
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LDL": {
+   "desc": "Load within Local Memory Window",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LDS": {
+   "desc": "Load within Shared Memory Window",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LDSM": {
+   "desc": "Load Matrix from Shared Memory with Element Size Expansion",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LDT": {
+   "desc": "Load Matrix from Tensor Memory to Register File",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "LDTM": {
+   "desc": "Load Matrix from Tensor Memory to Register File",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "LEA": {
+   "desc": "LOAD Effective Address",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LEPC": {
+   "desc": "Load Effective PC",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LOP": {
+   "desc": "Logic Operation",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LOP3": {
+   "desc": "Logic Operation",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "LOP32I": {
+   "desc": "Logic Operation",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "MATCH": {
+   "desc": "Match Register Values Across Thread Group",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "MEMBAR": {
+   "desc": "Memory Barrier",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "MOV": {
+   "desc": "Move",
+   "cat": "Movement",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "MOV32I": {
+   "desc": "Move",
+   "cat": "Movement",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "MOVM": {
+   "desc": "Move Matrix with Transposition or Expansion",
+   "cat": "Movement",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "MUFU": {
+   "desc": "FP32 Multi Function Operation",
+   "cat": "Floating Point",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "NANOSLEEP": {
+   "desc": "Suspend Execution",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "NOP": {
+   "desc": "No Operation",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "OMMA": {
+   "desc": "FP4 Matrix Multiply and Accumulate Across a Warp",
+   "cat": "Floating Point",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "P2R": {
+   "desc": "Move Predicate Register To Register",
+   "cat": "Predicate",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "PLOP3": {
+   "desc": "Predicate Logic Operation",
+   "cat": "Predicate",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "PMTRIG": {
+   "desc": "Performance Monitor Trigger",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "POPC": {
+   "desc": "Population count",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "PREEXIT": {
+   "desc": "Dependent Task Launch Hint",
+   "cat": "Control",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "PRMT": {
+   "desc": "Permute Register Pair",
+   "cat": "Movement",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "PSETP": {
+   "desc": "Combine Predicates and Set Predicate",
+   "cat": "Predicate",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "QGMMA": {
+   "desc": "FP8 Matrix Multiply and Accumulate Across a Warpgroup",
+   "cat": "Warpgroup",
+   "archs": [
+    "hopper"
+   ]
+  },
+  "QMMA": {
+   "desc": "FP8 Matrix Multiply and Accumulate Across a Warp",
+   "cat": "Floating Point",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "QSPC": {
+   "desc": "Query Space",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "R2B": {
+   "desc": "Move Register to Barrier",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing"
+   ]
+  },
+  "R2P": {
+   "desc": "Move Register To Predicate Register",
+   "cat": "Predicate",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "R2UR": {
+   "desc": "Move from Vector Register to a Uniform Register",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "RED": {
+   "desc": "Reduction Operation on Generic Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere"
+   ]
+  },
+  "REDAS": {
+   "desc": "Asynchronous Reduction on Distributed Shared Memory With Explicit Synchronization",
+   "cat": "Load/Store",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "REDG": {
+   "desc": "Reduction Operation on Generic Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "REDUX": {
+   "desc": "Reduction of a Vector Register into a Uniform Register",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "RET": {
+   "desc": "Return From Subroutine",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "RPCMOV": {
+   "desc": "PC Register Move",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "RTT": {
+   "desc": "Return From Trap",
+   "cat": "Control",
+   "archs": [
+    "turing"
+   ]
+  },
+  "S2R": {
+   "desc": "Move Special Register to Register",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "S2UR": {
+   "desc": "Move Special Register to Uniform Register",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SEL": {
+   "desc": "Select Source with Predicate",
+   "cat": "Movement",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SETCTAID": {
+   "desc": "Set CTA ID",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SETLMEMBASE": {
+   "desc": "Set Local Memory Base Address",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SGXT": {
+   "desc": "Sign Extend",
+   "cat": "Movement",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SHF": {
+   "desc": "Funnel Shift",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SHFL": {
+   "desc": "Warp Wide Register Shuffle",
+   "cat": "Movement",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SHL": {
+   "desc": "Shift Left",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SHR": {
+   "desc": "Shift Right",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ST": {
+   "desc": "Store to Generic Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "STAS": {
+   "desc": "Asynchronous Store to Distributed Shared Memory With Explicit Synchronization",
+   "cat": "Load/Store",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "STG": {
+   "desc": "Store to Global Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "STL": {
+   "desc": "Store to Local Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "STS": {
+   "desc": "Store to Shared Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "STSM": {
+   "desc": "Store Matrix to Shared Memory",
+   "cat": "Load/Store",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "STT": {
+   "desc": "Store Matrix to Tensor Memory from Register File",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "STTM": {
+   "desc": "Store Matrix to Tensor Memory from Register File",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "SUATOM": {
+   "desc": "Atomic Op on Surface Memory",
+   "cat": "Surface",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SULD": {
+   "desc": "Surface Load",
+   "cat": "Surface",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SURED": {
+   "desc": "Reduction Op on Surface Memory",
+   "cat": "Surface",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SUST": {
+   "desc": "Surface Store",
+   "cat": "Surface",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "SYNCS": {
+   "desc": "Sync Unit",
+   "cat": "Load/Store",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "TEX": {
+   "desc": "Texture Fetch",
+   "cat": "Texture",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "TLD": {
+   "desc": "Texture Load",
+   "cat": "Texture",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "TLD4": {
+   "desc": "Texture Load 4",
+   "cat": "Texture",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "TMML": {
+   "desc": "Texture MipMap Level",
+   "cat": "Texture",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "TXD": {
+   "desc": "Texture Fetch With Derivatives",
+   "cat": "Texture",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "TXQ": {
+   "desc": "Texture Query",
+   "cat": "Texture",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UBLKCP": {
+   "desc": "Bulk Data Copy",
+   "cat": "Tensor Memory Access",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UBLKPF": {
+   "desc": "Bulk Data Prefetch",
+   "cat": "Tensor Memory Access",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UBLKRED": {
+   "desc": "Bulk Data Copy from Shared Memory with Reduction",
+   "cat": "Tensor Memory Access",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UBMSK": {
+   "desc": "Uniform Bitfield Mask",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UBREV": {
+   "desc": "Uniform Bit Reverse",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UCGABAR_ARV": {
+   "desc": "CGA Barrier Synchronization",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UCGABAR_WAIT": {
+   "desc": "CGA Barrier Synchronization",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UCLEA": {
+   "desc": "Load Effective Address for a Constant",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UF2F": {
+   "desc": "Uniform Float-to-Float Conversion",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UF2FP": {
+   "desc": "Uniform FP32 Down-convert and Pack",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UF2I": {
+   "desc": "Uniform Float-to-Integer Conversion",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UF2IP": {
+   "desc": "Uniform FP32 Down-Convert to Integer and Pack",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UFADD": {
+   "desc": "Uniform Uniform FP32 Addition",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UFFMA": {
+   "desc": "Uniform FP32 Fused Multiply-Add",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UFLO": {
+   "desc": "Uniform Find Leading One",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UFMNMX": {
+   "desc": "Uniform Floating-point Minimum / Maximum",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UFMUL": {
+   "desc": "Uniform FP32 Multiply",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UFRND": {
+   "desc": "Uniform Round to Integer",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UFSEL": {
+   "desc": "Uniform Floating-Point Select",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UFSET": {
+   "desc": "Uniform Floating-Point Compare and Set",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UFSETP": {
+   "desc": "Uniform Floating-Point Compare and Set Predicate",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UGETNEXTWORKID": {
+   "desc": "Uniform Get Next Work ID",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UI2F": {
+   "desc": "Uniform Integer to Float conversion",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UI2FP": {
+   "desc": "Uniform Integer to FP32 Convert and Pack",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UI2I": {
+   "desc": "Uniform Saturating Integer-to-Integer Conversion",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UI2IP": {
+   "desc": "Uniform Dual Saturating Integer-to-Integer Conversion and Packing",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UIABS": {
+   "desc": "Uniform Integer Absolute Value",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UIADD3": {
+   "desc": "Uniform Integer Addition",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UIADD3.64": {
+   "desc": "Uniform Integer Addition",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UIMAD": {
+   "desc": "Uniform Integer Multiplication",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UIMNMX": {
+   "desc": "Uniform Integer Minimum / Maximum",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UISETP": {
+   "desc": "Uniform Integer Compare and Set Uniform Predicate",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ULDC": {
+   "desc": "Load from Constant Memory into a Uniform Register",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper"
+   ]
+  },
+  "ULEA": {
+   "desc": "Uniform Load Effective Address",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ULEPC": {
+   "desc": "Uniform Load Effective PC",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ULOP": {
+   "desc": "Uniform Logic Operation",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ULOP3": {
+   "desc": "Uniform Logic Operation",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "ULOP32I": {
+   "desc": "Uniform Logic Operation",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UMEMSETS": {
+   "desc": "Initialize Shared Memory",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UMOV": {
+   "desc": "Uniform Move",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UP2UR": {
+   "desc": "Uniform Predicate to Uniform Register",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UPLOP3": {
+   "desc": "Uniform Predicate Logic Operation",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UPOPC": {
+   "desc": "Uniform Population Count",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UPRMT": {
+   "desc": "Uniform Byte Permute",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UPSETP": {
+   "desc": "Uniform Predicate Logic Operation",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UR2UP": {
+   "desc": "Uniform Register to Uniform Predicate",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UREDGR": {
+   "desc": "Uniform Reduction on Global Memory with Release",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "USEL": {
+   "desc": "Uniform Select",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "USETMAXREG": {
+   "desc": "Release, Deallocate and Allocate Registers",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "USGXT": {
+   "desc": "Uniform Sign Extend",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "USHF": {
+   "desc": "Uniform Funnel Shift",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "USHL": {
+   "desc": "Uniform Left Shift",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "USHR": {
+   "desc": "Uniform Right Shift",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "USTGR": {
+   "desc": "Uniform Store to Global Memory with Release",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UTCATOMSWS": {
+   "desc": "Perform Atomic operation on SW State Register",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UTCBAR": {
+   "desc": "Tensor Core Barrier",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UTCCP": {
+   "desc": "Asynchonous data copy from Shared Memory to Tensor Memory",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UTCHMMA": {
+   "desc": "Uniform Matrix Multiply and Accumulate",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UTCIMMA": {
+   "desc": "Uniform Matrix Multiply and Accumulate",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UTCOMMA": {
+   "desc": "Uniform Matrix Multiply and Accumulate",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UTCQMMA": {
+   "desc": "Uniform Matrix Multiply and Accumulate",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UTCSHIFT": {
+   "desc": "Shift elements in Tensor Memory",
+   "cat": "Tensor Core Memory",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UTMACCTL": {
+   "desc": "TMA Cache Control",
+   "cat": "Tensor Memory Access",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UTMACMDFLUSH": {
+   "desc": "TMA Command Flush",
+   "cat": "Tensor Memory Access",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UTMALDG": {
+   "desc": "Tensor Load from Global to Shared Memory",
+   "cat": "Tensor Memory Access",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UTMAPF": {
+   "desc": "Tensor Prefetch",
+   "cat": "Tensor Memory Access",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UTMAREDG": {
+   "desc": "Tensor Store from Shared to Global Memory with Reduction",
+   "cat": "Tensor Memory Access",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UTMASTG": {
+   "desc": "Tensor Store from Shared to Global Memory",
+   "cat": "Tensor Memory Access",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "UVIADD": {
+   "desc": "Uniform SIMD Integer Addition",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UVIMNMX": {
+   "desc": "Uniform SIMD Integer Minimum / Maximum",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "UVIRTCOUNT": {
+   "desc": "Virtual Resource Management",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "blackwell"
+   ]
+  },
+  "VABSDIFF": {
+   "desc": "Absolute Difference",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "VABSDIFF4": {
+   "desc": "Absolute Difference",
+   "cat": "Integer",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "VHMNMX": {
+   "desc": "SIMD FP16 3-Input Minimum / Maximum",
+   "cat": "Integer",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "VIADD": {
+   "desc": "SIMD Integer Addition",
+   "cat": "Integer",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "VIADDMNMX": {
+   "desc": "SIMD Integer Addition and Fused Min/Max Comparison",
+   "cat": "Integer",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "VIMNMX": {
+   "desc": "SIMD Integer Minimum / Maximum",
+   "cat": "Integer",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "VIMNMX3": {
+   "desc": "SIMD Integer 3-Input Minimum / Maximum",
+   "cat": "Integer",
+   "archs": [
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "VOTE": {
+   "desc": "Vote Across SIMD Thread Group",
+   "cat": "Miscellaneous",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "VOTEU": {
+   "desc": "Voting across SIMD Thread Group with Results in Uniform Destination",
+   "cat": "Uniform Datapath",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "WARPGROUP": {
+   "desc": "Warpgroup Synchronization",
+   "cat": "Warpgroup",
+   "archs": [
+    "hopper"
+   ]
+  },
+  "WARPGROUPSET": {
+   "desc": "Set Warpgroup Counters",
+   "cat": "Warpgroup",
+   "archs": [
+    "hopper"
+   ]
+  },
+  "WARPSYNC": {
+   "desc": "Synchronize Threads in Warp",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  },
+  "YIELD": {
+   "desc": "Yield Control",
+   "cat": "Control",
+   "archs": [
+    "turing",
+    "ampere",
+    "hopper",
+    "blackwell"
+   ]
+  }
+ }
+}

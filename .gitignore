@@ -1,0 +1,6 @@
+*.vsix
+__pycache__/
+*.pyc
+node_modules/
+.vscode-test/
+build/

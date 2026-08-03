@@ -1,0 +1,359 @@
+{
+ "_meta": {
+  "generated_by": "hand-curated",
+  "why": "NVIDIA publishes SASS mnemonics but not postfix semantics. This table fills that gap. Every entry carries a `source` so a tooltip can say how well grounded it is instead of presenting all of it as fact.",
+  "lookup": "An opcode-specific entry wins over a group entry, which wins over `generic`. Group membership is by exact opcode name; the `U`-prefixed uniform-datapath twin of an opcode (UIADD3 for IADD3) is resolved automatically by the extension.",
+  "sources": {
+   "ptx": "Semantics documented in the PTX ISA for the corresponding PTX instruction, which SASS mirrors closely.",
+   "slides": "Stated in the GPGPU Arch 07 - NVIDIA Ampere deep dive lecture notes.",
+   "community": "Established by published reverse-engineering, chiefly arXiv:1903.07486 (Dissecting the NVidia Turing T4 GPU) and the Maxwell-era assembler work.",
+   "corpus": "Read off observed disassembly; the reading is consistent with every occurrence seen but is not independently confirmed."
+  }
+ },
+
+ "generic": {
+  "RN": { "desc": "Round to nearest, ties to even. The IEEE-754 default; usually implicit and only spelled out when it needs to override something.", "class": "rounding", "source": "ptx" },
+  "RM": { "desc": "Round toward minus infinity (floor).", "class": "rounding", "source": "ptx" },
+  "RP": { "desc": "Round toward plus infinity (ceiling).", "class": "rounding", "source": "ptx" },
+  "RZ": { "desc": "Round toward zero (truncate). As a *postfix* this is a rounding mode - not to be confused with the `RZ` zero register in an operand slot.", "class": "rounding", "source": "ptx" },
+
+  "FTZ": { "desc": "Flush denormals to zero. Subnormal inputs and results are replaced by a same-signed zero. Faster, and not IEEE-754 conformant - this is what `-ftz=true` and most graphics compilers produce by default.", "class": "denormal", "source": "ptx" },
+  "DNZ": { "desc": "Denormals are zero on *input* only; the result may still be subnormal.", "class": "denormal", "source": "ptx" },
+  "SAT": { "desc": "Saturate the result to [0.0, 1.0]. NaN becomes 0.0.", "class": "saturate", "source": "ptx" },
+  "RELU": { "desc": "Clamp the result at zero from below (max(0, x)), leaving NaN as NaN. Fused activation, cheaper than a separate FMNMX.", "class": "saturate", "source": "ptx" },
+  "XORSIGN": { "desc": "The result takes the XOR of the operand sign bits.", "class": "saturate", "source": "ptx" },
+  "NAN": { "desc": "Propagate NaN rather than returning the non-NaN operand.", "class": "float", "source": "ptx" },
+  "ABS": { "desc": "Take the absolute value of the operand before use.", "class": "float", "source": "ptx" },
+  "NEG": { "desc": "Negate the operand before use.", "class": "float", "source": "ptx" },
+
+  "U8": { "desc": "Operand type: unsigned 8-bit.", "class": "type", "source": "ptx" },
+  "S8": { "desc": "Operand type: signed 8-bit.", "class": "type", "source": "ptx" },
+  "U16": { "desc": "Operand type: unsigned 16-bit.", "class": "type", "source": "ptx" },
+  "S16": { "desc": "Operand type: signed 16-bit.", "class": "type", "source": "ptx" },
+  "U32": { "desc": "Operand type: unsigned 32-bit. On a comparison this selects the unsigned ordering; SASS defaults to signed, so `.U32` is the one that gets printed.", "class": "type", "source": "ptx" },
+  "S32": { "desc": "Operand type: signed 32-bit.", "class": "type", "source": "ptx" },
+  "U64": { "desc": "Operand type: unsigned 64-bit (a register pair).", "class": "type", "source": "ptx" },
+  "S64": { "desc": "Operand type: signed 64-bit (a register pair).", "class": "type", "source": "ptx" },
+  "F16": { "desc": "Operand type: IEEE half precision.", "class": "type", "source": "ptx" },
+  "F32": { "desc": "Operand type: IEEE single precision.", "class": "type", "source": "ptx" },
+  "F64": { "desc": "Operand type: IEEE double precision (a register pair).", "class": "type", "source": "ptx" },
+  "BF16": { "desc": "Operand type: bfloat16 - FP32's 8-bit exponent with a 7-bit mantissa. Same range as FP32, far less precision.", "class": "type", "source": "ptx" },
+  "TF32": { "desc": "Operand type: TensorFloat-32 - FP32 exponent range truncated to a 10-bit mantissa. A tensor-core input format, not a storage format.", "class": "type", "source": "slides" },
+  "E4M3": { "desc": "Operand type: FP8 with a 4-bit exponent and 3-bit mantissa (more precision, less range).", "class": "type", "source": "ptx" },
+  "E5M2": { "desc": "Operand type: FP8 with a 5-bit exponent and 2-bit mantissa (more range, less precision).", "class": "type", "source": "ptx" },
+  "H2": { "desc": "Packed pair of halves in one 32-bit register; the operation runs on both lanes at once.", "class": "type", "source": "community" },
+
+  "LT": { "desc": "Compare: less than. False if either operand is NaN.", "class": "compare", "source": "ptx" },
+  "LE": { "desc": "Compare: less than or equal. False if either operand is NaN.", "class": "compare", "source": "ptx" },
+  "EQ": { "desc": "Compare: equal. False if either operand is NaN.", "class": "compare", "source": "ptx" },
+  "NE": { "desc": "Compare: not equal. False if either operand is NaN.", "class": "compare", "source": "ptx" },
+  "GE": { "desc": "Compare: greater than or equal. False if either operand is NaN.", "class": "compare", "source": "ptx" },
+  "GT": { "desc": "Compare: greater than. False if either operand is NaN.", "class": "compare", "source": "ptx" },
+  "LTU": { "desc": "Compare: less than **or unordered** - also true when either operand is NaN.", "class": "compare", "source": "ptx" },
+  "LEU": { "desc": "Compare: less-or-equal **or unordered** - also true when either operand is NaN.", "class": "compare", "source": "ptx" },
+  "EQU": { "desc": "Compare: equal **or unordered** - also true when either operand is NaN.", "class": "compare", "source": "ptx" },
+  "NEU": { "desc": "Compare: not-equal **or unordered** - also true when either operand is NaN.", "class": "compare", "source": "ptx" },
+  "GEU": { "desc": "Compare: greater-or-equal **or unordered**. The trailing `U` folds NaN into the *true* side, so a NaN takes the branch IEEE-754 would have sent the other way. This is how a compiler inverts `a < b` without introducing a NaN discrepancy of its own.", "class": "compare", "source": "slides" },
+  "GTU": { "desc": "Compare: greater-than **or unordered** - also true when either operand is NaN.", "class": "compare", "source": "ptx" },
+  "NUM": { "desc": "Compare: ordered - true when neither operand is NaN.", "class": "compare", "source": "ptx" },
+  "T": { "desc": "Compare: always true.", "class": "compare", "source": "ptx" },
+  "F": { "desc": "Compare: always false.", "class": "compare", "source": "ptx" },
+
+  "AND": { "desc": "Combine the comparison result with the incoming predicate operand using AND. The trailing `PT` in the operand list is the identity for it, which is why unconditioned compares end in `, PT`.", "class": "boolean", "source": "ptx" },
+  "OR": { "desc": "Combine the comparison result with the incoming predicate operand using OR.", "class": "boolean", "source": "ptx" },
+  "XOR": { "desc": "Combine the comparison result with the incoming predicate operand using XOR.", "class": "boolean", "source": "ptx" },
+
+  "64": { "desc": "64-bit access width - two consecutive registers, and the base register must be even-aligned.", "class": "width", "source": "community" },
+  "128": { "desc": "128-bit access width - four consecutive registers, aligned to a multiple of four. The widest single memory transaction, and what the compiler reaches for to cut instruction count on contiguous data.", "class": "width", "source": "community" },
+
+  "E": { "desc": "Extended address: the address operand is a 64-bit register pair rather than a 32-bit offset.", "class": "memory", "source": "community" },
+  "STRONG": { "desc": "Strongly-ordered access - participates in the memory model's ordering at the given scope. Pairs with a scope postfix such as `.SM` or `.GPU`.", "class": "memory", "source": "ptx" },
+  "WEAK": { "desc": "Weakly-ordered access - no ordering guarantee beyond the same thread.", "class": "memory", "source": "ptx" },
+  "CONSTANT": { "desc": "Non-coherent read-only path (the `__ldg` / texture cache route). Valid only when nothing writes the location for the lifetime of the kernel.", "class": "memory", "source": "ptx" },
+  "MMIO": { "desc": "Memory-mapped I/O access; not cached, not reordered.", "class": "memory", "source": "community" },
+  "PRIVATE": { "desc": "Thread-private access - the compiler knows no other thread can observe it.", "class": "memory", "source": "community" },
+  "CTA": { "desc": "Scope: the thread block. Ordering is guaranteed only among threads of the same CTA.", "class": "scope", "source": "ptx" },
+  "SM": { "desc": "Scope: the SM. Broader than `.CTA`, narrower than `.GPU` - the usual choice for shared-memory-backed traffic.", "class": "scope", "source": "ptx" },
+  "GPU": { "desc": "Scope: the whole device. Ordering is guaranteed across all CTAs on the GPU.", "class": "scope", "source": "ptx" },
+  "SYS": { "desc": "Scope: the system, including the host and peer devices. The most expensive scope.", "class": "scope", "source": "ptx" },
+  "EF": { "desc": "Cache hint: evict first. Mark the line as the next candidate for eviction - for streaming data you will not revisit.", "class": "cache", "source": "ptx" },
+  "EL": { "desc": "Cache hint: evict last. Keep the line as long as possible - for data you will revisit.", "class": "cache", "source": "ptx" },
+  "LU": { "desc": "Cache hint: last use. This read is the final one, so the line may be dropped immediately afterwards.", "class": "cache", "source": "ptx" },
+  "EU": { "desc": "Cache hint: evict unchanged - do not disturb the line's existing eviction priority.", "class": "cache", "source": "ptx" },
+  "NA": { "desc": "Cache hint: no allocate. Do not bring the line into the cache at all.", "class": "cache", "source": "ptx" },
+  "ZD": { "desc": "Zero-detect: additionally write a predicate saying whether the loaded value was zero.", "class": "memory", "source": "community" },
+
+  "X": { "desc": "Extended precision: consume a carry/borrow predicate produced by a previous instruction, so a pair of 32-bit ops forms one 64-bit op.", "class": "carry", "source": "community" },
+  "HI": { "desc": "Take the high half of the double-width result.", "class": "width", "source": "community" },
+  "WIDE": { "desc": "Produce the full double-width result into a register pair (32x32 -> 64).", "class": "width", "source": "community" },
+  "CC": { "desc": "Also write the condition code / carry-out.", "class": "carry", "source": "community" },
+
+  "reuse": { "desc": "Operand reuse cache hit. The operand-collector already holds this value from the previous instruction, so re-reading it costs no register-file bandwidth. Emitted by the compiler as a scheduling hint - it changes power and issue pressure, never the result.", "class": "hint", "source": "slides" },
+  "PT": { "desc": "The always-true predicate.", "class": "predicate", "source": "slides" },
+  "NZ": { "desc": "Test the result for non-zero and write it to the predicate destination.", "class": "predicate", "source": "community" },
+  "Z": { "desc": "Test the result for zero and write it to the predicate destination.", "class": "predicate", "source": "community" },
+
+  "TRUNC": { "desc": "Convert by truncating toward zero.", "class": "rounding", "source": "ptx" },
+  "FLOOR": { "desc": "Convert by rounding toward minus infinity.", "class": "rounding", "source": "ptx" },
+  "CEIL": { "desc": "Convert by rounding toward plus infinity.", "class": "rounding", "source": "ptx" },
+  "NTZ": { "desc": "Convert by rounding to nearest, ties toward zero.", "class": "rounding", "source": "community" },
+
+  "DESC": { "desc": "Descriptor-based addressing: the access goes through a memory descriptor held in a uniform register, spelled `desc[UR4]`. This is how bindless/bindful resource access reaches global memory in graphics and in newer compute ABIs.", "class": "memory", "source": "community" },
+  "U": { "desc": "Uniform: the operation is known to be warp-invariant and runs on the uniform datapath.", "class": "uniform", "source": "community" }
+ },
+
+ "groups": {
+  "mufu": {
+   "desc": "Multi-function unit operation select. One SFU instruction, many transcendentals - the postfix picks which.",
+   "opcodes": ["MUFU"],
+   "mods": {
+    "RCP": { "desc": "Reciprocal, 1/x. Fast approximate; a full-precision divide is this plus Newton-Raphson refinement steps.", "class": "sfu", "source": "ptx" },
+    "RSQ": { "desc": "Reciprocal square root, 1/sqrt(x). The natural primitive for `normalize()` - which is why normalize compiles to a dot product, MUFU.RSQ, and two multiplies rather than a divide.", "class": "sfu", "source": "ptx" },
+    "SQRT": { "desc": "Square root.", "class": "sfu", "source": "ptx" },
+    "SIN": { "desc": "Sine. The argument is pre-scaled by 1/2pi, which is where the 0.15915493667125701904 multiply just before it comes from.", "class": "sfu", "source": "slides" },
+    "COS": { "desc": "Cosine, on the same 1/2pi-scaled argument as `.SIN`.", "class": "sfu", "source": "slides" },
+    "LG2": { "desc": "Base-2 logarithm.", "class": "sfu", "source": "ptx" },
+    "EX2": { "desc": "Base-2 exponential, 2^x.", "class": "sfu", "source": "ptx" },
+    "TANH": { "desc": "Hyperbolic tangent. Added for activation functions.", "class": "sfu", "source": "ptx" },
+    "RCP64H": { "desc": "Reciprocal seed from the high 32 bits of an FP64 value - the first step of a double-precision divide.", "class": "sfu", "source": "community" },
+    "RSQ64H": { "desc": "Reciprocal-square-root seed from the high 32 bits of an FP64 value.", "class": "sfu", "source": "community" }
+   }
+  },
+
+  "imad": {
+   "desc": "Integer multiply-add, and the compiler idioms built on it.",
+   "opcodes": ["IMAD"],
+   "mods": {
+    "MOV": { "desc": "Move idiom: `IMAD.MOV.U32 Rd, RZ, RZ, src` computes 0*0 + src, i.e. a plain move. The compiler emits it instead of `MOV` to spread work across pipelines - on Ampere the FMA-heavy datapath can retire it while the ALU datapath is busy, so it is a scheduling choice, not arithmetic.", "class": "idiom", "source": "slides" },
+    "IADD": { "desc": "Add idiom: multiply by one to perform an addition on the multiply pipeline, again for issue-slot balance.", "class": "idiom", "source": "community" },
+    "SHL": { "desc": "Shift-left idiom: multiply by a power of two.", "class": "idiom", "source": "community" },
+    "WIDE": { "desc": "Full 32x32 -> 64 product into a register pair. Common in address arithmetic, where a 32-bit index has to reach a 64-bit pointer.", "class": "width", "source": "community" },
+    "HI": { "desc": "Keep only the high 32 bits of the 64-bit product.", "class": "width", "source": "community" },
+    "X": { "desc": "Consume a carry-in predicate, extending the add half to a wider precision.", "class": "carry", "source": "community" }
+   }
+  },
+
+  "lop": {
+   "desc": "Bitwise logic via lookup table.",
+   "opcodes": ["LOP3", "PLOP3", "ULOP3", "UPLOP3"],
+   "mods": {
+    "LUT": { "desc": "The trailing 8-bit immediate is a truth table over the three inputs, not a value. Bit *i* of the immediate gives the output for the input combination whose binary digits are *i*: `0xc0` = a AND b, `0xfc` = a OR b, `0x3c` = a XOR b, `0xf0` = a. One instruction covers every 3-input boolean function.", "class": "lut", "source": "community" },
+    "PAND": { "desc": "AND the result with the incoming predicate before writing.", "class": "boolean", "source": "corpus" }
+   }
+  },
+
+  "shift": {
+   "desc": "Funnel and simple shifts.",
+   "opcodes": ["SHF", "USHF", "SHL", "SHR", "USHL", "USHR"],
+   "mods": {
+    "L": { "desc": "Shift left.", "class": "shift", "source": "ptx" },
+    "R": { "desc": "Shift right.", "class": "shift", "source": "ptx" },
+    "HI": { "desc": "Take the high word of the funnel-shift result. A funnel shift concatenates two registers and shifts the 64-bit pair; `.HI` selects which half is kept.", "class": "shift", "source": "community" },
+    "W": { "desc": "Wrap the shift amount modulo the operand width instead of clamping.", "class": "shift", "source": "ptx" },
+    "CLAMP": { "desc": "Clamp a shift amount larger than the operand width to the width, yielding 0 or the sign fill.", "class": "shift", "source": "ptx" },
+    "WRAP": { "desc": "Wrap a shift amount larger than the operand width modulo the width.", "class": "shift", "source": "ptx" }
+   }
+  },
+
+  "compare": {
+   "desc": "Compare-and-set-predicate instructions.",
+   "opcodes": ["ISETP", "FSETP", "DSETP", "HSETP2", "UISETP", "FSET", "HSET2"],
+   "mods": {
+    "EX": { "desc": "Extended compare: fold in the predicate from the low half so that two 32-bit compares implement one 64-bit compare.", "class": "carry", "source": "community" },
+    "BF": { "desc": "Write the boolean result as a float (0.0 or 1.0) into a general register rather than to a predicate. This is what turns a branchless `a < b` into a value you can multiply by.", "class": "predicate", "source": "slides" },
+    "NAN": { "desc": "Compare: unordered - true when either input is NaN.", "class": "compare", "source": "ptx" },
+    "AND": { "desc": "Combine the comparison result with the incoming predicate operand using AND. The trailing `PT` is the identity, which is why unconditioned compares end in `, PT`.", "class": "boolean", "source": "ptx" }
+   }
+  },
+
+  "branch": {
+   "desc": "Branches, calls, and the convergence-barrier instructions that bracket divergent regions.",
+   "opcodes": ["BRA", "BRX", "JMP", "JMX", "CALL", "RET", "BSSY", "BSYNC", "BREAK", "BMOV", "WARPSYNC", "EXIT", "YIELD"],
+   "mods": {
+    "U": { "desc": "Uniform branch: the whole warp is known to agree, so no divergence stack work is needed.", "class": "branch", "source": "community" },
+    "DIV": { "desc": "Divergent branch: lanes may disagree and the hardware must split the warp.", "class": "branch", "source": "community" },
+    "CONV": { "desc": "Convergent branch: the warp is expected to reconverge at the target.", "class": "branch", "source": "community" },
+    "REL": { "desc": "Target is relative to the program counter.", "class": "branch", "source": "community" },
+    "ABS": { "desc": "Target is an absolute address.", "class": "branch", "source": "community" },
+    "NOINC": { "desc": "Do not push a return address - a tail call, or a call whose return is handled by other means.", "class": "branch", "source": "community" },
+    "INC": { "desc": "Push a return address onto the call stack.", "class": "branch", "source": "community" },
+    "NODEC": { "desc": "Return without popping the call stack.", "class": "branch", "source": "community" },
+    "ALL": { "desc": "Wait for every lane in the mask before proceeding.", "class": "branch", "source": "community" },
+    "EXCLUSIVE": { "desc": "Only the lanes in the mask participate; the rest continue.", "class": "branch", "source": "corpus" },
+    "32": { "desc": "Move the 32-bit convergence-barrier state.", "class": "width", "source": "corpus" },
+    "CLEAR": { "desc": "Clear the source convergence-barrier state after moving it.", "class": "branch", "source": "corpus" }
+   }
+  },
+
+  "ldst": {
+   "desc": "Memory access.",
+   "opcodes": ["LDG", "STG", "LDS", "STS", "LDL", "STL", "LD", "ST", "LDC", "ULDC", "LDGSTS", "LDSM", "RED", "ATOM", "ATOMG", "ATOMS"],
+   "mods": {
+    "E": { "desc": "Extended address: a 64-bit register pair holds the address. Standard for global memory on a 64-bit ABI.", "class": "memory", "source": "community" },
+    "SM": { "desc": "Scope: the SM. In `STG.E.STRONG.SM` the access is ordered with respect to other threads on the same SM but not device-wide.", "class": "scope", "source": "ptx" },
+    "BYPASS": { "desc": "Bypass L1 and go straight to L2 - for the asynchronous copy path, where staging through L1 would be wasted work.", "class": "cache", "source": "ptx" },
+    "ACCESS": { "desc": "Take the normal cached path rather than bypassing.", "class": "cache", "source": "corpus" },
+    "LTC128B": { "desc": "128-byte L2 cache-line granularity hint for the access.", "class": "cache", "source": "corpus" },
+    "SYS": { "desc": "Scope: system-wide, covering the host and peer devices.", "class": "scope", "source": "ptx" }
+   }
+  },
+
+  "atomic": {
+   "desc": "The read-modify-write operation an atomic performs.",
+   "opcodes": ["ATOM", "ATOMG", "ATOMS", "RED", "SUATOM", "SURED"],
+   "mods": {
+    "ADD": { "desc": "Atomic add.", "class": "atomic", "source": "ptx" },
+    "MIN": { "desc": "Atomic minimum.", "class": "atomic", "source": "ptx" },
+    "MAX": { "desc": "Atomic maximum.", "class": "atomic", "source": "ptx" },
+    "INC": { "desc": "Atomic increment with wraparound at a supplied limit.", "class": "atomic", "source": "ptx" },
+    "DEC": { "desc": "Atomic decrement with wraparound at a supplied limit.", "class": "atomic", "source": "ptx" },
+    "AND": { "desc": "Atomic bitwise AND.", "class": "atomic", "source": "ptx" },
+    "OR": { "desc": "Atomic bitwise OR.", "class": "atomic", "source": "ptx" },
+    "XOR": { "desc": "Atomic bitwise XOR.", "class": "atomic", "source": "ptx" },
+    "EXCH": { "desc": "Atomic exchange - swap in the new value and return the old one.", "class": "atomic", "source": "ptx" },
+    "CAS": { "desc": "Atomic compare-and-swap.", "class": "atomic", "source": "ptx" },
+    "SAFEADD": { "desc": "Atomic add that saturates rather than wrapping on overflow.", "class": "atomic", "source": "community" },
+    "POPC": { "desc": "Atomic population count reduction.", "class": "atomic", "source": "community" }
+   }
+  },
+
+  "ldsm": {
+   "desc": "Warp-level matrix loads from shared memory.",
+   "opcodes": ["LDSM"],
+   "mods": {
+    "16": { "desc": "Load 16-bit matrix elements.", "class": "type", "source": "community" },
+    "M88": { "desc": "Use an 8 by 8 matrix fragment layout.", "class": "shape", "source": "community" },
+    "4": { "desc": "Load four matrix fragments into four consecutive, naturally aligned destination registers.", "class": "shape", "source": "community" }
+   }
+  },
+
+  "lea": {
+   "desc": "Effective-address arithmetic.",
+   "opcodes": ["LEA"],
+   "mods": {
+    "SX32": { "desc": "Sign-extend the 32-bit address contribution before combining it.", "class": "type", "source": "community" }
+   }
+  },
+
+  "membar": {
+   "desc": "Memory ordering and visibility.",
+   "opcodes": ["MEMBAR"],
+   "mods": {
+    "SC": { "desc": "Sequentially consistent ordering at the selected scope.", "class": "memory", "source": "ptx" }
+   }
+  },
+
+  "warp": {
+   "desc": "Cross-lane and barrier operations.",
+   "opcodes": ["SHFL", "VOTE", "VOTEU", "MATCH", "BAR", "DEPBAR"],
+   "mods": {
+    "IDX": { "desc": "Shuffle by absolute lane index.", "class": "warp", "source": "ptx" },
+    "UP": { "desc": "Shuffle from a lower lane index.", "class": "warp", "source": "ptx" },
+    "DOWN": { "desc": "Shuffle from a higher lane index.", "class": "warp", "source": "ptx" },
+    "BFLY": { "desc": "Butterfly shuffle - exchange with the lane whose index differs by the given XOR mask. The reduction-tree primitive.", "class": "warp", "source": "ptx" },
+    "ALL": { "desc": "True when the predicate holds in every active lane.", "class": "warp", "source": "ptx" },
+    "ANY": { "desc": "True when the predicate holds in at least one active lane.", "class": "warp", "source": "ptx" },
+    "EQ": { "desc": "True when every active lane agrees on the predicate.", "class": "warp", "source": "ptx" },
+    "BALLOT": { "desc": "Return the predicate of every lane as a 32-bit mask.", "class": "warp", "source": "community" },
+    "SYNC": { "desc": "Arrive at the barrier and wait for the other participants.", "class": "warp", "source": "ptx" },
+    "ARV": { "desc": "Arrive at the barrier without waiting.", "class": "warp", "source": "community" },
+    "RED": { "desc": "Barrier with reduction - combine a per-thread value while synchronising.", "class": "warp", "source": "community" },
+    "POPC": { "desc": "Reduce by counting how many participants supplied a true predicate.", "class": "warp", "source": "community" },
+    "DEFER_BLOCKING": { "desc": "Arrive now, block only when the result is actually needed.", "class": "warp", "source": "corpus" }
+   }
+  },
+
+  "texture": {
+   "desc": "Texture sampling.",
+   "opcodes": ["TEX", "TLD", "TLD4", "TXD", "TMML", "TXQ"],
+   "mods": {
+    "LZ": { "desc": "Sample at LOD zero - no mip selection, no derivatives needed.", "class": "texture", "source": "community" },
+    "LL": { "desc": "Sample at an explicitly supplied LOD level.", "class": "texture", "source": "community" },
+    "LB": { "desc": "Sample with an LOD bias added to the computed level.", "class": "texture", "source": "community" },
+    "LOD": { "desc": "Return the computed level of detail instead of sampling.", "class": "texture", "source": "community" },
+    "AOFFI": { "desc": "Apply a constant integer texel offset to the sample coordinates.", "class": "texture", "source": "community" },
+    "DC": { "desc": "Depth compare - the shadow-map sampling path.", "class": "texture", "source": "community" },
+    "NDV": { "desc": "Non-divergent: every lane is known to use the same sampler/texture pair, so the hardware can skip the divergent-sampler loop.", "class": "texture", "source": "community" },
+    "B": { "desc": "Bindless - the texture handle comes from a register instead of a fixed slot.", "class": "texture", "source": "community" },
+    "P": { "desc": "Pipelined sample: the result is delivered later and collected by a separate instruction.", "class": "texture", "source": "community" },
+    "SCR": { "desc": "Scoreboard-tracked variant, for the decoupled/unknown-latency return path.", "class": "texture", "source": "corpus" },
+    "1D": { "desc": "1D texture addressing.", "class": "texture", "source": "community" },
+    "2D": { "desc": "2D texture addressing.", "class": "texture", "source": "community" },
+    "3D": { "desc": "3D texture addressing.", "class": "texture", "source": "community" },
+    "ARRAY": { "desc": "Array texture - one coordinate selects the slice.", "class": "texture", "source": "community" },
+    "CUBE": { "desc": "Cube-map addressing.", "class": "texture", "source": "community" },
+    "G": { "desc": "Gather the green component from the four selected texels.", "class": "texture", "source": "community" }
+   }
+  },
+
+  "mma": {
+   "desc": "Tensor-core matrix multiply-accumulate. The numeric postfix is the MxNxK tile shape.",
+   "opcodes": ["HMMA", "IMMA", "BMMA", "DMMA", "OMMA", "QMMA", "HGMMA", "IGMMA", "QGMMA"],
+   "mods": {
+    "884": { "desc": "Tile shape M8 N8 K4 - the Volta-generation shape.", "class": "shape", "source": "community" },
+    "1688": { "desc": "Tile shape M16 N8 K8.", "class": "shape", "source": "community" },
+    "16816": { "desc": "Tile shape M16 N8 K16 - the common Ampere FP16 shape.", "class": "shape", "source": "community" },
+    "16832": { "desc": "Tile shape M16 N8 K32 - used by the narrower input types.", "class": "shape", "source": "community" },
+    "STEP0": { "desc": "First of the sub-steps a logical MMA is decomposed into.", "class": "shape", "source": "community" },
+    "STEP1": { "desc": "Second sub-step of the decomposed MMA.", "class": "shape", "source": "community" },
+    "STEP2": { "desc": "Third sub-step of the decomposed MMA.", "class": "shape", "source": "community" },
+    "STEP3": { "desc": "Fourth sub-step of the decomposed MMA.", "class": "shape", "source": "community" },
+    "ROW": { "desc": "Row-major operand layout.", "class": "shape", "source": "community" },
+    "COL": { "desc": "Column-major operand layout.", "class": "shape", "source": "community" },
+    "SP": { "desc": "Structured-sparsity variant: one operand is 2:4 sparse, which doubles throughput.", "class": "shape", "source": "slides" }
+   }
+  },
+
+  "graphics": {
+   "desc": "Pixel/vertex attribute handling.",
+   "opcodes": ["IPA", "ALD", "AST", "AL2P", "ISBERD", "OUT", "PIXLD"],
+   "mods": {
+    "PASS": { "desc": "Pass the attribute through as interpolated, without applying the perspective divide. The shader does the divide itself, which is why `IPA.PASS` is followed by `MUFU.RCP` of `a[0x7c]` (that slot holds 1/w) and an `FMUL`.", "class": "interp", "source": "slides" },
+    "MULTIPLY": { "desc": "Interpolate and multiply by the perspective term in one step.", "class": "interp", "source": "community" },
+    "CONSTANT": { "desc": "Flat / `nointerpolation` attribute - take the provoking vertex's value with no interpolation. Note that a `noperspective` attribute instead shows up as the *absence* of the reciprocal-multiply sequence.", "class": "interp", "source": "slides" },
+    "SC": { "desc": "Screen-space coordinate variant.", "class": "interp", "source": "community" },
+    "IDX": { "desc": "Dynamically indexed attribute - the slot comes from a register.", "class": "interp", "source": "community" },
+    "CENTROID": { "desc": "Centroid sampling - evaluate inside the covered part of the pixel.", "class": "interp", "source": "community" },
+    "SAMPLE": { "desc": "Per-sample evaluation rather than per-pixel.", "class": "interp", "source": "community" },
+    "COVMASK": { "desc": "Read the coverage mask.", "class": "interp", "source": "community" },
+    "LIVE": { "desc": "Read whether the pixel is still live (not killed and not helper-only).", "class": "interp", "source": "community" },
+    "PHYS": { "desc": "Use the physical attribute address rather than the logical interpolant view.", "class": "attribute", "source": "corpus" },
+    "EMIT": { "desc": "Emit the assembled graphics-pipeline output.", "class": "graphics", "source": "corpus" }
+   }
+  },
+
+  "convert": {
+   "desc": "Type conversion.",
+   "opcodes": ["F2F", "F2I", "I2F", "I2I", "I2IP", "F2IP", "FRND", "UF2FP"],
+   "mods": {
+    "PACK_AB": { "desc": "Pack the two converted results into one register.", "class": "type", "source": "community" },
+    "SATFINITE": { "desc": "Saturate out-of-range values to the destination type's finite limits instead of producing an infinity.", "class": "saturate", "source": "ptx" }
+   }
+  },
+
+  "select": {
+   "desc": "Predicated selection and min/max.",
+   "opcodes": ["SEL", "FSEL", "USEL", "IMNMX", "FMNMX", "UIMNMX", "HMNMX2"],
+   "mods": {
+    "NAN": { "desc": "Return NaN when either input is NaN, rather than the non-NaN operand.", "class": "float", "source": "ptx" },
+    "XORSIGN": { "desc": "The result's sign is the XOR of the input signs.", "class": "float", "source": "ptx" }
+   }
+  },
+
+  "s2r": {
+   "desc": "Special-register reads.",
+   "opcodes": ["S2R", "CS2R", "S2UR"],
+   "mods": {
+    "32": { "desc": "Read 32 bits.", "class": "width", "source": "community" },
+    "64": { "desc": "Read 64 bits into a register pair - what `CS2R.64 Rd, SRZ` uses to clear two registers at once.", "class": "width", "source": "community" }
+   }
+  }
+ },
+
+ "operandDecorations": {
+  "-": { "desc": "Negate this source operand. Free - it is an input modifier on the datapath, not a separate instruction.", "source": "slides" },
+  "|x|": { "desc": "Absolute value of this source operand. Free, like negation - the sign bit is simply masked as the operand is read.", "source": "slides" },
+  "!": { "desc": "Logical negation of a predicate operand.", "source": "slides" },
+  "@": { "desc": "Guard predicate. The instruction executes only in the lanes where the predicate holds; the rest are masked off. This is how SASS expresses short divergent regions without branching at all.", "source": "slides" }
+ }
+}

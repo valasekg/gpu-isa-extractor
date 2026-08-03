@@ -1,0 +1,187 @@
+{
+ "_meta": {
+  "generated_by": "hand-curated",
+  "basis": "Register taxonomy per the GPGPU Arch 07 - NVIDIA Ampere deep dive slides: RX general, URX uniform, SRX special, PX predicate, UPX uniform predicate, c[X][Y] constant memory.",
+  "palette_rule": "Warm hues mark per-thread (divergent) state; cool hues mark warp-uniform state. That is the single distinction worth seeing instantly when reading SASS."
+ },
+
+ "classes": {
+  "vector": {
+   "title": "Vector register (per-thread)",
+   "desc": "One of the general-purpose registers `R0`-`R254`. **Every lane in the warp holds its own copy** - this is per-thread, divergent state, the SASS equivalent of an AMD VGPR. The register file is 256 KB per SM, split into four 64 KB partitions, one per SM sub-partition, so register pressure translates directly into occupancy.",
+   "temperature": "warm"
+  },
+  "vectorZero": {
+   "title": "RZ - zero register",
+   "desc": "Reads as 0 and discards anything written to it. It is not a real register: as a source it is the constant zero (`IMAD.MOV.U32 Rd, RZ, RZ, x` is a move), and as a destination it means *compute this for the side effect and throw the value away* - which is exactly what a compare that only needs its predicate output does.",
+   "temperature": "warm"
+  },
+  "uniform": {
+   "title": "Uniform register (scalar, warp-wide)",
+   "desc": "One of `UR0`-`UR63`. **One value shared by the whole warp**, held in a separate small register file and fed by its own uniform datapath. Introduced with Turing to keep warp-invariant work - address bases, loop bounds, descriptors - off the vector register file. Seeing address arithmetic land here rather than in `R` registers is a sign the compiler proved it warp-invariant.",
+   "temperature": "cool"
+  },
+  "uniformZero": {
+   "title": "URZ - uniform zero register",
+   "desc": "The uniform datapath's zero register: reads as 0, discards writes.",
+   "temperature": "cool"
+  },
+  "predicate": {
+   "title": "Predicate register (per-thread)",
+   "desc": "One of `P0`-`P7`. A single per-lane bit controlling conditional execution. A guard such as `@P0` runs the instruction only in the lanes where the bit is set - divergence without a branch. `@!P0` inverts it.",
+   "temperature": "warm"
+  },
+  "predicateTrue": {
+   "title": "PT - true predicate",
+   "desc": "Always true. As a guard (`@PT`) it means unconditional; as the incoming operand of a `.AND`-combining compare it is the identity, which is why so many compares end in `, PT`. As a destination it discards the predicate.",
+   "temperature": "warm"
+  },
+  "uniformPredicate": {
+   "title": "Uniform predicate register",
+   "desc": "One of `UP0`-`UP7`. A single warp-wide predicate bit on the uniform datapath - notably the carry between the halves of a uniform 64-bit add.",
+   "temperature": "cool"
+  },
+  "uniformPredicateTrue": {
+   "title": "UPT - true uniform predicate",
+   "desc": "The uniform datapath's always-true predicate.",
+   "temperature": "cool"
+  },
+  "special": {
+   "title": "Special register",
+   "desc": "A read-only, system-supplied value reached with `S2R` (or `CS2R` for the cheap constants, `S2UR` when the value is warp-uniform). `S2R` has unknown latency and is scoreboarded, which is why it is issued early and its result consumed much later.",
+   "temperature": "neutral"
+  },
+  "specialZero": {
+   "title": "SRZ - zero special register",
+   "desc": "Reads as zero. `CS2R.64 Rd, SRZ` is the standard idiom for clearing a register pair in one instruction.",
+   "temperature": "neutral"
+  },
+  "barrier": {
+   "title": "Convergence barrier register",
+   "desc": "One of `B0`-`B15`. Holds the reconvergence point and participating-lane mask for a divergent region: `BSSY B0, <target>` opens it, `BSYNC B0` reconverges, `BREAK B0` leaves it early. Since Volta these replaced the old implicit reconvergence stack.",
+   "temperature": "neutral"
+  },
+  "scoreboard": {
+   "title": "Scoreboard barrier",
+   "desc": "One of `SB0`-`SB5`. Tracks an outstanding variable-latency operation (a load, a texture fetch, an `S2R`). The consuming instruction's control code names the barrier it must wait on.",
+   "temperature": "neutral"
+  },
+  "predicateFile": {
+   "title": "PR - the predicate register file",
+   "desc": "The predicate registers addressed as one value, so that `P2R`/`R2P` can spill all of them to a general register and restore them.",
+   "temperature": "warm"
+  },
+  "constant": {
+   "title": "Constant memory",
+   "desc": "`c[bank][offset]` - a read from the constant banks, broadcast to the whole warp and served from a dedicated cache. Effectively free when every lane reads the same address, which is always the case here since the address is an immediate. `cx[URn][offset]` is the *indexed* form, where a uniform register supplies the bank base - how bindless descriptors and dynamically indexed buffers are reached.",
+   "temperature": "cool"
+  },
+  "attribute": {
+   "title": "Attribute space",
+   "desc": "`a[offset]` - the rasterizer's per-pixel interpolant space in a graphics shader, read with `IPA` or `ALD`.",
+   "temperature": "cool"
+  },
+  "immediate": {
+   "title": "Immediate",
+   "desc": "A literal encoded in the instruction. Warp-uniform by construction. Float immediates are printed in decimal, integer and bit-pattern immediates in hex - so `0x3f800000` in a move to a float register is 1.0f.",
+   "temperature": "cool"
+  }
+ },
+
+ "special": {
+  "SR_TID": { "desc": "Thread index within the CTA, packed." },
+  "SR_TID.X": { "desc": "`threadIdx.x` - thread index within the CTA." },
+  "SR_TID.Y": { "desc": "`threadIdx.y`." },
+  "SR_TID.Z": { "desc": "`threadIdx.z`." },
+  "SR_CTAID": { "desc": "CTA index within the grid, packed." },
+  "SR_CTAID.X": { "desc": "`blockIdx.x` - CTA index within the grid." },
+  "SR_CTAID.Y": { "desc": "`blockIdx.y`." },
+  "SR_CTAID.Z": { "desc": "`blockIdx.z`." },
+  "SR_NTID": { "desc": "CTA dimensions, packed." },
+  "SR_NTID.X": { "desc": "`blockDim.x` - CTA dimensions." },
+  "SR_NTID.Y": { "desc": "`blockDim.y`." },
+  "SR_NTID.Z": { "desc": "`blockDim.z`." },
+  "SR_NCTAID": { "desc": "Grid dimensions in CTAs, packed." },
+  "SR_NCTAID.X": { "desc": "`gridDim.x` - grid dimensions in CTAs." },
+  "SR_NCTAID.Y": { "desc": "`gridDim.y`." },
+  "SR_NCTAID.Z": { "desc": "`gridDim.z`." },
+  "SR_LANEID": { "desc": "Lane index within the warp, 0-31." },
+  "SR_WARPID": { "desc": "Warp slot index within the SM." },
+  "SR_VIRTID": { "desc": "Virtual warp identifier." },
+  "SR_SMID": { "desc": "Index of the SM this warp is resident on. Useful for persistent-kernel scheduling; not stable across preemption." },
+  "SR_NSMID": { "desc": "Number of SMs on the device." },
+  "SR_EQMASK": { "desc": "Mask of lanes whose index equals this lane's." },
+  "SR_LTMASK": { "desc": "Mask of lanes with a lower index than this lane - the prefix-sum primitive for warp-aggregated atomics." },
+  "SR_LEMASK": { "desc": "Mask of lanes with an index less than or equal to this lane's." },
+  "SR_GTMASK": { "desc": "Mask of lanes with a higher index than this lane's." },
+  "SR_GEMASK": { "desc": "Mask of lanes with an index greater than or equal to this lane's." },
+  "SR_CLOCKLO": { "desc": "Low 32 bits of the SM clock counter." },
+  "SR_CLOCKHI": { "desc": "High 32 bits of the SM clock counter." },
+  "SR_GLOBALTIMERLO": { "desc": "Low 32 bits of the device-wide nanosecond timer." },
+  "SR_GLOBALTIMERHI": { "desc": "High 32 bits of the device-wide nanosecond timer." },
+  "SR_VERTEXID": { "desc": "Vertex index (graphics)." },
+  "SR_INSTANCEID": { "desc": "Instance index (graphics)." },
+  "SR_PRIMITIVEID": { "desc": "Primitive index (graphics)." },
+  "SR_INVOCATIONID": { "desc": "Invocation index within a geometry or tessellation stage." },
+  "SR_SAMPLEID": { "desc": "Sample index under per-sample shading." },
+  "SR_AFFINITY": { "desc": "Scheduling affinity bits." },
+  "SR_DEPTH_LO": { "desc": "Call-depth / stack-depth low word." },
+  "SR_LTCID": { "desc": "L2 cache slice identifier." },
+  "SRZ": { "desc": "Reads as zero." }
+ },
+
+ "constantBanks": {
+  "_note": "Bank 0 is the driver/ABI bank. These offsets are the widely corroborated ones and are heuristics, not a documented layout - the base moves between architectures and between the compute and graphics ABIs. Graphics pipelines additionally use higher banks (c[0x11], c[0x18], ...) for driver tables and descriptor state, which is what `cx[URn][...]` then indexes into.",
+  "0x0": {
+   "title": "Bank 0 - driver / ABI constants",
+   "offsets": {
+    "0x0": "blockDim.x (ntid.x)",
+    "0x4": "blockDim.y",
+    "0x8": "blockDim.z",
+    "0xc": "gridDim.x (nctaid.x)",
+    "0x10": "gridDim.y",
+    "0x14": "gridDim.z",
+    "0x28": "local-memory window base - `MOV R1, c[0x0][0x28]` is the standard stack-pointer prologue",
+    "0x160": "first kernel parameter (sm_70 - sm_89)",
+    "0x210": "first kernel parameter (sm_90+)"
+   }
+  }
+ },
+
+ "attributeSlots": {
+  "_note": "Pixel-shader interpolant space. Position occupies the slots below 0x80 and user varyings start at 0x80; this layout is read off shader disassembly rather than documented.",
+  "0x70": "position.x",
+  "0x74": "position.y",
+  "0x78": "position.z",
+  "0x7c": "the interpolated 1/w. `MUFU.RCP` of this slot recovers w, and multiplying an interpolated attribute by that w is the perspective divide - which is why almost every pixel shader opens with `IPA.PASS Rn, a[0x7c]` followed by `MUFU.RCP`. A `noperspective` attribute is recognisable by the *absence* of that sequence.",
+  "0x80": "first user attribute (e.g. TEXCOORD.x)",
+  "0x84": "second user attribute (e.g. TEXCOORD.y)"
+ },
+
+ "controlCodeVolta": {
+  "title": "Control code (Volta+)",
+  "desc": "Scheduling metadata carried by this instruction itself, decoded from bits [105,126) of the 128-bit encoding by this extension and printed as `[B--2---:R-:W0:Y:S04]`.\n\nThe five printed columns run `wait : read : write : yield : stall`. Scoreboards here are **positional and numbered 0-5, exactly as encoded** - one character per scoreboard in the `B` field. Do not read them as the hex mask over barriers 1-6 that Maxwell-era listings and maxas use; that renumbering does not apply to this column.\n\nScoreboards are counters, not flags: several in-flight instructions can arm the same one, and a wait blocks until it drains to zero.",
+  "fieldOrder": ["wait", "read", "write", "yield", "stall"],
+  "fields": {
+   "wait": { "title": "wait mask", "desc": "Scoreboards that must have drained to zero before this instruction may issue, one slot per scoreboard 0-5. `B--2---` waits on scoreboard 2 alone; `B------` waits on nothing." },
+   "read": { "title": "read scoreboard", "desc": "Scoreboard armed until this instruction's *source operands* have been read out, so a later instruction can know when it is safe to overwrite them (WAR protection). `R-` arms none." },
+   "write": { "title": "write scoreboard", "desc": "Scoreboard armed until this instruction's *result* has been written back. Used by variable-latency instructions - loads, texture fetches, `S2R` - whose completion time the compiler cannot know. `W-` arms none." },
+   "yield": { "title": "yield hint", "desc": "`Y` hints that the scheduler may switch to another warp after this instruction. This is the raw encoded bit; its polarity is debated among community decoders, so treat it as a hint about the hint." },
+   "stall": { "title": "stall count", "desc": "Cycles the scheduler holds this warp before issuing its next instruction, 0-15, in **decimal** here. Fixed-latency instructions are scheduled entirely by this number - there is no interlock to catch a wrong one." }
+  },
+  "source": "decoded from the instruction encoding by this extension; field layout per arXiv:1903.07486 and community decoders (CuAssembler); cross-checked against nvdisasm's own `.reuse` flags on every dump"
+ },
+ "controlCode": {
+  "title": "Control code",
+  "desc": "Scheduling metadata the compiler attaches to each instruction. Through Maxwell these were batched - 8 bytes describing the following three instructions; since Turing each 128-bit instruction carries its own (>=23 bits alongside >=91 bits of opcode and operands).\n\nThe five printed columns run `wait : read : write : yield : stall` - the **reverse** of the bitfield order usually quoted (`stall : yield : write : read : wait`). Worth knowing, because reading the columns in the quoted order silently swaps the stall count with the wait mask.",
+  "fieldOrder": ["wait", "read", "write", "yield", "stall"],
+  "fields": {
+   "wait": { "title": "wait barrier", "desc": "Mask of scoreboard barriers this instruction must wait on before it can issue. `06` means barriers 1 and 2." },
+   "read": { "title": "read barrier", "desc": "Scoreboard barrier to set when this instruction's *source operands* have been consumed, so they can safely be overwritten." },
+   "write": { "title": "write barrier", "desc": "Scoreboard barrier to set when this instruction's *result* is produced. Needed for variable-latency (decoupled) instructions - loads, texture fetches, `S2R` - whose completion time the compiler cannot know." },
+   "yield": { "title": "yield hint", "desc": "`Y` hints that the scheduler may switch to another warp here. Switching warps is normally free." },
+   "stall": { "title": "stall count", "desc": "Cycles to stall after this instruction, 0-15, in hex. **0 means dual-issue with the next instruction.** Fixed-latency (coupled) instructions are scheduled entirely by this number - there is no interlock to catch a wrong one." }
+  },
+  "source": "slides; column order derived from the worked examples in the slides; instruction-width detail from arXiv:1903.07486"
+ }
+}

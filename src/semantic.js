@@ -1,0 +1,123 @@
+'use strict';
+
+const vscode = require('vscode');
+const { parseLine } = require('./parse');
+const data = require('./data');
+
+/**
+ * Semantic highlighting pass.
+ *
+ * The TextMate grammar already colours register *classes*. What it cannot do is tell a
+ * destination from a source, because that depends on the opcode: `STG [R19+UR4], R0`
+ * writes memory, not R19. This provider re-parses each line in JS and emits the role, so
+ * the theme can brighten destinations without ever getting a store backwards.
+ *
+ * Ranges emitted here must not overlap. For bracketed operands only the leading
+ * identifier is claimed (`c` of `c[0x0][0x28]`), which leaves the brackets and any nested
+ * register to the grammar.
+ */
+
+const TOKEN_TYPES = [
+  'sassOpcode', 'sassModifier', 'sassVectorReg', 'sassUniformReg', 'sassPredicate',
+  'sassUniformPredicate', 'sassSpecialReg', 'sassBarrier', 'sassConstBank',
+  'sassAttribute', 'sassImmediate', 'sassGuard', 'sassLabel'
+];
+
+const TOKEN_MODIFIERS = [
+  'dst', 'src', 'discard', 'tier1', 'tier2', 'tier3', 'reuse'
+];
+
+const legend = new vscode.SemanticTokensLegend(TOKEN_TYPES, TOKEN_MODIFIERS);
+
+const KIND_TO_TYPE = {
+  vector: 'sassVectorReg',
+  uniform: 'sassUniformReg',
+  predicate: 'sassPredicate',
+  predFile: 'sassPredicate',
+  uniformPredicate: 'sassUniformPredicate',
+  special: 'sassSpecialReg',
+  barrier: 'sassBarrier',
+  scoreboard: 'sassBarrier',
+  const: 'sassConstBank',
+  descriptor: 'sassConstBank',
+  attribute: 'sassAttribute',
+  immediate: 'sassImmediate',
+  label: 'sassLabel'
+};
+
+const TYPE_INDEX = new Map(TOKEN_TYPES.map((t, i) => [t, i]));
+const MODIFIER_BIT = new Map(TOKEN_MODIFIERS.map((m, i) => [m, 1 << i]));
+
+function bits(...names) {
+  let v = 0;
+  for (const n of names) if (n && MODIFIER_BIT.has(n)) v |= MODIFIER_BIT.get(n);
+  return v;
+}
+
+class SassSemanticTokensProvider {
+  constructor() {
+    this._onDidChange = new vscode.EventEmitter();
+    /** Fired to make VS Code drop its cache and ask for tokens again. */
+    this.onDidChangeSemanticTokens = this._onDidChange.event;
+  }
+
+  /** Call when a setting changed that affects what this provider emits. */
+  refresh() {
+    this._onDidChange.fire();
+  }
+
+  dispose() {
+    this._onDidChange.dispose();
+  }
+
+  provideDocumentSemanticTokens(document) {
+    const builder = new vscode.SemanticTokensBuilder(legend);
+    if (!vscode.workspace.getConfiguration('nvidiaSass').get('semanticHighlighting', true)) {
+      return builder.build();
+    }
+
+    for (let lineNo = 0; lineNo < document.lineCount; lineNo++) {
+      const text = document.lineAt(lineNo).text;
+      if (!text.trim()) continue;
+
+      let parsed;
+      try {
+        parsed = parseLine(text);
+      } catch (e) {
+        continue;                        // never let one odd line break the whole file
+      }
+      if (!parsed || !parsed.opcode) continue;
+
+      if (parsed.guard) {
+        push(builder, lineNo, parsed.guard.start, parsed.guard.end, 'sassGuard', 0);
+      }
+
+      // Keep every opcode on the same base token. Modifier-qualified custom semantic
+      // tokens can override TextMate with the editor foreground in stock themes, causing
+      // a visible blue-to-black flash after the asynchronous semantic pass arrives.
+      // Category and provenance remain available in the hover instead.
+      push(builder, lineNo, parsed.opcode.start, parsed.opcode.end, 'sassOpcode', 0);
+
+      for (const mod of parsed.modifiers) {
+        // Skip the leading '.' so the accessor keeps its punctuation colour.
+        push(builder, lineNo, mod.start + 1, mod.end, 'sassModifier', bits('tier' + mod.tier));
+      }
+
+      for (const token of parsed.tokens) {
+        const type = KIND_TO_TYPE[token.kind];
+        if (!type) continue;
+        const range = token.head || token;
+        push(builder, lineNo, range.start, range.end, type, bits(token.role));
+      }
+    }
+
+    return builder.build();
+  }
+}
+
+function push(builder, line, start, end, type, modifiers) {
+  if (end <= start) return;
+  builder.push(line, start, end - start, TYPE_INDEX.get(type), modifiers);
+}
+
+module.exports = { SassSemanticTokensProvider, legend, TOKEN_TYPES, TOKEN_MODIFIERS };
