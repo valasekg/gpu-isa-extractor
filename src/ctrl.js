@@ -125,7 +125,6 @@ function popcount(n) {
  *   that says the decoded columns should not be trusted.
  */
 function annotate(text, microcode, { maxExamples = 32, benignRate = 0.01 } = {}) {
-  const lines = text.split('\n');
   const mismatches = [];
   let mismatchTotal = 0;
   let missing = 0;
@@ -133,19 +132,39 @@ function annotate(text, microcode, { maxExamples = 32, benignRate = 0.01 } = {})
   let annotated = 0;
   let skipped = 0;
 
-  const out = lines.map(line => {
-    const m = ADDRESS_LINE_RE.exec(line);
-    if (!m) return line;
+  // Walked by hand rather than split/map/join: a large kernel runs to half a million lines,
+  // and each of those steps would allocate an array that size. Slicing around the address
+  // comment also avoids capturing the whole instruction just to paste it back.
+  const out = [];
+  let from = 0;
+  while (from <= text.length) {
+    let end = text.indexOf('\n', from);
+    if (end < 0) end = text.length;
+    const line = text.slice(from, end);
+    from = end + 1;
 
-    const [, indent, addrHex, , rest] = m;
+    const open = line.indexOf('/*');
+    const close = open < 0 ? -1 : line.indexOf('*/', open + 2);
+    if (close < 0) { out.push(line); continue; }
+
+    const addrHex = line.slice(open + 2, close);
+    if (!HEX_RE.test(addrHex)) { out.push(line); continue; }
+
+    // Whatever follows the address comment, minus the padding nvdisasm used to align it.
+    let at = close + 2;
+    while (at < line.length && (line[at] === ' ' || line[at] === '\t')) at++;
+    if (at >= line.length) { out.push(line); continue; }
+
     const addr = parseInt(addrHex, 16);
-    if (!Number.isFinite(addr) || addr % INSTRUCTION_BYTES !== 0) { skipped++; return line; }
-
+    if (!Number.isFinite(addr) || addr % INSTRUCTION_BYTES !== 0) {
+      skipped++; out.push(line); continue;
+    }
     const control = decodeAt(microcode, addr / INSTRUCTION_BYTES);
-    if (!control) { skipped++; return line; }
+    if (!control) { skipped++; out.push(line); continue; }
 
     // The tripwire: nvdisasm decoded `.reuse` from the same word, independently of us.
-    const printed = (rest.match(/\.reuse\b/g) || []).length;
+    const rest = line.slice(at);
+    const printed = countReuse(rest);
     const decoded = popcount(control.reuse);
     if (printed !== decoded) {
       mismatchTotal++;
@@ -160,11 +179,28 @@ function annotate(text, microcode, { maxExamples = 32, benignRate = 0.01 } = {})
     }
 
     annotated++;
-    return `${indent}/*${addrHex}*/ ${formatColumn(control)}  ${rest}`;
-  });
+    out.push(`${line.slice(0, close + 2)} ${formatColumn(control)}  ${rest}`);
+  }
 
   const suspect = missing > 0 || extra > Math.max(8, annotated * benignRate);
   return { text: out.join('\n'), annotated, skipped, mismatches, mismatchTotal, missing, extra, suspect };
+}
+
+const HEX_RE = /^[0-9a-fA-F]+$/;
+
+/** How many `.reuse` suffixes a line carries, without allocating a match array per line. */
+function countReuse(text) {
+  let n = 0;
+  let at = text.indexOf('.reuse');
+  while (at >= 0) {
+    const after = text.charCodeAt(at + 6);
+    // A word boundary: `.reuse` must not be the head of a longer postfix.
+    if (Number.isNaN(after) || !(after === 95 ||
+        (after >= 48 && after <= 57) || (after >= 65 && after <= 90) ||
+        (after >= 97 && after <= 122))) n++;
+    at = text.indexOf('.reuse', at + 6);
+  }
+  return n;
 }
 
 module.exports = {

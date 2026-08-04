@@ -38,10 +38,33 @@
  * Measured on real output, this is what separates 82% of waits resolving from 100%.
  */
 
-const { parseLine } = require('./parse');
-
 /** How far back to look before giving up. Bounds the cost of a hover on a huge listing. */
 const DEFAULT_LIMIT = 4000;
+
+/**
+ * A control column and the opcode after it, in one match.
+ *
+ * The general line parser would do, and did - but it tokenises the whole operand list to get
+ * there, which is several times the work of reading a fixed-width field and is repeated for
+ * every line of a backward scan. The column's layout is rigid, so the field offsets are
+ * arithmetic rather than captures:
+ *
+ *     [B------:R-:W-:-:S00]
+ *      1     7 9 10   15 17
+ */
+const COLUMN_LINE_RE =
+  /\[(B[0-5-]{6}):(R[0-5-]):(W[0-5-]):([Y-]):(S\d\d)\]\s*(?:@!?U?P\w+\s+)?([A-Z][A-Z0-9_]*)?/;
+
+/** Offset and width of each field within the column, from its opening bracket. */
+const FIELD_SPANS = [
+  { name: 'wait', at: 1, len: 7 },
+  { name: 'read', at: 9, len: 2 },
+  { name: 'write', at: 12, len: 2 },
+  { name: 'yield', at: 15, len: 1 },
+  { name: 'stall', at: 17, len: 3 }
+];
+
+const COLUMN_WIDTH = 21;
 
 /** A branch target: control can arrive here from somewhere the scan cannot see. */
 const LABEL_RE = /^\s*(\.?[A-Za-z_][\w.$]*)\s*:\s*$/;
@@ -69,30 +92,43 @@ const NO_SCOREBOARD = '-';
  * @returns {?{wait:Set<number>, read:?number, write:?number, era:string}}
  */
 function controlOf(text) {
-  let parsed;
-  try {
-    parsed = parseLine(text);
-  } catch (e) {
-    return null;
-  }
-  if (!parsed || !parsed.controlCode || parsed.controlCode.era !== 'volta') return null;
+  // A cheap reject first: most lines in a listing that reach a backward scan are still
+  // instructions, but a label, a directive or a blank costs only this.
+  const start = text.indexOf('[B');
+  if (start < 0) return null;
 
-  const byName = {};
-  for (const f of parsed.controlCode.fields) byName[f.name] = f.text;
+  const m = COLUMN_LINE_RE.exec(text);
+  if (!m) return null;
+  const columnStart = m.index;
+
+  const fields = FIELD_SPANS.map(span => ({
+    name: span.name,
+    text: text.substr(columnStart + span.at, span.len),
+    start: columnStart + span.at,
+    end: columnStart + span.at + span.len
+  }));
 
   const wait = new Set();
-  const mask = byName.wait || '';
   // `B0-2---`: one slot per scoreboard, each showing its own number when armed.
   for (let slot = 0; slot < 6; slot++) {
-    if (mask[slot + 1] && mask[slot + 1] !== NO_SCOREBOARD) wait.add(slot);
+    if (m[1][slot + 1] !== NO_SCOREBOARD) wait.add(slot);
   }
 
-  const digit = field => {
-    const ch = (byName[field] || '')[1];
-    return ch && ch !== NO_SCOREBOARD ? Number(ch) : null;
-  };
+  const digit = value => (value[1] !== NO_SCOREBOARD ? Number(value[1]) : null);
 
-  return { wait, read: digit('read'), write: digit('write'), era: 'volta', parsed };
+  return {
+    wait,
+    read: digit(m[2]),
+    write: digit(m[3]),
+    era: 'volta',
+    opcode: m[6] || null,
+    controlCode: {
+      start: columnStart,
+      end: columnStart + COLUMN_WIDTH,
+      fields,
+      era: 'volta'
+    }
+  };
 }
 
 /** Which scoreboard the character at `column` refers to, or null. */
@@ -216,7 +252,7 @@ function scanBack(document, line, sb, limit) {
     if (!control) continue;
     scanned++;
 
-    const opcode = control.parsed.opcode && control.parsed.opcode.text;
+    const opcode = control.opcode;
     if (opcode && BRANCH_OPCODES.has(opcode) && crossedBranch === null) crossedBranch = at;
 
     // The arm test comes first: an instruction that both waits on and arms this scoreboard
@@ -264,7 +300,7 @@ function waitFor(document, line, sb, { limit = DEFAULT_LIMIT } = {}) {
     if (!control) continue;
     scanned++;
 
-    const opcode = control.parsed.opcode && control.parsed.opcode.text;
+    const opcode = control.opcode;
     if (opcode && BRANCH_OPCODES.has(opcode) && crossedBranch === null) crossedBranch = at;
 
     if (control.wait.has(sb)) { waitLine = at; break; }
@@ -297,7 +333,7 @@ function analyzeAt(document, line, column) {
   const control = controlOf(text);
   if (!control) return null;
 
-  const hit = scoreboardAt(control.parsed.controlCode, column);
+  const hit = scoreboardAt(control.controlCode, column);
   if (!hit) return null;
 
   if (hit.role === 'wait') {

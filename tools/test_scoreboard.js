@@ -93,7 +93,7 @@ section('2. Pointing at a scoreboard');
 {
   const line = ins(0, col({ wait: [0, 2], read: 3, write: 4 }), 'IMAD R2, R0, R1, R3');
   const control = scoreboard.controlOf(line);
-  const cc = control.parsed.controlCode;
+  const cc = control.controlCode;
 
   const hit = scoreboard.scoreboardAt(cc, waitCursor(line, 2));
   check(hit && hit.sb === 2 && hit.role === 'wait' && hit.active,
@@ -117,7 +117,7 @@ section('2. Pointing at a scoreboard');
     JSON.stringify(w));
 
   const none = scoreboard.controlOf(ins(0, col({}), 'NOP'));
-  const noneHit = scoreboard.scoreboardAt(none.parsed.controlCode,
+  const noneHit = scoreboard.scoreboardAt(none.controlCode,
     fieldCursor(ins(0, col({}), 'NOP'), 'W'));
   check(noneHit && noneHit.sb === null && !noneHit.active,
     'an unarmed field names no scoreboard', JSON.stringify(noneHit));
