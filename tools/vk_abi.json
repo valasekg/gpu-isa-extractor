@@ -11,6 +11,18 @@
   },
   "sizeof": 48
  },
+ "VkDebugUtilsMessengerCreateInfoEXT": {
+  "fields": {
+   "flags": 16,
+   "messageSeverity": 20,
+   "messageType": 24,
+   "pNext": 8,
+   "pUserData": 40,
+   "pfnUserCallback": 32,
+   "sType": 0
+  },
+  "sizeof": 48
+ },
  "VkDescriptorSetLayoutBinding": {
   "fields": {
    "binding": 0,
@@ -94,6 +106,15 @@
   },
   "sizeof": 64
  },
+ "VkLayerProperties": {
+  "fields": {
+   "description": 264,
+   "implementationVersion": 260,
+   "layerName": 0,
+   "specVersion": 256
+  },
+  "sizeof": 520
+ },
  "VkPhysicalDeviceFeatures": {
   "fields": {
    "alphaToOne": 68,
@@ -161,6 +182,25 @@
    "sType": 0
   },
   "sizeof": 240
+ },
+ "VkPhysicalDeviceVulkan11Features": {
+  "fields": {
+   "multiview": 32,
+   "multiviewGeometryShader": 36,
+   "multiviewTessellationShader": 40,
+   "pNext": 8,
+   "protectedMemory": 52,
+   "sType": 0,
+   "samplerYcbcrConversion": 56,
+   "shaderDrawParameters": 60,
+   "storageBuffer16BitAccess": 16,
+   "storageInputOutput16": 28,
+   "storagePushConstant16": 24,
+   "uniformAndStorageBuffer16BitAccess": 20,
+   "variablePointers": 48,
+   "variablePointersStorageBuffer": 44
+  },
+  "sizeof": 64
  },
  "VkPhysicalDeviceVulkan13Features": {
   "fields": {

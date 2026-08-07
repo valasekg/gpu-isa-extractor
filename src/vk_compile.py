@@ -28,14 +28,31 @@ layouts match what MSVC computes from the real headers.
 
     {"vs": "producer.spv",          # required
      "fs": "shader.spv",            # or null for rasterizer discard
+     "gs": "geometry.spv",          # optional geometry stage
      "layout": {"bindings": [[set, binding, descriptorType, count]], "pushBytes": 0},
-     "state": {"format": "r8g8b8a8_unorm", "samples": 1, "depth": "none"},
-     "layers": ["VK_LAYER_KHRONOS_validation"],
+     "state": {"format": "r8g8b8a8_unorm", "samples": 1, "depth": "none",
+               "topology": "triangle_list"},
+     "validate": false,             # run under the validation layer and make it fatal
      "checkInterface": true,
+     "checkTopology": true,
      "loader": null}
 
 Exit codes: 0 created, 1 the driver refused the pipeline, 2 Vulkan unusable or the request is
-bad, 3 this interpreter cannot be used, 4 the driver faulted.
+bad, 3 this interpreter cannot be used, 4 the driver faulted, 5 the validation layer says the
+pipeline is invalid.
+
+## Why `validate` exists
+
+This driver is lenient, and lenience is the problem. Twice now a pipeline has been built from
+an invalid request, been compiled anyway, and returned microcode that matched an independent
+C++ harness byte for byte - once because `dynamicRendering` was never enabled (the 1.3
+features struct carried the sType of the 1.1 one), and once because a module declared the
+DrawParameters capability that no feature had turned on. No digest, no struct-layout diff and
+no exit code could see either. The validation layer saw both immediately.
+
+So `validate: true` turns the layer on, attaches a debug messenger, and makes what it says
+fatal - and `tools/test_gfx.js` runs every fixture that way. It needs the Vulkan SDK, which
+ships the layer; the display driver does not.
 """
 
 import ctypes as C
@@ -49,6 +66,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE, EXIT_INTERPRETER, EXIT_FAULTED = 0, 1, 2, 3, 4
+EXIT_INVALID = 5           # the pipeline was built, and the validation layer says it is invalid
 
 # ---------------------------------------------------------------- base types
 u32, i32, f32, sz = C.c_uint32, C.c_int32, C.c_float, C.c_size_t
@@ -96,6 +114,32 @@ class VkPhysicalDeviceProperties(C.Structure):
                 ("_tail", C.c_uint8 * 4096)]
 
 
+class VkLayerProperties(C.Structure):
+    _fields_ = [("layerName", C.c_char * 256), ("specVersion", u32),
+                ("implementationVersion", u32), ("description", C.c_char * 256)]
+
+
+# Only the prefix is described, because only `pMessage` is read - but the driver writes the
+# whole thing, so the rest is reserved rather than left off the end of the allocation.
+class VkDebugUtilsMessengerCallbackDataEXT(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("pMessageIdName", C.c_char_p), ("messageIdNumber", i32),
+                ("pMessage", C.c_char_p), ("_tail", C.c_uint8 * 256)]
+
+
+# The callback signature, as a ctypes trampoline. `CFUNCTYPE` rather than `WINFUNCTYPE`
+# because VKAPI_PTR is __stdcall only on 32-bit Windows, and a 32-bit interpreter is refused
+# outright before any of this runs.
+DEBUG_CALLBACK = C.CFUNCTYPE(VkBool32, VkFlags, VkFlags,
+                             C.POINTER(VkDebugUtilsMessengerCallbackDataEXT), VOID)
+
+
+class VkDebugUtilsMessengerCreateInfoEXT(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("messageSeverity", VkFlags), ("messageType", VkFlags),
+                ("pfnUserCallback", DEBUG_CALLBACK), ("pUserData", VOID)]
+
+
 class VkQueueFamilyProperties(C.Structure):
     _fields_ = [("queueFlags", VkFlags), ("queueCount", u32),
                 ("timestampValidBits", u32), ("minImageTransferGranularity", VkExtent3D)]
@@ -139,6 +183,20 @@ class VkPhysicalDeviceFeatures(C.Structure):
 # creates the pipeline anyway. One chain, one answer.
 class VkPhysicalDeviceFeatures2(C.Structure):
     _fields_ = [("sType", VkEnum), ("pNext", VOID), ("features", VkPhysicalDeviceFeatures)]
+
+
+# Chained for one field: `shaderDrawParameters`. Slang lowers `SV_VertexID` to a form that
+# declares the SPIR-V DrawParameters capability, and a module declaring a capability the device
+# never enabled is an invalid pipeline - VUID-VkShaderModuleCreateInfo-pCode-08740. This driver
+# compiles it anyway; the validation layer is the only thing that says otherwise.
+class VkPhysicalDeviceVulkan11Features(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
+        (n, VkBool32) for n in (
+            "storageBuffer16BitAccess", "uniformAndStorageBuffer16BitAccess",
+            "storagePushConstant16", "storageInputOutput16", "multiview",
+            "multiviewGeometryShader", "multiviewTessellationShader",
+            "variablePointersStorageBuffer", "variablePointers", "protectedMemory",
+            "samplerYcbcrConversion", "shaderDrawParameters")]
 
 
 class VkPhysicalDeviceVulkan13Features(C.Structure):
@@ -287,6 +345,8 @@ class VkGraphicsPipelineCreateInfo(C.Structure):
 LAYOUT_STRUCTS = [
     VkApplicationInfo, VkInstanceCreateInfo, VkQueueFamilyProperties,
     VkDeviceQueueCreateInfo, VkPhysicalDeviceFeatures, VkPhysicalDeviceFeatures2,
+    VkPhysicalDeviceVulkan11Features, VkLayerProperties,
+    VkDebugUtilsMessengerCreateInfoEXT,
     VkPhysicalDeviceVulkan13Features, VkDeviceCreateInfo,
     VkShaderModuleCreateInfo, VkDescriptorSetLayoutBinding, VkDescriptorSetLayoutCreateInfo,
     VkPushConstantRange, VkPipelineLayoutCreateInfo, VkPipelineShaderStageCreateInfo,
@@ -328,7 +388,9 @@ ST = dict(
     # validation layer objected. The ABI check cannot find a fault like this - it compares
     # struct layouts, and these are values - so `--validate` exists to make the layer's opinion
     # part of the suite.
-    PHYSICAL_DEVICE_FEATURES_2=1000059000, PHYSICAL_DEVICE_VULKAN_1_3_FEATURES=53, PIPELINE_RENDERING_CREATE_INFO=1000044002,
+    DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT=1000128004,
+    PHYSICAL_DEVICE_FEATURES_2=1000059000, PHYSICAL_DEVICE_VULKAN_1_1_FEATURES=49,
+    PHYSICAL_DEVICE_VULKAN_1_3_FEATURES=53, PIPELINE_RENDERING_CREATE_INFO=1000044002,
 )
 
 COLOUR = {"r8g8b8a8_unorm": 37, "b8g8r8a8_unorm": 44, "r8g8b8a8_srgb": 43,
@@ -357,6 +419,12 @@ VK_COLOR_COMPONENT_RGBA = 0xF
 VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR = 0, 1
 
 VK_ERROR_INCOMPATIBLE_DRIVER = -9
+
+VALIDATION_LAYER = b"VK_LAYER_KHRONOS_validation"
+DEBUG_UTILS_EXTENSION = b"VK_EXT_debug_utils"
+SEVERITY_WARNING = 0x100
+SEVERITY_ERROR = 0x1000
+MESSAGE_TYPE_ALL = 0x7
 
 
 # ---------------------------------------------------------------- interpreter gate
@@ -417,6 +485,10 @@ def bind(lib):
     sig = {
         "vkCreateInstance": ([VOID, VOID, VOID], i32),
         "vkDestroyInstance": ([Handle, VOID], None),
+        "vkEnumerateInstanceLayerProperties": ([VOID, VOID], i32),
+        # restype MUST be c_void_p. ctypes defaults to c_int, which truncates a 64-bit
+        # function pointer to 32 bits - and the result is a wild call rather than an error.
+        "vkGetInstanceProcAddr": ([Handle, C.c_char_p], VOID),
         "vkEnumeratePhysicalDevices": ([Handle, VOID, VOID], i32),
         "vkGetPhysicalDeviceProperties": ([Handle, VOID], None),
         "vkGetPhysicalDeviceQueueFamilyProperties": ([Handle, VOID, VOID], None),
@@ -438,6 +510,87 @@ def bind(lib):
         fn.restype = restype
         fns[name] = fn
     return fns
+
+
+def validation_available(vk):
+    """Whether VK_LAYER_KHRONOS_validation is installed.
+
+    It ships with the Vulkan SDK, not with the display driver, so a machine that can compile
+    shaders perfectly well may not have it. Callers skip rather than fail on a false here.
+    """
+    n = u32()
+    vk["vkEnumerateInstanceLayerProperties"](C.byref(n), None)
+    if not n.value:
+        return False
+    layers = (VkLayerProperties * n.value)()
+    vk["vkEnumerateInstanceLayerProperties"](C.byref(n), C.byref(layers))
+    return any(layers[k].layerName == VALIDATION_LAYER for k in range(n.value))
+
+
+class Validation(object):
+    """Counts what the validation layer says, through a debug messenger.
+
+    Not by reading the layer's stderr. The layer's default output format is its own business
+    and a grep for it is a test that breaks when a version changes; a messenger is the
+    mechanism that exists for asking. It also catches what stderr alone would not tell you
+    apart - the layer reports some faults and still lets the call succeed, which is how a
+    disabled `dynamicRendering` produced correct microcode from an invalid device for as long
+    as nobody looked.
+    """
+
+    def __init__(self):
+        self.errors = []
+        self.warnings = []
+        self.messenger = None
+        self._destroy = None
+        # The trampoline is kept on the instance deliberately. A ctypes callback that is only
+        # referenced by the Vulkan struct is collected as soon as the local goes out of scope,
+        # and the driver then calls freed memory - a crash with no connection to its cause.
+        self._callback = DEBUG_CALLBACK(self._on_message)
+
+    def _on_message(self, severity, _types, data, _user):
+        # Nothing here may raise. An exception inside a ctypes callback is printed and
+        # swallowed, leaving the driver to carry on with a return value nobody chose.
+        try:
+            text = ""
+            if data:
+                raw = data.contents.pMessage
+                text = raw.decode("utf-8", "replace") if raw else ""
+            if severity & SEVERITY_ERROR:
+                self.errors.append(text)
+            elif severity & SEVERITY_WARNING:
+                self.warnings.append(text)
+        except Exception:                                        # noqa: BLE001
+            self.errors.append("<a validation message could not be read>")
+        return VK_FALSE                                          # never abort the call
+
+    def attach(self, vk, instance, note):
+        create = vk["vkGetInstanceProcAddr"](instance, b"vkCreateDebugUtilsMessengerEXT")
+        destroy = vk["vkGetInstanceProcAddr"](instance, b"vkDestroyDebugUtilsMessengerEXT")
+        if not create or not destroy:
+            note("the debug messenger is not available; validation was NOT checked")
+            return False
+        create_fn = C.CFUNCTYPE(i32, Handle, VOID, VOID, VOID)(create)
+        self._destroy = (C.CFUNCTYPE(None, Handle, NonDisp, VOID)(destroy), vk, instance)
+
+        info = VkDebugUtilsMessengerCreateInfoEXT(
+            sType=ST["DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT"],
+            messageSeverity=SEVERITY_ERROR | SEVERITY_WARNING,
+            messageType=MESSAGE_TYPE_ALL, pfnUserCallback=self._callback)
+        handle = NonDisp()
+        rc = create_fn(instance, C.byref(info), None, C.byref(handle))
+        if rc != VK_SUCCESS:
+            note("the debug messenger could not be created (VkResult %d)" % rc)
+            return False
+        self.messenger = handle.value
+        self._info = info                                        # keep the struct alive too
+        return True
+
+    def detach(self):
+        if self.messenger and self._destroy:
+            destroy_fn, _vk, instance = self._destroy
+            destroy_fn(instance, self.messenger, None)
+            self.messenger = None
 
 
 def read_spirv(path):
@@ -463,6 +616,7 @@ class Poke(object):
     def __init__(self, vk, note):
         self.vk = vk
         self.note = note
+        self.validation = None
         self.instance = None
         self.device = None
         self.modules = []
@@ -473,6 +627,10 @@ class Poke(object):
 
     def destroy(self):
         vk, device = self.vk, self.device
+        # The messenger goes first: it must outlive everything it might report on, and it
+        # cannot outlive the instance it belongs to.
+        if self.validation:
+            self.validation.detach()
         if device is not None:
             if self.pipeline:
                 vk["vkDestroyPipeline"](device, self.pipeline, None)
@@ -528,15 +686,33 @@ class Poke(object):
 
         # -- instance ----------------------------------------------------
         layers = [l.encode("utf-8") for l in (request.get("layers") or [])]
+        extensions = []
+        # `validate` is the whole feature in one flag: turn the layer on, turn the messenger
+        # on, and make what it says fatal. Asking for it on a machine without the layer is a
+        # refusal rather than a silent pass - a validation run that validated nothing and
+        # reported success is the worst of the three outcomes.
+        if request.get("validate"):
+            if not validation_available(vk):
+                return EXIT_UNUSABLE, (
+                    "validation was asked for, but VK_LAYER_KHRONOS_validation is not "
+                    "installed. It ships with the Vulkan SDK rather than with the display "
+                    "driver, so a machine that compiles shaders perfectly well may not have it.")
+            if VALIDATION_LAYER not in layers:
+                layers.append(VALIDATION_LAYER)
+            extensions.append(DEBUG_UTILS_EXTENSION)
+
         layer_array = (C.c_char_p * len(layers))(*layers) if layers else None
+        ext_array = (C.c_char_p * len(extensions))(*extensions) if extensions else None
+        self.keep.extend([layer_array, ext_array])
         app = VkApplicationInfo(sType=ST["APPLICATION_INFO"],
                                 pApplicationName=b"nv-isa-extractor",
                                 apiVersion=api_version(1, 3))
         ici = VkInstanceCreateInfo(
             sType=ST["INSTANCE_CREATE_INFO"], pApplicationInfo=self.ptr(app),
             enabledLayerCount=len(layers),
-            ppEnabledLayerNames=C.cast(layer_array, VOID) if layers else None)
-        self.keep.append(layer_array)
+            ppEnabledLayerNames=C.cast(layer_array, VOID) if layers else None,
+            enabledExtensionCount=len(extensions),
+            ppEnabledExtensionNames=C.cast(ext_array, VOID) if extensions else None)
         instance = Handle()
         r = vk["vkCreateInstance"](C.byref(ici), None, C.byref(instance))
         if r != VK_SUCCESS:
@@ -547,6 +723,13 @@ class Poke(object):
                     "and a Remote Desktop session may enumerate none.")
             return EXIT_UNUSABLE, "vkCreateInstance failed (VkResult %d)" % r
         self.instance = instance
+
+        # Attached immediately, so device creation is inside the window it watches. The
+        # `dynamicRendering` fault this exists to catch happened at vkCreateDevice.
+        if request.get("validate"):
+            self.validation = Validation()
+            if not self.validation.attach(vk, instance, self.note):
+                return EXIT_UNUSABLE, "the debug messenger could not be attached"
 
         # -- device ------------------------------------------------------
         n = u32()
@@ -584,10 +767,13 @@ class Poke(object):
                                       pQueuePriorities=self.ptr(priority))
         f13 = VkPhysicalDeviceVulkan13Features(
             sType=ST["PHYSICAL_DEVICE_VULKAN_1_3_FEATURES"], dynamicRendering=VK_TRUE)
+        f11 = VkPhysicalDeviceVulkan11Features(
+            sType=ST["PHYSICAL_DEVICE_VULKAN_1_1_FEATURES"],
+            pNext=C.cast(self.ptr(f13), VOID), shaderDrawParameters=VK_TRUE)
         # A geometry stage is a device feature, not just another entry in the stage array: a
         # pipeline naming one on a device where it was not enabled is rejected outright.
         f2 = VkPhysicalDeviceFeatures2(
-            sType=ST["PHYSICAL_DEVICE_FEATURES_2"], pNext=C.cast(self.ptr(f13), VOID),
+            sType=ST["PHYSICAL_DEVICE_FEATURES_2"], pNext=C.cast(self.ptr(f11), VOID),
             features=VkPhysicalDeviceFeatures(
                 geometryShader=VK_TRUE if gs_code else VK_FALSE))
         dci = VkDeviceCreateInfo(sType=ST["DEVICE_CREATE_INFO"],
@@ -927,9 +1113,33 @@ def main(argv):
     else:
         poke.destroy()
 
+    # Read after teardown, so anything the layer objects to at destruction is counted too.
+    seen = poke.validation
+    if seen:
+        for line in seen.warnings:
+            note("validation warning: %s" % line.split("The Vulkan spec states")[0].strip())
+
+    # The layer's verdict comes before the VkResult, because it is the one that explains
+    # anything. With validation active a bad pipeline usually fails as
+    # VK_ERROR_VALIDATION_FAILED_EXT, and reporting only that says a call failed without
+    # saying which rule it broke - which is the entire question.
+    if seen and seen.errors:
+        sys.stderr.write("the validation layer reports %d error(s):\n" % len(seen.errors))
+        for line in seen.errors:
+            sys.stderr.write("  %s\n" % line.split("The Vulkan spec states")[0].strip())
+        if not error:
+            sys.stderr.write(
+                "The pipeline was created anyway and the microcode is probably right - this "
+                "driver is lenient. That is exactly why this is fatal: the same leniency hid "
+                "a disabled dynamicRendering behind correct output.\n")
+        return EXIT_INVALID
+
     if error:
         sys.stderr.write("%s\n" % error)
         return code
+
+    if seen:
+        note("validation        clean (%d warning(s))" % len(seen.warnings))
     note("ok")
     return EXIT_OK
 

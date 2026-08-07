@@ -131,6 +131,22 @@ destroys on every path, not just the successful one.
 `tools/fixtures/gfx/` are the exact modules those numbers came from; regenerate the frozen
 struct ABI with `py tools/vk_abi_freeze.py` (needs MSVC and the SDK) if a struct changes.
 
+**Run new work under the validation layer, and do not skip this.** The driver is lenient, and
+that is the hazard. Twice a pipeline has been built from an invalid request, compiled anyway,
+and returned microcode matching an independent C++ harness byte for byte:
+
+- `dynamicRendering` was never enabled, because the 1.3 features struct carried the sType of
+  the 1.1 one (53 vs 49). Every pipeline was created with `renderPass = NULL` on a device that
+  had not asked for it.
+- a module declared the SPIR-V `DrawParameters` capability - Slang's `SV_VertexID` lowering -
+  that no feature had turned on.
+
+Neither was visible to a digest, a struct-layout diff or an exit code. Both were obvious to the
+validation layer within seconds. Section 5 of `test_gfx.js` now runs every fixture with
+`validate: true`, which makes the layer's verdict fatal (exit 5) and prints the VUID. Fixing
+both changed no microcode at all - the requests were invalid, the answers were right - which is
+precisely why nothing else could find them.
+
 **Why ctypes and not a binary.** Same reason as `nvrtc_compile.py`: the extension host cannot
 call native code, and a VSIX carrying per-platform binaries would end the no-build-step
 packaging story. The port is pinned against a C++ harness byte for byte, and `tools/vk_abi.json`

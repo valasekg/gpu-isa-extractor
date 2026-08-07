@@ -335,6 +335,50 @@ function findBin(dir) {
     }
   }
 
+  // ------------------------------------------------------------------ validation
+
+  section('5. What the validation layer makes of these pipelines');
+
+  // The check that would have found the bug that hid the longest. `dynamicRendering` was
+  // never enabled - the 1.3 features struct carried the sType of the 1.1 one - and every
+  // pipeline was built with `renderPass = NULL` on a device that had not asked for it. The
+  // microcode still matched a C++ harness byte for byte, because this driver permits it. No
+  // digest, no ABI diff and no exit code could see that. The layer saw it immediately.
+  //
+  // Skipped, not failed, where the layer is absent: it ships with the Vulkan SDK rather than
+  // with the display driver, so a machine that compiles shaders perfectly well may not have it.
+  if (!PY || !haveFixtures) {
+    skip('no Python interpreter or no fixtures');
+  } else if (!probe || probe.code !== 0) {
+    skip('no usable Vulkan device');
+  } else {
+    const cases = [
+      { tag: 'fragment', request: { vs: path.join(FIXTURES, 'vs.spv'),
+        fs: path.join(FIXTURES, 'fs.spv'), layout: { bindings: [] } } },
+      { tag: 'descriptors', request: { vs: path.join(FIXTURES, 'vsMain.spv'),
+        fs: path.join(FIXTURES, 'fsMain.spv'),
+        layout: { bindings: [[0, 0, 6, 1], [0, 1, 2, 1], [0, 2, 0, 1], [0, 3, 7, 1]] } } },
+      { tag: 'vertex only', request: { vs: path.join(FIXTURES, 'vs.spv'), fs: null,
+        layout: { bindings: [] } } },
+      { tag: 'geometry', request: { vs: path.join(FIXTURES, 'gsProducer.spv'),
+        fs: null, gs: path.join(FIXTURES, 'gsMain.spv'),
+        layout: { bindings: [] }, state: { topology: 'triangle_list' } } }
+    ].filter(c => Object.values(c.request)
+      .every(v => typeof v !== 'string' || fs.existsSync(v)));
+
+    let unavailable = false;
+    for (const c of cases) {
+      const got = await pipeline(`validate-${c.tag}`, { ...c.request, validate: true });
+      if (got.error && /not installed/.test(got.error)) { unavailable = true; break; }
+      // Exit 5 is the layer's verdict specifically, and its message carries the VUID - which
+      // is the only part that says what to change.
+      check(!got.error, `${c.tag}: builds a pipeline the validation layer accepts`, got.error);
+    }
+    if (unavailable) {
+      skip('VK_LAYER_KHRONOS_validation is not installed (it ships with the Vulkan SDK)');
+    }
+  }
+
   console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures, ` +
     `${skipped} skipped`);
   process.exit(failures ? 1 : 0);
