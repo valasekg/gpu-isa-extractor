@@ -273,12 +273,26 @@ breaks, the compiled path is the thing to change, not the shared code.
   the low byte is 4 on every cubin seen here and means something else. Reading it wrong makes
   `nvdisasm --binary` decode to the wrong architecture, which yields plausible wrong
   instructions rather than an error.
-- **Only compute entry points.** `slangc -stage fragment -target cuda` **crashes** (exit
-  0xC0000005, no diagnostic, no output file), so the stage gate in `compile.chooseSlangEntry`
-  must run *before* slangc, not on its exit code. Raytracing stages get all the way through
-  slangc and NVRTC and then die at `ptxas` with `Call to '_optix_trace_typed_32' requires
-  call prototype` — OptiX intrinsics are resolved by the driver's pipeline linker, so there
-  is no cubin at the end of that road however far it is followed.
+- **The stage gate must run before slangc, not on its exit code.** `slangc -stage fragment
+  -target cuda` **crashes** (exit 0xC0000005, no diagnostic, no output file), which is why
+  `compile.chooseSlangEntry` decides the road from the source text rather than by trying one.
+  Raytracing stages get all the way through slangc and NVRTC and then die at `ptxas` with
+  `Call to '_optix_trace_typed_32' requires call prototype` — OptiX intrinsics are resolved by
+  the driver's pipeline linker, so there is no cubin at the end of the CUDA road however far
+  it is followed. They reach SASS by the graphics road instead.
+- **A raytracing pipeline deposits two container tags, and both hold finished SASS.**
+  `NVVMVKRT` and `RTCTskKy`, each a 40-byte header wrapping a plain ELF64 that `cubin.js`
+  reads unchanged — no `NVuc` anywhere. The names invite the guess that one is IR; it is not.
+  The driver compiles each shader twice, and the two copies of one miss shader came out with
+  the same eleven instructions in the same order and a different register allocation, 64 under
+  `NVVMVKRT` and 62 under `RTCTskKy`. Reading only the tag that sounds like machine code
+  showed a valid six-stage pipeline as **empty**, because a pipeline with a procedural hit
+  group wrote `NVVMVKRT` for all six shaders and no `RTCTskKy` at all. `nvcache` reads both
+  and `pickLatest` keeps the last copy of each entry point.
+- **A raytracing shader can be more than one object.** `TraceRay` and `CallShader` suspend the
+  caller, so the driver splits it and names the pieces `_ss_0`, `_ss_1`. Those are separately
+  scheduled programs, not fragments — collapsing them to one listing, or naming both after the
+  Slang entry point with no suffix, loses a real distinction. `compile.splitSuffix` keeps it.
 - **A file mixing compute and graphics entry points must name its compute entry**, or
   slangc's own discovery finds the graphics one and crashes. But do *not* pass `-entry`
   otherwise: a compute-only file compiles fine without it, and passing `-entry` with no name

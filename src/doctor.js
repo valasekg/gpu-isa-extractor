@@ -265,8 +265,8 @@ async function diagnose(context) {
       'Compute goes through CUDA and carries source correlation. Vertex, fragment, geometry, ' +
       'hull and domain are compiled by the local driver, which needs an NVIDIA GPU present ' +
       'and yields no correlation - the driver keeps no line table. Mesh and amplification too, ' +
-      'in a pipeline with no vertex stage. Raytracing is not implemented - it needs a ' +
-      'different creation call; read those from a cache file.');
+      'in a pipeline with no vertex stage, and the six raytracing stages as one pipeline of ' +
+      'their own - naming any of them compiles all of them.');
   }
 
   // 8. storage

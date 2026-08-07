@@ -459,6 +459,38 @@
   },
   "sizeof": 24
  },
+ "VkRayTracingPipelineCreateInfoKHR": {
+  "fields": {
+   "basePipelineHandle": 88,
+   "basePipelineIndex": 96,
+   "flags": 16,
+   "groupCount": 32,
+   "layout": 80,
+   "maxPipelineRayRecursionDepth": 48,
+   "pDynamicState": 72,
+   "pGroups": 40,
+   "pLibraryInfo": 56,
+   "pLibraryInterface": 64,
+   "pNext": 8,
+   "pStages": 24,
+   "sType": 0,
+   "stageCount": 20
+  },
+  "sizeof": 104
+ },
+ "VkRayTracingShaderGroupCreateInfoKHR": {
+  "fields": {
+   "anyHitShader": 28,
+   "closestHitShader": 24,
+   "generalShader": 20,
+   "intersectionShader": 32,
+   "pNext": 8,
+   "pShaderGroupCaptureReplayHandle": 40,
+   "sType": 0,
+   "type": 16
+  },
+  "sizeof": 48
+ },
  "VkShaderModuleCreateInfo": {
   "fields": {
    "codeSize": 24,

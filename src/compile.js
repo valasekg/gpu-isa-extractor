@@ -437,6 +437,8 @@ const COMPUTE_STAGE = 'compute';
  *             means "use it if the file has one". Vulkan rejects a hull shader without
  *             a domain shader and the reverse, and an amplification shader with no mesh shader
  *             to dispatch. Where the file holds only one, the other is generated.
+ *   group     it belongs to a pipeline built from a SET of entry points rather than a
+ *             chain - every stage in the group that the file declares is compiled together.
  *   patch     it works on patches, so the pipeline needs a patch size and a patch topology.
  *             Kept distinct from `pair` on purpose: amplification is paired but not patched.
  *
@@ -459,7 +461,18 @@ const STAGES = {
   // and that changes its code, measured: 79fc9202f25d alone against 815104fa01b4 paired.
   // So the pair is used when the file has one and not required when it does not.
   mesh: { lineage: 'graphics', slot: 'ms', pair: 'amplification', pairOptional: true },
-  amplification: { lineage: 'graphics', slot: 'ts', pair: 'mesh' }
+  amplification: { lineage: 'graphics', slot: 'ts', pair: 'mesh' },
+  // The raytracing stages are one pipeline between them, not a chain: a raygeneration
+  // shader reaches the others through the shader groups rather than by feeding them, so
+  // `group` means "compile every raytracing entry point in this file together", which is
+  // what a real pipeline holds. A raygeneration shader is mandatory in one; every other
+  // raytracing stage is reached from one, and alone is not a pipeline.
+  raygeneration: { lineage: 'graphics', slot: 'rgen', group: 'raytracing' },
+  miss: { lineage: 'graphics', slot: 'miss', group: 'raytracing' },
+  closesthit: { lineage: 'graphics', slot: 'chit', group: 'raytracing' },
+  anyhit: { lineage: 'graphics', slot: 'ahit', group: 'raytracing' },
+  intersection: { lineage: 'graphics', slot: 'sect', group: 'raytracing' },
+  callable: { lineage: 'graphics', slot: 'call', group: 'raytracing' }
 };
 
 /** The road a stage takes, or undefined for one with no road at all. */
@@ -540,8 +553,22 @@ function chooseSlangEntry(text, wanted) {
   const refuse = e => {
     throw new CompileError(`${e.name} is a ${e.stage} entry point. ${stageRefusal()}`);
   };
+  // A raytracing pipeline is built around its raygeneration shader: it is the only stage the
+  // driver will start, and every other one is reached from it through the shader groups. A
+  // file holding a hit shader and nothing to call it is not a pipeline, so it is refused here
+  // rather than three tools later, where the refusal would have to be about a Vulkan error.
+  const requireAnchor = chosen => {
+    if ((STAGES[chosen.stage] || {}).group !== 'raytracing') return;
+    if (chosen.stage === 'raygeneration') return;
+    if (found.some(e => e.stage === 'raygeneration')) return;
+    throw new CompileError(
+      `${chosen.name} is a ${chosen.stage} shader, and a raytracing pipeline must contain a ` +
+      'raygeneration shader - every other raytracing stage is reached from one. Put a ' +
+      'raygeneration entry point in this file and the whole set is compiled together.');
+  };
   const withProducer = chosen => {
     const spec = STAGES[chosen.stage] || {};
+    requireAnchor(chosen);
     return {
       entry: chosen.name,
       stage: chosen.stage,
@@ -584,12 +611,12 @@ function chooseSlangEntry(text, wanted) {
   // A mixed file has to name one, because the two roads cannot be walked at once - and
   // because slangc discovering a graphics entry on the CUDA target is the crash above.
   // Compute first, so a file that used to compile still compiles the same thing. Then the
-  // consuming stages, because they are the more interesting listing and they pick the vertex
-  // shader up as their producer rather than leaving it uncompiled.
-  // Compute first, so a file that used to compile still compiles the same thing. Then the
   // stages that consume another, because they are the more interesting listing and they pick
-  // their counterpart up rather than leaving it uncompiled.
-  const PREFERENCE = ['fragment', 'geometry', 'domain', 'mesh'];
+  // their counterpart up rather than leaving it uncompiled. Raygeneration is in the list for
+  // the opposite reason: it is not the interesting listing, it is the only one a raytracing
+  // file is guaranteed to hold, and without it here the default would fall to whichever
+  // raytracing stage the author happened to write first.
+  const PREFERENCE = ['fragment', 'geometry', 'domain', 'mesh', 'raygeneration'];
   const chosen = compute[0] ||
     PREFERENCE.reduce((found_, s) => found_ || supported.find(e => e.stage === s), null) ||
     supported[0];
@@ -597,9 +624,16 @@ function chooseSlangEntry(text, wanted) {
   const result = withProducer(chosen);
   // The producer is not "skipped" - it is being compiled *into* this pipeline.
   const unused = skipped.filter(e => !result.producer || e !== result.producer);
-  if (unused.length) {
+  // A member of a grouped pipeline is not skipped by choosing another one - the whole group is
+  // compiled together, and every member gets a listing. Offering to compile one "instead"
+  // would be describing a choice that is not being made.
+  const grouped = (STAGES[chosen.stage] || {}).group;
+  const left = grouped
+    ? unused.filter(e => (STAGES[e.stage] || {}).group !== grouped)
+    : unused;
+  if (left.length) {
     result.note = `compiling ${chosen.name} (${chosen.stage}); this file also declares ` +
-      unused.map(e => `${e.name} (${e.stage})`).join(', ') +
+      left.map(e => `${e.name} (${e.stage})`).join(', ') +
       ' - name one with the entry-point argument to compile it instead';
   }
   if (result.producer) {
@@ -611,13 +645,15 @@ function chooseSlangEntry(text, wanted) {
 }
 
 function stageRefusal() {
-  return 'Compute, vertex, fragment and geometry entry points can be compiled to SASS: ' +
-    'compute through CUDA, the rest by asking the display driver to build a pipeline. Hull, ' +
-    'domain, mesh and amplification are not implemented - each needs a longer chain of stages ' +
-    'synthesised around it, which is work rather than an obstacle. Raytracing needs a ' +
-    'different creation call entirely (vkCreateRayTracingPipelinesKHR); it is a dead end only ' +
-    'on the CUDA road, where OptiX intrinsics reach ptxas and stop. For any of those, open ' +
-    'the driver\'s cache file instead - the SASS in it is what the GPU really ran.';
+  // Every stage Slang declares has a road now, so this is what is said about a stage that is
+  // not one of them - a name from a newer Slang than this table knows about. Listing the
+  // stages that DO work is the useful half of that: it says whether the stage was misspelled
+  // or is genuinely new.
+  return `Stages that can be compiled to SASS: ${Object.keys(STAGES).sort().join(', ')}. ` +
+    'Compute goes through CUDA and carries source correlation; the rest are compiled by ' +
+    'asking the display driver to build a pipeline around them. If the stage is real and ' +
+    'newer than this list, open the driver\'s cache file instead - the SASS in it is what ' +
+    'the GPU really ran.';
 }
 
 // --------------------------------------------------------------------------- running
@@ -873,6 +909,32 @@ async function graphicsCompile(tools, file, options) {
   // Patches are a tessellation idea, not a consequence of being paired. Gating this on `pair`
   // sent an amplification shader - which is paired, with a mesh shader - looking for a
   // control-point count it never had.
+  // A grouped pipeline is built from every member the file declares, because that is what
+  // the pipeline really holds - a raygeneration shader reaches its miss and hit shaders
+  // through the shader groups, and compiling it against a different set is a different
+  // pipeline.
+  let group = null;
+  if (spec.group) {
+    const members = slangEntryPoints(await fs.promises.readFile(file, 'utf8'))
+      .filter(e => (STAGES[e.stage] || {}).group === spec.group && e.name !== chosen.entry);
+    // Every member is a shader the author wrote in this file and the driver really compiled,
+    // so the carve keeps all of them rather than the one that was named. A synthesised
+    // producer is scaffolding and stays hidden; these are not.
+    group = [{ name: chosen.entry, stage }, ...members.map(e => ({ name: e.name, stage: e.stage }))];
+    for (const member of members) {
+      const step = await slangToSpirv(tools, file, outDir, {
+        flags: flags.slang, entry: member.name, stage: member.stage, name: member.name
+      });
+      steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
+      modules[STAGES[member.stage].slot] = step.file;
+    }
+    if (members.length) {
+      notes.push(`compiled as one pipeline with ${members.map(e => `${e.name} (${e.stage})`)
+        .join(', ')} - a raytracing pipeline holds them together and its shaders are ` +
+        'compiled against each other');
+    }
+  }
+
   if (spec.patch) {
     const reflected = await reflectModule(tools, consumer.file);
     const points = reflected.patchControlPoints;
@@ -977,7 +1039,7 @@ async function graphicsCompile(tools, file, options) {
   const step = await spirvToCache(tools, outDir, { modules, layout, state, cacheDir, token });
   steps.push({ tool: 'driver', command: quote(step.argv), log: step.log });
 
-  const entries = await carveCache(cacheDir, stage, chosen.entry);
+  const entries = await carveCache(cacheDir, stage, chosen.entry, group);
   if (!entries.length) {
     throw new CompileError(
       'the driver created the pipeline but wrote nothing this can read back. The shader disk ' +
@@ -989,7 +1051,16 @@ async function graphicsCompile(tools, file, options) {
   // the shader could not state and this had to choose, so they are reported rather than
   // assumed - and where they came from is part of the claim, not a footnote.
   const bindings = (layout.bindings || []).length;
-  const describe = [
+  const raytracing = spec.group === 'raytracing';
+  const describe = raytracing ? [
+    `${stage} stage`,
+    bindings
+      ? `${bindings} binding(s) ${controls.layout ? 'from the file' : 'by reflection'}`
+      : 'no descriptors',
+    // No render state at all - a raytracing pipeline has none, and printing a colour format
+    // for one would describe something that is not there.
+    'raytracing pipeline, recursion depth 1'
+  ].join(', ') : [
     `${stage} stage`,
     bindings
       ? `${bindings} binding(s) ${controls.layout ? 'from the file' : 'by reflection'}`
@@ -1062,6 +1133,12 @@ async function generateProducer(tools, fragmentSpv, outDir) {
   };
 }
 
+/** The `_ss_N` continuation suffix a split raytracing shader carries, or ''. */
+function splitSuffix(name) {
+  const m = /(_ss_\d+)$/.exec(name || '');
+  return m ? m[1] : '';
+}
+
 /** Everything the reflector can say about one module. */
 async function reflectModule(tools, module) {
   const result = await run(tools.python, [tools.reflectHelper, module, '--json']);
@@ -1114,7 +1191,7 @@ async function reflectLayout(tools, modules) {
  * A graphics pipeline deposits several objects - at least the producer and the consumer - so
  * they are told apart by the stage code the container records, not by position.
  */
-async function carveCache(cacheDir, stage, entryName) {
+async function carveCache(cacheDir, stage, entryName, group) {
   const nvcache = require('./nvcache');
   const bins = [];
   const walk = async dir => {
@@ -1130,6 +1207,11 @@ async function carveCache(cacheDir, stage, entryName) {
   // else agrees. Geometry is stage code 4, established by building a pipeline that had only
   // one of them in it.
   const wanted = stage === 'fragment' ? 'pixel' : stage;
+  // A grouped pipeline is carved whole. The driver's name for each shader is its Slang name
+  // with a stage prefix and a hash around it, so the member is found by looking for its own
+  // name inside that rather than by parsing a mangling this code does not own.
+  const memberOf = driverName => (group || []).find(m =>
+    (driverName || '').includes(`_${m.name}_`)) || null;
   const out = [];
   for (const bin of bins) {
     let toc = null;
@@ -1138,13 +1220,19 @@ async function carveCache(cacheDir, stage, entryName) {
       source: bin, backend: 'vk', toc, keepMicrocode: true, minCode: 0
     });
     for (const o of objects) {
-      if (o.metadata && o.metadata.stage !== wanted) continue;
+      const member = group ? memberOf(o.name) : null;
+      if (group ? !member : (o.metadata && o.metadata.stage !== wanted)) continue;
+      const named = member ? member.name : entryName;
       out.push({
         // The entry point the user asked for, not the name the driver wrote into the
         // container - which is the Slang name with a suffix the linker chose (`fsMain_2`).
         // The listing is named after this, and a file named after someone else's mangling is
         // a file you cannot find again.
-        name: entryName || o.name || `${wanted}Main`,
+        //
+        // Except the `_ss_N` a raytracing shader carries, which is not mangling: a shader that
+        // calls TraceRay is SPLIT at the trace point, and each piece is separately scheduled
+        // code. Two listings called the same thing would be two different shaders.
+        name: (named ? named + splitSuffix(o.name) : null) || o.name || `${wanted}Main`,
         driverName: o.name || null,
         microcode: o.microcode,
         codeBytes: o.codeBytes,

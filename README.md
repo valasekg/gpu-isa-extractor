@@ -178,13 +178,15 @@ A shader takes one of two roads, chosen by its stage:
 compute                       slangc -target cuda  → NVRTC → ptxas → cubin
 vertex, fragment, geometry,   slangc -target spirv → the display driver → its shader cache
 hull, domain, mesh,
-amplification
+amplification, raygeneration,
+miss, closesthit, anyhit,
+intersection, callable
 ```
 
 Both end in the same place — microcode, in the same shape as bytes carved out of a cache — so
 the listing is produced by the extension's ordinary `nvdisasm --binary` path either way.
 
-Seven worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
+Eight worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
 
 | | |
 |---|---|
@@ -195,6 +197,7 @@ Seven worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B
 | [`terrain-tessellation.slang`](samples/terrain-tessellation.slang) | a **hull** and **domain** pair, which cannot be compiled apart — and the measured asymmetry between generating one half and the other |
 | [`meshlet-cull.slang`](samples/meshlet-cull.slang) | **mesh** and **amplification**: the pipeline with no vertex stage at all, and a payload that changes the shader reading it |
 | [`inline-shadow-ray.slang`](samples/inline-shadow-ray.slang) | **inline ray tracing** inside a fragment shader — no raytracing pipeline needed, and the largest listing here at 408 instructions |
+| [`procedural-spheres.slang`](samples/procedural-spheres.slang) | a whole **raytracing pipeline** — six stages compiled together, and two of them split in half by the calls that suspend them |
 
 Each opens with a comment saying what to look for in its listing, and which flag to change to
 make the code move.
@@ -274,10 +277,11 @@ module are attributed to *that* file, which is listed in the banner's source map
 
 ### What it will not do
 
-- **Raytracing *pipelines* are unimplemented** — raygen, miss and hit shaders need
-  `vkCreateRayTracingPipelinesKHR` and a shader binding table rather than another stage.
-  **Inline ray tracing works today**, because `RayQuery` lives inside an ordinary shader and
-  needs no pipeline of its own.
+- **A raytracing shader is never compiled alone.** The six raytracing stages are one pipeline,
+  so naming any entry point compiles every raytracing entry point in the file and lists all of
+  them. A file with no `raygeneration` shader is refused by name — it is the only stage a
+  driver will start, and the rest are reachable only through it. No shader binding table is
+  built: creating the pipeline is what compiles the shaders, and dispatching rays is not.
 - **A generated tessellation counterpart is not free in both directions.** A domain shader
   compiles identically whichever hull feeds it; a hull shader does not, because a generated
   domain reads every output it declares and brings no descriptors of its own. The banner says

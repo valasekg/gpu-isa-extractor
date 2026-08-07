@@ -26,12 +26,24 @@ layouts match what MSVC computes from the real headers.
     py vk_compile.py --probe        # which loader, which devices; compile nothing
     py vk_compile.py --layout       # sizeof/offsetof per struct, for the ABI cross-check
 
-    {"vs": "producer.spv",          # required
+    {"vs": "producer.spv",          # a graphics pipeline: vs or ms is required
      "fs": "shader.spv",            # or null for rasterizer discard
      "gs": "geometry.spv",          # optional geometry stage
+     "hs": "hull.spv",              # tessellation, both halves or neither
+     "ds": "domain.spv",
+     "ms": "mesh.spv",              # the mesh road, which has no vertex stage
+     "ts": "task.spv",              # its amplification stage, optional
+
+     "rgen": "raygen.spv",          # a raytracing pipeline instead: rgen is required, and
+     "miss": "miss.spv",            # cannot be combined with any stage above
+     "chit": "closesthit.spv",
+     "ahit": "anyhit.spv",
+     "sect": "intersection.spv",    # its presence makes the hit group procedural
+     "call": "callable.spv",
+
      "layout": {"bindings": [[set, binding, descriptorType, count]], "pushBytes": 0},
      "state": {"format": "r8g8b8a8_unorm", "samples": 1, "depth": "none",
-               "topology": "triangle_list"},
+               "topology": "triangle_list", "patchControlPoints": 0},
      "validate": false,             # run under the validation layer and make it fatal
      "checkInterface": true,
      "checkTopology": true,
@@ -370,6 +382,29 @@ class VkPipelineRenderingCreateInfo(C.Structure):
                 ("depthAttachmentFormat", VkEnum), ("stencilAttachmentFormat", VkEnum)]
 
 
+# A raytracing pipeline is a different kind of object, not another stage in the graphics
+# one: a different creation call, shader GROUPS instead of a fixed stage order, and none of
+# the render state - no vertex input, no rasterizer, no attachments, no dynamic rendering.
+class VkRayTracingShaderGroupCreateInfoKHR(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("type", VkEnum),
+                ("generalShader", u32), ("closestHitShader", u32),
+                ("anyHitShader", u32), ("intersectionShader", u32),
+                ("pShaderGroupCaptureReplayHandle", VOID)]
+
+
+class VkRayTracingPipelineCreateInfoKHR(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("stageCount", u32),
+                ("pStages", C.POINTER(VkPipelineShaderStageCreateInfo)),
+                ("groupCount", u32),
+                ("pGroups", C.POINTER(VkRayTracingShaderGroupCreateInfoKHR)),
+                ("maxPipelineRayRecursionDepth", u32),
+                ("pLibraryInfo", VOID), ("pLibraryInterface", VOID),
+                ("pDynamicState", VOID),
+                ("layout", NonDisp), ("basePipelineHandle", NonDisp),
+                ("basePipelineIndex", i32)]
+
+
 class VkGraphicsPipelineCreateInfo(C.Structure):
     _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
                 ("stageCount", u32),
@@ -407,6 +442,7 @@ LAYOUT_STRUCTS = [
     VkPipelineDepthStencilStateCreateInfo, VkPipelineColorBlendAttachmentState,
     VkPipelineColorBlendStateCreateInfo, VkPipelineDynamicStateCreateInfo,
     VkPipelineRenderingCreateInfo, VkGraphicsPipelineCreateInfo,
+    VkRayTracingShaderGroupCreateInfoKHR, VkRayTracingPipelineCreateInfoKHR,
 ]
 
 
@@ -442,6 +478,8 @@ ST = dict(
     # part of the suite.
     DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT=1000128004,
     PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT=1000328000,
+    RAY_TRACING_PIPELINE_CREATE_INFO_KHR=1000150015,
+    RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR=1000150016,
     PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR=1000348013,
     PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR=1000150013,
     PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR=1000347000,
@@ -461,6 +499,17 @@ VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT = 0x4   # domain
 VK_SHADER_STAGE_GEOMETRY_BIT = 0x8
 VK_SHADER_STAGE_TASK_BIT_EXT = 0x40                 # amplification
 VK_SHADER_STAGE_MESH_BIT_EXT = 0x80
+VK_SHADER_STAGE_RAYGEN_BIT_KHR = 0x100
+VK_SHADER_STAGE_ANY_HIT_BIT_KHR = 0x200
+VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR = 0x400
+VK_SHADER_STAGE_MISS_BIT_KHR = 0x800
+VK_SHADER_STAGE_INTERSECTION_BIT_KHR = 0x1000
+VK_SHADER_STAGE_CALLABLE_BIT_KHR = 0x2000
+
+VK_SHADER_UNUSED_KHR = 0xFFFFFFFF
+GROUP_GENERAL = 0
+GROUP_TRIANGLES_HIT = 1
+GROUP_PROCEDURAL_HIT = 2
 VK_SHADER_STAGE_FRAGMENT_BIT = 0x10
 VK_SHADER_STAGE_ALL_GRAPHICS = 0x1F
 VK_QUEUE_GRAPHICS_BIT = 0x1
@@ -493,8 +542,12 @@ MESH_EXTENSION = b"VK_EXT_mesh_shader"
 # SPIR-V capability numbers a module can declare that the device has to be told about.
 # Derived from the modules rather than hardcoded, because a capability declared and never
 # enabled is an invalid pipeline this driver builds anyway - three times measured now.
-CAP_RAY_QUERY = 4479
-CAP_RAY_TRACING = 4472
+# Checked against spirv.h, not inferred: RayQueryKHR is 4472 and RayTracingKHR is 4479.
+# These were the other way round at first and the ray-query fixture did not notice,
+# because it declares BOTH - so both branches fired and the wrong labelling was invisible.
+# A raygen shader declares only RayTracingKHR, which is where it would have shown.
+CAP_RAY_QUERY = 4472
+CAP_RAY_TRACING = 4479
 
 # Every stage this can build, in pipeline order: the request field it arrives in, its
 # Vulkan stage bit, and what to call it in a message. One table rather than a named local
@@ -507,6 +560,18 @@ PIPELINE_STAGES = [
     ("ds", VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, "domain"),
     ("gs", VK_SHADER_STAGE_GEOMETRY_BIT, "geometry"),
     ("fs", VK_SHADER_STAGE_FRAGMENT_BIT, "fragment"),
+]
+
+# The raytracing stages, in the order their groups are built. Separate from the table
+# above because they never appear in the same pipeline as any of it - a raytracing
+# pipeline has no graphics stages and no render state at all.
+RT_STAGES = [
+    ("rgen", VK_SHADER_STAGE_RAYGEN_BIT_KHR, "raygeneration"),
+    ("miss", VK_SHADER_STAGE_MISS_BIT_KHR, "miss"),
+    ("call", VK_SHADER_STAGE_CALLABLE_BIT_KHR, "callable"),
+    ("chit", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, "closesthit"),
+    ("ahit", VK_SHADER_STAGE_ANY_HIT_BIT_KHR, "anyhit"),
+    ("sect", VK_SHADER_STAGE_INTERSECTION_BIT_KHR, "intersection"),
 ]
 
 
@@ -584,6 +649,7 @@ def bind(lib):
         "vkCreatePipelineLayout": ([Handle, VOID, VOID, VOID], i32),
         "vkDestroyPipelineLayout": ([Handle, NonDisp, VOID], None),
         "vkCreateGraphicsPipelines": ([Handle, NonDisp, u32, VOID, VOID, VOID], i32),
+        "vkGetDeviceProcAddr": ([Handle, C.c_char_p], VOID),
         "vkDestroyPipeline": ([Handle, NonDisp, VOID], None),
     }
     fns = {}
@@ -757,7 +823,7 @@ class Poke(object):
         # the stage array and the feature bits - and mesh would have made a sixth copy of each.
         try:
             code = {}
-            for slot, _bit, _name in PIPELINE_STAGES:
+            for slot, _bit, _name in PIPELINE_STAGES + RT_STAGES:
                 path_ = request.get(slot)
                 if path_:
                     code[slot] = read_spirv(path_)
@@ -778,12 +844,26 @@ class Poke(object):
                 self.note("the declared capabilities could not be read; only the base "
                           "feature set is enabled")
 
+        # Which kind of pipeline this is. A raytracing pipeline shares the instance, the
+        # device, the modules and the descriptor layout with a graphics one, and nothing
+        # else: no render state, a different creation call, and groups in place of a fixed
+        # stage order.
+        rt_pipeline = any(slot in code for slot, _b, _n in RT_STAGES)
+        if rt_pipeline and any(slot in code for slot, _b, _n in PIPELINE_STAGES):
+            return EXIT_UNUSABLE, (
+                "this request mixes raytracing and graphics stages. They are different "
+                "kinds of pipeline and cannot be created together.")
+        if rt_pipeline and "rgen" not in code:
+            return EXIT_UNUSABLE, (
+                "a raytracing pipeline must contain a raygeneration shader - every other "
+                "raytracing stage is reached from one.")
+
         mesh_pipeline = "ms" in code or "ts" in code
-        if not mesh_pipeline and "vs" not in code:
+        if not rt_pipeline and not mesh_pipeline and "vs" not in code:
             return EXIT_UNUSABLE, (
                 "the request names no vertex shader, and no mesh shader either. A pipeline "
                 "needs one front stage or the other.")
-        if "ts" in code and "ms" not in code:
+        if not rt_pipeline and "ts" in code and "ms" not in code:
             return EXIT_UNUSABLE, (
                 "an amplification shader exists only to dispatch a mesh shader, and this "
                 "request names none.")
@@ -961,7 +1041,7 @@ class Poke(object):
             return h.value, None
 
         handles = {}
-        for slot, _bit, name in PIPELINE_STAGES:
+        for slot, _bit, name in PIPELINE_STAGES + RT_STAGES:
             if slot not in code:
                 continue
             handle, err = module(code[slot], name)
@@ -972,6 +1052,17 @@ class Poke(object):
         # -- descriptor layout -------------------------------------------
         # Grouped by set, because a VkPipelineLayout takes one VkDescriptorSetLayout per set
         # and the sets must be contiguous from 0 - a gap is not expressible.
+        # Which stages a descriptor is visible to. The union of what this pipeline holds,
+        # not a constant: VK_SHADER_STAGE_ALL_GRAPHICS does not include the raytracing
+        # stages, so a raygeneration shader reading its own acceleration structure was an
+        # invalid layout - built anyway, and caught only by the layer. Narrower than
+        # VK_SHADER_STAGE_ALL for the same reason the descriptor layout is reflected
+        # rather than over-provisioned.
+        stage_mask = 0
+        for slot, bit, _name in PIPELINE_STAGES + RT_STAGES:
+            if slot in code:
+                stage_mask |= bit
+
         spec = request.get("layout") or {}
         by_set = {}
         for entry in spec.get("bindings") or []:
@@ -990,7 +1081,7 @@ class Poke(object):
                 arr[k].binding = b
                 arr[k].descriptorType = t
                 arr[k].descriptorCount = count
-                arr[k].stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS
+                arr[k].stageFlags = stage_mask
             self.keep.append(arr)
             dslci = VkDescriptorSetLayoutCreateInfo(
                 sType=ST["DESCRIPTOR_SET_LAYOUT_CREATE_INFO"],
@@ -1005,8 +1096,9 @@ class Poke(object):
             set_handles[index] = h.value
 
         push_bytes = int(spec.get("pushBytes") or 0)
-        push = VkPushConstantRange(stageFlags=VK_SHADER_STAGE_ALL_GRAPHICS, offset=0,
+        push = VkPushConstantRange(offset=0,
                                    size=push_bytes)
+        push.stageFlags = stage_mask
         self.keep.append(set_handles)
         plci = VkPipelineLayoutCreateInfo(
             sType=ST["PIPELINE_LAYOUT_CREATE_INFO"],
@@ -1021,6 +1113,9 @@ class Poke(object):
         self.pipeline_layout = lay.value
         self.note("layout: %d set(s), %d binding(s), %d push byte(s)"
                   % (len(by_set), sum(len(v) for v in by_set.values()), push_bytes))
+
+        if rt_pipeline:
+            return self.raytracing_pipeline(handles, code)
 
         # -- pipeline ----------------------------------------------------
         # Straight off the table, in pipeline order. Vulkan takes them in any order; this one
@@ -1119,6 +1214,100 @@ class Poke(object):
         self.note("stages            %s" % " + ".join(
             name for slot, _bit, name in PIPELINE_STAGES if slot in handles))
         return EXIT_OK, None
+
+
+def raytracing_pipeline(self, handles, code):
+    """Create the raytracing pipeline, once the device, modules and layout exist.
+
+    A raytracing pipeline is not a graphics pipeline with different stages in it. There is no
+    fixed order for the driver to infer, so the shaders are grouped explicitly: each group
+    names either one general shader - a raygeneration, miss or callable - or the hit shaders
+    that answer for one kind of geometry. Nothing else about a graphics pipeline applies: no
+    vertex input, no rasterizer, no attachments, no dynamic rendering.
+
+    The groups here are the smallest set that makes the shaders reachable, which is all that is
+    needed to make the driver compile them. A real application's grouping decides which shader
+    answers for which instance, and that is a property of its scene rather than of its code.
+    """
+    vk = self.vk
+    # An extension entry point: not exported by the loader, so it comes through
+    # vkGetDeviceProcAddr with an explicit restype - the default int would truncate it.
+    address = vk["vkGetDeviceProcAddr"](self.device, b"vkCreateRayTracingPipelinesKHR")
+    if not address:
+        return EXIT_UNUSABLE, (
+            "vkCreateRayTracingPipelinesKHR is not available on this device, so a raytracing "
+            "pipeline cannot be created. Inline ray tracing needs no such call and still works.")
+    create = C.CFUNCTYPE(i32, Handle, NonDisp, NonDisp, u32, VOID, VOID, VOID)(address)
+
+    stages = (VkPipelineShaderStageCreateInfo * len(handles))()
+    index = {}
+    at = 0
+    for slot, bit, _name in RT_STAGES:
+        if slot not in handles:
+            continue
+        stages[at].sType = ST["PIPELINE_SHADER_STAGE_CREATE_INFO"]
+        stages[at].stage = bit
+        stages[at].module = handles[slot]
+        stages[at].pName = b"main"
+        index[slot] = at
+        at += 1
+    self.keep.append(stages)
+
+    groups = []
+    # One general group per raygeneration, miss and callable shader.
+    for slot in ("rgen", "miss", "call"):
+        if slot in index:
+            groups.append((GROUP_GENERAL, index[slot], VK_SHADER_UNUSED_KHR,
+                           VK_SHADER_UNUSED_KHR, VK_SHADER_UNUSED_KHR))
+    # And one hit group for the hit shaders, procedural when an intersection shader decides
+    # the hit and triangles when the fixed-function intersector does.
+    if any(slot in index for slot in ("chit", "ahit", "sect")):
+        groups.append((
+            GROUP_PROCEDURAL_HIT if "sect" in index else GROUP_TRIANGLES_HIT,
+            VK_SHADER_UNUSED_KHR,
+            index.get("chit", VK_SHADER_UNUSED_KHR),
+            index.get("ahit", VK_SHADER_UNUSED_KHR),
+            index.get("sect", VK_SHADER_UNUSED_KHR)))
+
+    array = (VkRayTracingShaderGroupCreateInfoKHR * len(groups))()
+    for k, (kind, general, chit, ahit, sect) in enumerate(groups):
+        array[k].sType = ST["RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR"]
+        array[k].type = kind
+        array[k].generalShader = general
+        array[k].closestHitShader = chit
+        array[k].anyHitShader = ahit
+        array[k].intersectionShader = sect
+    self.keep.append(array)
+
+    rtci = VkRayTracingPipelineCreateInfoKHR(
+        sType=ST["RAY_TRACING_PIPELINE_CREATE_INFO_KHR"],
+        stageCount=at,
+        pStages=C.cast(stages, C.POINTER(VkPipelineShaderStageCreateInfo)),
+        groupCount=len(groups),
+        pGroups=C.cast(array, C.POINTER(VkRayTracingShaderGroupCreateInfoKHR)),
+        # One bounce. Recursion depth is a promise to the driver about how deep TraceRay may
+        # nest, and it is codegen-relevant - so it is stated rather than maximised.
+        maxPipelineRayRecursionDepth=1,
+        layout=self.pipeline_layout)
+
+    pipeline = NonDisp()
+    r = create(self.device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, C.byref(rtci), None,
+               C.byref(pipeline))
+    if r != VK_SUCCESS:
+        return EXIT_REFUSED, "vkCreateRayTracingPipelinesKHR failed (VkResult %d)" % r
+    self.pipeline = pipeline.value
+
+    self.note("stages            %s" % " + ".join(
+        name for slot, _bit, name in RT_STAGES if slot in index))
+    self.note("groups            %d (%s)" % (
+        len(groups), ", ".join("general" if g[0] == GROUP_GENERAL
+                               else "procedural hit" if g[0] == GROUP_PROCEDURAL_HIT
+                               else "triangles hit" for g in groups)))
+    self.note("recursion depth   1")
+    return EXIT_OK, None
+
+
+Poke.raytracing_pipeline = raytracing_pipeline
 
 
 def check_interface(request, note):

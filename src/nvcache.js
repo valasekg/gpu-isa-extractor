@@ -325,6 +325,86 @@ function validate(microcode) {
   return problems;
 }
 
+/**
+ * A raytracing pipeline writes something else entirely.
+ *
+ * Every other pipeline deposits `NVuc` containers, one per shader. A raytracing one deposits
+ * `NVVMVKRT` and `RTCTskKy` blobs, each a 40-byte header wrapping a **plain ELF64**. That ELF
+ * is read by `cubin.js`, the reader written for CUDA cubins, without changes: the same
+ * `.text.<entry>` sections, the same register count in `sh_info`.
+ *
+ * Both tags carry finished machine code, which is not what the names suggest and was worth
+ * measuring rather than assuming. The driver compiles each shader twice, and the miss shader
+ * of the `raytracing.slang` fixture comes out of the two with the same eleven instructions in
+ * the same order and a different register allocation - 64 registers under `NVVMVKRT`, 62 under
+ * `RTCTskKy`. So the second is the same shader packed against the assembled pipeline, and it
+ * is the one to report: `pickLatest` below keeps the last copy of each entry point, which is
+ * the `RTCTskKy` one wherever the driver wrote it.
+ *
+ * It does not always write it. A six-stage pipeline whose hit group is procedural produced
+ * `NVVMVKRT` for all six shaders and no `RTCTskKy` at all. Reading only the tag that looks
+ * like compiled code would have shown that pipeline as empty - which is exactly what it did,
+ * before this function learned to read both.
+ *
+ * The entry names carry the stage, which is how a raytracing object is told apart without a
+ * stage code: `_rtx_RAYGEN_4_rayGen_2_<hash>`. A raygeneration shader that calls TraceRay
+ * appears more than once, suffixed `_ss_0`, `_ss_1` - the trace point splits it, and each
+ * piece is separately scheduled code rather than a fragment of one function.
+ */
+const RT_MAGICS = [Buffer.from('RTCTsk', 'latin1'), Buffer.from('NVVMVKRT', 'latin1')];
+const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+
+/** `_rtx_CLOSEST_HIT_4_name_2_hash` -> `closesthit`. */
+const RTX_STAGES = {
+  RAYGEN: 'raygeneration', MISS: 'miss', CLOSEST_HIT: 'closesthit',
+  ANY_HIT: 'anyhit', INTERSECTION: 'intersection', CALLABLE: 'callable'
+};
+
+function rtxStageOf(name) {
+  const m = /^_rtx_([A-Z_]+?)_\d+_/.exec(name || '');
+  return (m && RTX_STAGES[m[1]]) || null;
+}
+
+/**
+ * The objects inside one raytracing payload, or null if it is not one.
+ *
+ * @returns {Array|null}
+ */
+function raytracingObjects(payload, source, offset) {
+  if (payload.length < 48) return null;
+  if (!RT_MAGICS.some(m => payload.subarray(0, m.length).equals(m))) return null;
+  const at = payload.indexOf(ELF_MAGIC);
+  if (at < 0) return null;
+
+  const elf = payload.subarray(at);
+  let entries;
+  try {
+    entries = require('./cubin').entryPoints(elf);
+  } catch (e) {
+    return null;                       // a container that looks like one and is not
+  }
+  return entries.map(entry => ({
+    name: entry.name,
+    source,
+    offset,
+    codeBytes: entry.codeBytes,
+    microcode: entry.microcode,
+    sha1: crypto.createHash('sha1').update(entry.microcode).digest('hex'),
+    warnings: [],
+    metadata: {
+      // No stage code: this container does not carry one. The name does, and reading it is
+      // honest where inventing a code would not be.
+      stage: rtxStageOf(entry.name),
+      stageCode: null,
+      registers: entry.registers,
+      registerCap: null,
+      localBytes: null,
+      sharedBytes: null,
+      killsPixels: null
+    }
+  }));
+}
+
 function objectFromPayload(payload, source, offset, backend, stats) {
   const parsed = parseNvuc(payload);
   if (!parsed) return null;
@@ -407,6 +487,7 @@ async function enumerateObjects(buf, opts = {}) {
 
   const stats = {};
   const objects = [];
+  let rtxSeen = false;
   const frames = planFrames(buf, { backend, toc, scan });
   // A scan hits frames that no index vouched for, so its failures are not reportable: a
   // false-positive magic hit is not a truncated frame, and counting them would report a
@@ -438,13 +519,47 @@ async function enumerateObjects(buf, opts = {}) {
       continue;
     }
 
+    // A raytracing payload holds several entry points in one ELF, so it yields a list
+    // where an NVuc payload yields one object.
+    const rtx = raytracingObjects(payload, source, offset);
+    if (rtx) {
+      for (const one of rtx) {
+        if (one.codeBytes < minCode) continue;
+        if (!keepMicrocode) one.microcode = null;
+        objects.push(one);
+        rtxSeen = true;
+      }
+      continue;
+    }
+
     const obj = objectFromPayload(payload, source, offset, backend, indexed ? stats : null);
     if (!obj || obj.codeBytes < minCode) continue;
     if (!keepMicrocode) obj.microcode = null;
     objects.push(obj);
   }
 
-  return { objects, stats, frames: frames.length };
+  return { objects: rtxSeen ? pickLatest(objects) : objects, stats, frames: frames.length };
+}
+
+/**
+ * One object per entry point, keeping the last of any duplicates.
+ *
+ * The driver compiles a raytracing shader twice and writes both, so the same entry point
+ * arrives under two container tags with two register allocations. The later one is compiled
+ * against the assembled pipeline, so it is the one kept - see `raytracingObjects`.
+ *
+ * Only raytracing caches are put through this. Every other kind writes one container per
+ * shader, and two objects sharing a name there would be a fact about the cache worth showing
+ * rather than a duplicate worth hiding.
+ */
+function pickLatest(objects) {
+  const at = new Map();
+  const out = [];
+  for (const o of objects) {
+    if (at.has(o.name)) out[at.get(o.name)] = o;
+    else { at.set(o.name, out.length); out.push(o); }
+  }
+  return out;
 }
 
 /** Re-decode and carve a single known frame - what the enumeration deliberately threw away. */
@@ -475,6 +590,8 @@ module.exports = {
   describeMetadata,
   sharedNote,
   objectFromPayload,
+  raytracingObjects,
+  rtxStageOf,
   planFrames,
   enumerateObjects,
   carveAt,

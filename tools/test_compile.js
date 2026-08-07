@@ -316,22 +316,39 @@ section('5. Entry points and the stage gate');
 }
 
 {
-  // The stages with no road at all. Their refusal is the one that has to keep working.
-  // Geometry, hull and domain are deliberately NOT in this list any more - they have
-  // pipelines now, and a test that still demanded a refusal would be asserting the feature
-  // does not exist.
-  for (const stage of ['raygeneration', 'closesthit', 'miss']) {
-    const src = `[shader("${stage}")] void f() { }`;
-    let threw = null;
-    try { compile.chooseSlangEntry(src); } catch (e) { threw = e; }
-    check(threw instanceof compile.CompileError, `a ${stage}-only file is still refused`);
-    check(threw && /cache file/i.test(threw.message),
-      `and ${stage} is pointed at the cache route instead`, threw && threw.message);
+  // Every raytracing stage routes to the driver. They used to be the example of a stage with
+  // no road at all; the refusal test that stood here would now be asserting the feature does
+  // not exist, so it asserts the road instead.
+  for (const stage of ['raygeneration', 'closesthit', 'miss', 'callable', 'anyhit', 'intersection']) {
+    // Every one of them but the raygeneration shader needs a raygeneration shader beside it,
+    // so the probe carries one and names the stage under test explicitly.
+    const src = `[shader("raygeneration")] void r() { }\n[shader("${stage}")] void f() { }`;
+    const chosen = compile.chooseSlangEntry(src, 'f');
+    equal(chosen.lineage, 'graphics', `a ${stage} shader routes to the driver`);
+    equal(chosen.stage, stage, `carrying its stage`);
   }
+
+  // And the raygeneration shader is what a raytracing file compiles by default, whichever
+  // order the entry points appear in - the anchor, not the first one written.
+  const anchored = compile.chooseSlangEntry(
+    '[shader("miss")] void m() { }\n[shader("raygeneration")] void r() { }');
+  equal(anchored.entry, 'r', 'a raytracing file defaults to its raygeneration shader');
+
+  // A raytracing pipeline is built around its raygeneration shader - it is the only stage the
+  // driver will start. A file holding a hit shader and nothing to call it is not a pipeline,
+  // and the refusal has to say which shader is missing rather than which stage is unsupported.
   let threw = null;
-  try { compile.chooseSlangEntry('[shader("intersection")] void i() { }', 'i'); } catch (e) { threw = e; }
+  try { compile.chooseSlangEntry('[shader("closesthit")] void h() { }', 'h'); } catch (e) { threw = e; }
   check(threw instanceof compile.CompileError,
-    'naming an unroutable entry point explicitly is refused too');
+    'a hit shader with no raygeneration shader to launch it is refused', threw && threw.message);
+  check(threw && /raygeneration/i.test(threw.message),
+    'and the refusal names the shader that is missing', threw && threw.message);
+
+  // With one present, the same file compiles - and the hit shader is what gets named.
+  const withRgen = compile.chooseSlangEntry(
+    '[shader("raygeneration")] void r() { }\n[shader("closesthit")] void h() { }', 'h');
+  equal(withRgen.stage, 'closesthit', 'adding a raygeneration shader makes the same file compile');
+  equal(withRgen.entry, 'h', 'and the named entry point is still the one compiled');
 }
 
 {

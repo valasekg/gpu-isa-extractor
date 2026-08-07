@@ -92,7 +92,10 @@ DESCRIPTOR_NAMES = {
 }
 
 EXEC_MODEL = {0: "vertex", 1: "tessellation_control", 2: "tessellation_evaluation",
-              3: "geometry", 4: "fragment", 5: "compute"}
+              3: "geometry", 4: "fragment", 5: "compute",
+              5313: "raygeneration", 5314: "intersection", 5315: "anyhit",
+              5316: "closesthit", 5317: "miss", 5318: "callable",
+              5364: "amplification", 5365: "mesh"}
 
 # Slang spells these the HLSL way - hull and domain - and puts the whole set on the HULL
 # shader, where GLSL would put most of them on the evaluation stage. A domain shader

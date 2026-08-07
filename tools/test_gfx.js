@@ -188,11 +188,18 @@ async function pipeline(tag, request) {
   const { objects } = await nvcache.enumerateObjects(fs.readFileSync(bin), {
     source: bin, backend: 'vk', toc, keepMicrocode: true, minCode: 0
   });
-  const out = {};
+  // One stage does not always mean one object. A raytracing shader that calls TraceRay is
+  // split at the trace point into separately scheduled pieces, so its stage arrives carrying
+  // two of them; the digests are joined in the order the container lists them, which keeps a
+  // stage a single string to pin while still showing that it came apart.
+  const parts = {};
   for (const o of objects) {
     const stage = (o.metadata && o.metadata.stage) || `code${o.metadata && o.metadata.stageCode}`;
-    out[stage] = crypto.createHash('sha1').update(o.microcode).digest('hex').slice(0, 12);
+    (parts[stage] = parts[stage] || [])
+      .push(crypto.createHash('sha1').update(o.microcode).digest('hex').slice(0, 12));
   }
+  const out = {};
+  for (const [stage, digests] of Object.entries(parts)) out[stage] = digests.join('+');
   fs.rmSync(dir, { recursive: true, force: true });
   return out;
 }
@@ -508,9 +515,121 @@ function findBin(dir) {
     }
   }
 
+  // ------------------------------------------------------------------ raytracing
+
+  section('8. The raytracing stages');
+
+  // The other end of ray tracing from section 7. A ray query lives inside an ordinary shader
+  // and needs no pipeline of its own; these six stages ARE the pipeline, and none of them can
+  // be compiled alone. The raygeneration shader is the only one the driver will start, and the
+  // rest are reachable only through the shader groups built around it.
+  const rtFiles = ['rtRgen', 'rtMiss', 'rtChit', 'rtAhit', 'rtSect', 'rtCall']
+    .map(n => path.join(FIXTURES, `${n}.spv`));
+  const [RGEN, MISS, CHIT, AHIT, SECT, CALL] = rtFiles;
+  const rtLayout = { bindings: [[0, 0, 1000150000, 1], [0, 1, 3, 1], [0, 2, 6, 1]] };
+
+  if (!PY) {
+    skip('no Python interpreter');
+  } else if (!rtFiles.every(f => fs.existsSync(f))) {
+    skip('no raytracing fixtures');
+  } else {
+    const r = run(PY, [REFLECT, RGEN, '--json']);
+    if (check(r.code === 0, 'a raygeneration module reflects', r.stderr)) {
+      const m = JSON.parse(r.stdout).modules[0];
+      // 4479 is RayTracingKHR and 4472 is RayQueryKHR. They were the wrong way round here for
+      // a while and nothing caught it, because the ray-query fixture of section 7 declares
+      // both - so the wrong constant still named a capability that module had. This fixture
+      // declares only the raytracing one, which is what makes the mix-up visible.
+      check((m.capabilities || []).includes(4479),
+        'declaring RayTracingKHR and not RayQueryKHR', JSON.stringify(m.capabilities));
+      check(!(m.capabilities || []).includes(4472),
+        'which is the pair that was once swapped', JSON.stringify(m.capabilities));
+      check((m.entryPoints || []).some(e => e.stage === 'raygeneration'),
+        'and reporting its execution model', JSON.stringify(m.entryPoints));
+      check((m.extensions || []).includes('SPV_KHR_ray_tracing'),
+        'with the SPIR-V extension that goes with it', JSON.stringify(m.extensions));
+    }
+
+    if (!probe || probe.code !== 0) {
+      skip('no usable Vulkan device for the raytracing round-trip');
+    } else {
+      const full = await pipeline('rt-full', {
+        rgen: RGEN, miss: MISS, chit: CHIT, ahit: AHIT, sect: SECT, call: CALL,
+        layout: rtLayout, validate: true
+      });
+      if (check(!full.error, 'all six raytracing stages build one valid pipeline', full.error)) {
+        for (const stage of ['raygeneration', 'miss', 'closesthit', 'anyhit',
+          'intersection', 'callable']) {
+          check(!!full[stage], `and the ${stage} shader comes back out of the cache`,
+            JSON.stringify(Object.keys(full)));
+        }
+        // Two digests joined by '+' is one stage that compiled to two objects. A shader that
+        // calls TraceRay is split at the trace point, because the trace suspends it: the code
+        // after the call is scheduled separately and resumed when the ray is answered.
+        check((full.raygeneration || '').includes('+'),
+          'the raygeneration shader comes apart at its TraceRay call', full.raygeneration);
+        check((full.closesthit || '').includes('+'),
+          'and the closest-hit shader at its CallShader call', full.closesthit);
+        check(full.raygeneration === '9eeec1ef5ed0+4f255e6a3d6c' &&
+              full.miss === '7f95ed9babd6' && full.intersection === 'c7a82af21201',
+          'and the microcode is what was recorded',
+          `${full.raygeneration} / ${full.miss} / ${full.intersection}`);
+      }
+
+      // What moves what, measured rather than assumed - the same question section 3 asked of
+      // render state. A raytracing pipeline is compiled as a whole, so membership of it is the
+      // thing that might reach into a shader.
+      const noAhit = await pipeline('rt-no-ahit', {
+        rgen: RGEN, miss: MISS, chit: CHIT, sect: SECT, call: CALL,
+        layout: rtLayout, validate: true
+      });
+      check(!noAhit.error && noAhit.raygeneration === full.raygeneration &&
+            noAhit.closesthit === full.closesthit && noAhit.miss === full.miss,
+        'dropping the any-hit shader leaves every other stage byte-identical',
+        noAhit.error || `chit ${noAhit.closesthit} vs ${full.closesthit}`);
+
+      // The closest-hit shader calls CallShader. Take the callable shader out of the pipeline
+      // and that call has nothing to reach, so the shader holding it is compiled differently -
+      // and nothing else is.
+      const noCall = await pipeline('rt-no-call', {
+        rgen: RGEN, miss: MISS, chit: CHIT, ahit: AHIT, sect: SECT,
+        layout: rtLayout, validate: true
+      });
+      check(!noCall.error && noCall.closesthit !== full.closesthit,
+        'dropping the callable shader moves the shader that calls it',
+        noCall.error || `${noCall.closesthit} vs ${full.closesthit}`);
+      check(!noCall.error && noCall.raygeneration === full.raygeneration &&
+            noCall.miss === full.miss && noCall.intersection === full.intersection,
+        'and moves nothing else', noCall.error);
+
+      // Membership narrows towards the caller, not away from it: the miss shader is reached
+      // from the raygeneration shader's TraceRay and does not change it, while the hit group -
+      // which that same TraceRay may resume into - does.
+      const alone = await pipeline('rt-rgen', { rgen: RGEN, layout: rtLayout, validate: true });
+      const withMiss = await pipeline('rt-rgen-miss', {
+        rgen: RGEN, miss: MISS, layout: rtLayout, validate: true
+      });
+      check(!alone.error && !withMiss.error && alone.raygeneration === withMiss.raygeneration,
+        'adding a miss shader does not change the raygeneration shader',
+        alone.error || withMiss.error || `${alone.raygeneration} vs ${withMiss.raygeneration}`);
+      check(!alone.error && alone.raygeneration !== full.raygeneration,
+        'but adding a hit group does', `${alone.raygeneration} vs ${full.raygeneration}`);
+
+      // The two requests that are not pipelines at all.
+      const mixed = await pipeline('rt-mixed', {
+        rgen: RGEN, vs: path.join(FIXTURES, 'vs.spv'), layout: rtLayout
+      });
+      check(mixed.error && mixed.code === 2 && /different kinds of pipeline/.test(mixed.error),
+        'a request mixing raytracing and graphics stages is refused', mixed.error);
+      const orphan = await pipeline('rt-orphan', { chit: CHIT, layout: rtLayout });
+      check(orphan.error && orphan.code === 2 && /raygeneration/.test(orphan.error),
+        'and so is a hit shader with no raygeneration shader to launch it', orphan.error);
+    }
+  }
+
   // ------------------------------------------------------------------ validation
 
-  section('8. What the validation layer makes of these pipelines');
+  section('9. What the validation layer makes of these pipelines');
 
   // The check that would have found the bug that hid the longest. `dynamicRendering` was
   // never enabled - the 1.3 features struct carried the sType of the 1.1 one - and every
@@ -544,7 +663,15 @@ function findBin(dir) {
         ts: path.join(FIXTURES, 'asMain.spv'), fs: null, layout: { bindings: [] } } },
       { tag: 'ray query', request: { vs: path.join(FIXTURES, 'rqVs.spv'),
         fs: path.join(FIXTURES, 'rqFs.spv'),
-        layout: { bindings: [[0, 0, 1000150000, 1], [0, 1, 6, 1]] } } }
+        layout: { bindings: [[0, 0, 1000150000, 1], [0, 1, 6, 1]] } } },
+      // Not a graphics pipeline at all, and it is here for that reason: it goes through a
+      // different creation call, with none of the state the others carry, so nothing the
+      // layer says about the ones above is evidence about this one.
+      { tag: 'raytracing', request: { rgen: path.join(FIXTURES, 'rtRgen.spv'),
+        miss: path.join(FIXTURES, 'rtMiss.spv'), chit: path.join(FIXTURES, 'rtChit.spv'),
+        ahit: path.join(FIXTURES, 'rtAhit.spv'), sect: path.join(FIXTURES, 'rtSect.spv'),
+        call: path.join(FIXTURES, 'rtCall.spv'),
+        layout: { bindings: [[0, 0, 1000150000, 1], [0, 1, 3, 1], [0, 2, 6, 1]] } } }
     ].filter(c => Object.values(c.request)
       .every(v => typeof v !== 'string' || fs.existsSync(v)));
 
