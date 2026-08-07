@@ -44,6 +44,42 @@ function normalise(chunks) {
 }
 
 /**
+ * Environment variables that redirect the Vulkan loader, cleared for a child that creates a
+ * pipeline.
+ *
+ * Inheriting them is the default and it is wrong here. A developer's machine routinely has
+ * implicit layers hooking pipeline creation - Steam's overlay, OBS, RenderDoc, Afterburner,
+ * the Game Bar, Nsight - and any of them can perturb, hang or crash a compile that is
+ * supposed to be measuring the driver. When that happens the failure is attributed to the
+ * user's shader, because that is the only thing the listing names.
+ *
+ * `VK_LOADER_LAYERS_DISABLE` turns off implicit layers that no variable names, which is most
+ * of them; the rest are pointed at nothing rather than left inherited.
+ */
+const VULKAN_ENV = {
+  VK_ICD_FILENAMES: '', VK_DRIVER_FILES: '', VK_ADD_DRIVER_FILES: '',
+  VK_LAYER_PATH: '', VK_ADD_LAYER_PATH: '', VK_INSTANCE_LAYERS: '',
+  VK_LOADER_LAYERS_DISABLE: '*'
+};
+
+/**
+ * The environment a child gets: this process's, with `env` over it, minus anything scrubbed.
+ *
+ * A cleared variable is *deleted* rather than set to an empty string, because the Vulkan
+ * loader tests for presence and an empty `VK_ICD_FILENAMES` means "no drivers" rather than
+ * "no preference" - which would leave nothing to compile with.
+ */
+function environment(env, scrub) {
+  if (!env && !scrub) return process.env;
+  const merged = { ...process.env, ...(env || {}) };
+  for (const name of Object.keys(scrub || {})) {
+    if (scrub[name] === '') delete merged[name];
+    else merged[name] = scrub[name];
+  }
+  return merged;
+}
+
+/**
  * Run `exe` with `args` and resolve with everything it produced.
  *
  * Never rejects for a non-zero exit - that is a result, not an exception. It rejects only
@@ -57,14 +93,15 @@ function normalise(chunks) {
  *   duck-typed so this module needs no editor import
  * @param {string} [options.cwd]
  * @param {object} [options.env]  merged over `process.env`
+ * @param {object} [options.scrub]  variables to force after that merge; `''` deletes one
  * @returns {Promise<{code, stdout, stderr, argv, command, failed, timedOut, cancelled}>}
  */
-function text(exe, args, { timeout = 0, token, cwd, env } = {}) {
+function text(exe, args, { timeout = 0, token, cwd, env, scrub } = {}) {
   return new Promise((resolve, reject) => {
     let child;
     try {
       child = cp.spawn(exe, args, {
-        cwd, windowsHide: true, env: env ? { ...process.env, ...env } : process.env
+        cwd, windowsHide: true, env: environment(env, scrub)
       });
     } catch (e) {
       return reject(new Error(`could not run ${exe}: ${e.message}`));
@@ -124,4 +161,4 @@ function quote(argv) {
   return argv.map(a => (/[\s"]/.test(a) ? `"${a}"` : a)).join(' ');
 }
 
-module.exports = { text, quote };
+module.exports = { text, quote, environment, VULKAN_ENV };

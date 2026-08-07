@@ -276,16 +276,41 @@ section('5. Entry points and the stage gate');
 }
 
 {
+  // A fragment shader is no longer refused - it takes the other road. The decision still has
+  // to happen before slangc, for the original reason: asked to lower a graphics stage to
+  // CUDA, slangc crashes rather than declining.
   const frag = '[shader("fragment")]\nfloat4 psMain(float2 uv : UV) : SV_Target { }';
+  const routed = compile.chooseSlangEntry(frag);
+  equal(routed.lineage, 'graphics', 'a fragment-only file routes to the driver, not to CUDA');
+  equal(routed.entry, 'psMain', 'naming the entry point, because a pipeline needs one');
+  equal(routed.stage, 'fragment', 'and carrying its stage');
+  check(routed.producer === null,
+    'with no producer in the file, so one will have to be generated');
+
+  const vert = compile.chooseSlangEntry(
+    'struct O { float4 p : SV_Position; };\n[shader("vertex")] O vsMain(uint i : SV_VertexID) { }');
+  equal(vert.lineage, 'graphics', 'a vertex shader routes the same way');
+
+  const compute = compile.chooseSlangEntry('[shader("compute")] void only() { }');
+  equal(compute.lineage, 'cuda', 'compute still goes through CUDA');
+  equal(compute.entry, undefined,
+    'and a compute-only file still lets slangc discover entry points itself');
+}
+
+{
+  // The stages with no road at all. Their refusal is the one that has to keep working.
+  for (const stage of ['raygeneration', 'geometry', 'hull', 'domain']) {
+    const src = `[shader("${stage}")] void f() { }`;
+    let threw = null;
+    try { compile.chooseSlangEntry(src); } catch (e) { threw = e; }
+    check(threw instanceof compile.CompileError, `a ${stage}-only file is still refused`);
+    check(threw && /cache file/i.test(threw.message),
+      `and ${stage} is pointed at the cache route instead`, threw && threw.message);
+  }
   let threw = null;
-  try { compile.chooseSlangEntry(frag); } catch (e) { threw = e; }
-  check(threw instanceof compile.CompileError, 'a fragment-only file is refused');
-  check(/only compute/i.test(threw.message), 'the refusal says compute is the supported stage',
-    threw && threw.message);
-  // The gate has to be *before* slangc: `slangc -stage fragment -target cuda` crashes with
-  // no diagnostic, so reaching it turns a clear refusal into a reported segfault.
-  check(/graphics compiler|cache file/i.test(threw.message),
-    'and points at the cache route for graphics shaders');
+  try { compile.chooseSlangEntry('[shader("mesh")] void m() { }', 'm'); } catch (e) { threw = e; }
+  check(threw instanceof compile.CompileError,
+    'naming an unroutable entry point explicitly is refused too');
 }
 
 {
@@ -293,19 +318,37 @@ section('5. Entry points and the stage gate');
     [shader("fragment")] float4 ps(float2 uv : UV) : SV_Target { }
     [shader("compute")] [numthreads(32,1,1)] void cs(uint3 t : SV_DispatchThreadID) { }
   `;
+  // Compute still wins by default, so a file that used to compile still compiles the same
+  // thing. The two roads cannot be walked at once, so one has to be named.
   const chosen = compile.chooseSlangEntry(mixed);
-  equal(chosen.entry, 'cs',
-    'a mixed file names its compute entry so slangc never sees the graphics one');
-  check(/non-compute/.test(chosen.note || ''), 'and says what it left out');
+  equal(chosen.entry, 'cs', 'a mixed compute/graphics file still takes its compute entry');
+  equal(chosen.lineage, 'cuda', 'down the CUDA road');
+  check(/ps \(fragment\)/.test(chosen.note || ''), 'and says what it did not compile',
+    chosen.note);
 
-  const plain = compile.chooseSlangEntry('[shader("compute")] void only() { }');
-  equal(plain.entry, undefined,
-    'a compute-only file lets slangc discover entry points itself');
+  const asked = compile.chooseSlangEntry(mixed, 'ps');
+  equal(asked.lineage, 'graphics',
+    'naming the graphics entry point explicitly now compiles it rather than refusing');
+}
 
-  let threw = null;
-  try { compile.chooseSlangEntry(mixed, 'ps'); } catch (e) { threw = e; }
-  check(threw instanceof compile.CompileError,
-    'naming a graphics entry point explicitly is still refused');
+{
+  // The pairing that matters most: a file holding both halves of a real pipeline. Using its
+  // own vertex shader as the producer means the fragment shader is compiled against the
+  // varyings the author actually wrote, not against invented ones.
+  const pair = `
+    struct V2F { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
+    [shader("vertex")] V2F vsMain(uint i : SV_VertexID) { }
+    [shader("fragment")] float4 fsMain(V2F i) : SV_Target { }
+  `;
+  const chosen = compile.chooseSlangEntry(pair, 'fsMain');
+  equal(chosen.lineage, 'graphics', 'the fragment entry routes to the driver');
+  check(chosen.producer && chosen.producer.name === 'vsMain',
+    'and the file\'s own vertex shader is picked up as its producer',
+    JSON.stringify(chosen.producer));
+
+  const asVertex = compile.chooseSlangEntry(pair, 'vsMain');
+  check(asVertex.producer === null,
+    'a vertex entry needs no consumer - rasterizer discard yields identical code');
 }
 
 section('6. Languages');

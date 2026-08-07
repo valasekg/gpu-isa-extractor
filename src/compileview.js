@@ -126,7 +126,9 @@ async function resolveTools() {
       await onPath(process.platform === 'win32' ? 'py' : 'python3', ['--version']) ||
       await onPath('python', ['--version']),
     nvrtc: configured.nvrtc || null,
-    nvrtcHelper: path.join(__dirname, 'nvrtc_compile.py')
+    nvrtcHelper: path.join(__dirname, 'nvrtc_compile.py'),
+    vkHelper: path.join(__dirname, 'vk_compile.py'),
+    reflectHelper: path.join(__dirname, 'spirv_reflect.py')
   };
   toolCache = tools;
   return tools;
@@ -222,11 +224,23 @@ async function run(target, progress, token) {
   progress.report({ message: 'resolving tools' });
   const tools = await resolveTools();
   const language = compile.languageOf(file);
+  const backend = settings.get('compile.backend') || 'auto';
+
+  // Which tools are needed depends on the STAGE, and the stage is inside the file rather than
+  // in its extension. A fragment `.slang` never touches ptxas or NVRTC, so demanding them
+  // would refuse to compile it on a machine that could - naming two tools it does not want.
+  // The routing decision therefore has to happen before the tools are required, not after.
+  const chosen = language === 'slang'
+    ? compile.chooseSlangEntry(text, undefined)
+    : { lineage: 'cuda' };
   const needed = [];
   if (language === 'slang') needed.push('slangc');
-  if (language !== 'cubin') needed.push('ptxas');
-  const backend = settings.get('compile.backend') || 'auto';
-  if ((language === 'slang' || language === 'cuda') && backend !== 'nvcc') needed.push('python');
+  if (chosen.lineage === 'graphics') {
+    needed.push('python');                       // the Vulkan helper, and the reflector
+  } else {
+    if (language !== 'cubin') needed.push('ptxas');
+    if ((language === 'slang' || language === 'cuda') && backend !== 'nvcc') needed.push('python');
+  }
   requireTools(tools, needed);
 
   const archInfo = await pipeline.resolveArch();
@@ -254,7 +268,8 @@ async function run(target, progress, token) {
       await fs.promises.writeFile(source, text, 'utf8');
     }
     await build({ file, source, tools, flags, archInfo, outDir, backend, directive,
-      configured, progress, token });
+      configured, progress, token, lineage: chosen.lineage,
+      controls: compile.pipelineControls(flags.vk, path.dirname(file)) });
   } finally {
     inFlight.delete(tag);
   }
@@ -262,13 +277,15 @@ async function run(target, progress, token) {
 
 /** The compile itself, once the scratch directory is claimed. */
 async function build({ file, source, tools, flags, archInfo, outDir, backend, directive,
-  configured, progress, token }) {
-  progress.report({ message: 'compiling' });
+  configured, progress, token, lineage, controls }) {
+  progress.report({ message: lineage === 'graphics' ? 'asking the driver' : 'compiling' });
   const started = Date.now();
   const built = await compile.compile(tools, source, {
     arch: archInfo.arch,
     outDir,
     flags,
+    controls,
+    token,
     // Where the file really lives, which is what an `import` or an `#include` beside it has
     // to resolve against. `source` is a copy in the scratch directory when the buffer is
     // dirty, and every sibling of the file is invisible from there.

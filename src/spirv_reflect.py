@@ -22,6 +22,7 @@ Standard library only, to keep the same no-dependency contract as `nvrtc_compile
 """
 
 import json
+import os
 import struct
 import sys
 
@@ -496,7 +497,35 @@ def main(argv):
         sys.stderr.write(__doc__)
         return 2
     as_json = "--json" in argv
-    paths = [a for a in argv[1:] if not a.startswith("--")]
+
+    # `--producer <out.slang>` writes a vertex shader matching the module's inputs. The
+    # output path is an argument to the flag, so it must not be read as another module.
+    producer_out = None
+    if "--producer" in argv:
+        at = argv.index("--producer")
+        if at + 1 >= len(argv):
+            sys.stderr.write("--producer needs a path to write the generated shader to\n")
+            return 2
+        producer_out = argv[at + 1]
+    paths = [a for i, a in enumerate(argv[1:], 1)
+             if not a.startswith("--") and a != producer_out]
+
+    if producer_out:
+        if len(paths) != 1:
+            sys.stderr.write("--producer takes exactly one module to match\n")
+            return 2
+        try:
+            with open(paths[0], "rb") as handle:
+                inputs = Module(handle.read()).interface(SC_INPUT)
+            source = producer(inputs, extra=int(os.environ.get("NVISA_PRODUCER_EXTRA", 0) or 0),
+                              mistype="--mistype" in argv)
+        except ReflectError as e:
+            sys.stderr.write("producer synthesis refused: %s\n" % e)
+            return 1
+        with open(producer_out, "w", encoding="utf-8") as handle:
+            handle.write(source)
+        sys.stderr.write("generated a producer for %d varying(s)\n" % len(inputs))
+        return 0
 
     try:
         reflections = [reflect(p) for p in paths]

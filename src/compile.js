@@ -404,6 +404,23 @@ const SHADER_ATTR_RE = /\[\s*shader\s*\(\s*"(\w+)"\s*\)\s*\]/g;
 const COMPUTE_STAGE = 'compute';
 
 /**
+ * Which road out of a `.slang` file each stage takes.
+ *
+ * Compute goes through CUDA, because that is the only stage with a CUDA lowering and the
+ * route ends in a cubin whose line table gives source correlation. Vertex and fragment go
+ * through SPIR-V and the display driver, because they have no CUDA lowering at all -
+ * `slangc -stage fragment -target cuda` crashes, exit 0xC0000005, no diagnostic - and the
+ * driver's graphics compiler is the only thing that turns them into SASS.
+ *
+ * Everything else is still refused, and `stageRefusal` still says why.
+ */
+const LINEAGE = {
+  compute: 'cuda',
+  vertex: 'graphics',
+  fragment: 'graphics'
+};
+
+/**
  * The entry points a Slang file declares, read from the source rather than from slangc.
  *
  * This exists because the check it feeds has to happen *before* slangc runs.
@@ -455,47 +472,89 @@ function functionAfter(text, at) {
 }
 
 /**
- * Decide what to hand slangc, or refuse with a reason.
+ * Decide what to hand slangc and which road it takes, or refuse with a reason.
  *
- * @returns {{entry: string|undefined, note: string|null}}
+ * This used to be a gate: compute passed and everything else threw. It is now a router,
+ * because vertex and fragment stages have a road of their own - through SPIR-V and the
+ * display driver rather than through CUDA. What has not changed is that the decision happens
+ * *before* slangc runs, for the original reason: asked to lower a graphics stage to CUDA,
+ * slangc crashes rather than declining, and a gate placed afterwards would report a segfault
+ * instead of a route.
+ *
+ * @returns {{entry: string|undefined, stage: string|null, lineage: string,
+ *            producer: {entry: string}|null, note: string|null}}
+ *   `producer` names a vertex entry point *in this same file* that can feed a fragment one.
+ *   That is strictly better than a generated producer: it is the pairing the author actually
+ *   wrote, so the varyings the fragment shader reads are the ones a real draw would supply.
  */
 function chooseSlangEntry(text, wanted) {
   const found = slangEntryPoints(text);
+  const supported = found.filter(e => LINEAGE[e.stage]);
   const compute = found.filter(e => e.stage === COMPUTE_STAGE);
+
+  const refuse = e => {
+    throw new CompileError(`${e.name} is a ${e.stage} entry point. ${stageRefusal()}`);
+  };
+  const withProducer = chosen => ({
+    entry: chosen.name,
+    stage: chosen.stage,
+    lineage: LINEAGE[chosen.stage],
+    producer: chosen.stage === 'fragment'
+      ? (found.find(e => e.stage === 'vertex') || null)
+      : null,
+    note: null
+  });
 
   if (wanted) {
     const match = found.find(e => e.name === wanted);
-    if (match && match.stage !== COMPUTE_STAGE) {
-      throw new CompileError(
-        `${wanted} is a ${match.stage} entry point. ${stageRefusal()}`);
-    }
-    return { entry: wanted, note: null };
+    if (match && !LINEAGE[match.stage]) refuse(match);
+    // An entry the scan did not see is still handed to slangc, which knows better than a
+    // regex does; with no stage to route on it takes the compute road, as it always did.
+    if (!match) return { entry: wanted, stage: null, lineage: 'cuda', producer: null, note: null };
+    return withProducer(match);
   }
 
-  if (found.length && !compute.length) {
+  if (found.length && !supported.length) {
     const stages = [...new Set(found.map(e => e.stage))].sort().join(', ');
     throw new CompileError(
       `this file declares only ${stages} entry point(s). ${stageRefusal()}`);
   }
 
-  // A file mixing compute and graphics entry points would have slangc discover all of them
-  // and crash on the graphics ones, so name the compute entry explicitly to keep it away.
-  if (compute.length && compute.length < found.length) {
-    return {
-      entry: compute[0].name,
-      note: `compiling only ${compute[0].name}; ${found.length - compute.length} ` +
-        'non-compute entry point(s) in this file cannot be compiled this way'
-    };
+  // Compute keeps its old behaviour exactly: a file that declares only compute entry points
+  // lets slangc discover them itself, which is what makes a single-kernel file need no
+  // `-entry` at all.
+  if (compute.length === found.length) {
+    return { entry: undefined, stage: COMPUTE_STAGE, lineage: 'cuda', producer: null, note: null };
   }
-  return { entry: undefined, note: null };
+
+  // A mixed file has to name one, because the two roads cannot be walked at once - and
+  // because slangc discovering a graphics entry on the CUDA target is the crash above.
+  const chosen = compute[0] || supported.find(e => e.stage === 'fragment') || supported[0];
+  const skipped = found.filter(e => e !== chosen);
+  const result = withProducer(chosen);
+  // The producer is not "skipped" - it is being compiled *into* this pipeline.
+  const unused = skipped.filter(e => !result.producer || e !== result.producer);
+  if (unused.length) {
+    result.note = `compiling ${chosen.name} (${chosen.stage}); this file also declares ` +
+      unused.map(e => `${e.name} (${e.stage})`).join(', ') +
+      ' - name one with the entry-point argument to compile it instead';
+  }
+  if (result.producer) {
+    result.note = (result.note ? `${result.note}. ` : '') +
+      `${result.producer.name} is used as its producer, so the varyings are the ones this ` +
+      'file really pairs';
+  }
+  return result;
 }
 
 function stageRefusal() {
-  return 'Only compute entry points can be compiled to SASS this way. A graphics stage has ' +
-    'no CUDA lowering, and the SASS a graphics shader really runs comes from the driver\'s ' +
-    'graphics compiler - a different backend - so open its cache file instead. Raytracing ' +
-    'stages reach ptxas and stop there: OptiX intrinsics are resolved by the driver\'s ' +
-    'pipeline linker, never by ptxas.';
+  return 'Compute, vertex and fragment entry points can be compiled to SASS: compute through ' +
+    'CUDA, and the other two by asking the display driver to compile a pipeline. The stages ' +
+    'that remain have no route at all. Geometry, hull, domain, mesh and amplification have no ' +
+    'CUDA lowering and no single-stage pipeline to stand them up in. Raytracing stages reach ' +
+    'ptxas and stop there: OptiX intrinsics are resolved by the driver\'s pipeline linker, ' +
+    'never by ptxas. For those, open the driver\'s cache file instead - the SASS in it is what ' +
+    'the GPU really ran.';
 }
 
 // --------------------------------------------------------------------------- running
@@ -542,6 +601,61 @@ async function slangToCuda(tools, source, outDir, { flags = [], entry }) {
   const result = await run(tools.slangc, args);
   if (result.failed || !fs.existsSync(out)) fail('slangc', result);
   return { file: out, argv: result.argv, log: result.stderr || result.stdout };
+}
+
+/**
+ * Slang to SPIR-V, for a stage the driver rather than CUDA will compile.
+ *
+ * `-entry` and `-stage` are always given here, unlike the CUDA road. A graphics file
+ * routinely declares a vertex *and* a fragment entry point, and the pipeline needs them as
+ * two separate modules with the right stage on each - letting slangc discover both into one
+ * module would produce something no pipeline can use.
+ */
+async function slangToSpirv(tools, source, outDir, { flags = [], entry, stage, name }) {
+  const out = path.join(outDir, `${name || entry || 'shader'}.spv`);
+  const args = [
+    source,
+    '-target', 'spirv',
+    ...(entry ? ['-entry', entry] : []),
+    ...(stage ? ['-stage', stage] : []),
+    ...flags,
+    '-o', out
+  ];
+  const result = await run(tools.slangc, args);
+  if (result.failed || !fs.existsSync(out)) fail('slangc', result);
+  return { file: out, argv: result.argv, log: result.stderr || result.stdout };
+}
+
+/**
+ * SPIR-V to compiled microcode, by asking the display driver to build one pipeline.
+ *
+ * The output is not a file this returns - it is whatever the driver writes into `cacheDir`,
+ * which the caller then carves with the same reader the cache path uses. That indirection is
+ * the whole feature: there is no API that hands back a graphics shader's machine code, only a
+ * driver that will write it to disk on the way past.
+ *
+ * The child's Vulkan environment is scrubbed rather than inherited. A developer's machine
+ * routinely has implicit layers hooking pipeline creation, and any of them can perturb or
+ * hang a compile whose result would then be blamed on the shader.
+ */
+async function spirvToCache(tools, outDir, { vs, fs: fragment, layout, state, cacheDir, token }) {
+  const request = path.join(outDir, 'vk-request.json');
+  await fs.promises.mkdir(cacheDir, { recursive: true });
+  await fs.promises.writeFile(request, JSON.stringify({
+    vs, fs: fragment || null, layout, state, checkInterface: true
+  }, null, 1), 'utf8');
+
+  const result = await run(tools.python, [tools.vkHelper, request], {
+    token,
+    env: {
+      __GL_SHADER_DISK_CACHE_PATH: cacheDir,
+      __GL_SHADER_DISK_CACHE: '1',
+      __GL_SHADER_DISK_CACHE_SKIP_CLEANUP: '1'
+    },
+    scrub: spawn.VULKAN_ENV
+  });
+  if (result.failed) fail('driver', result);
+  return { argv: result.argv, log: result.stdout + result.stderr };
 }
 
 /**
@@ -633,6 +747,180 @@ function languageOf(file) {
 }
 
 /**
+ * The graphics road: Slang to SPIR-V, then one pipeline, then carve what the driver wrote.
+ *
+ * It returns the same shape the CUDA road returns, so everything downstream - the disassembly,
+ * the control column, the statistics, the banner - runs unchanged. What differs is where the
+ * bytes come from: a real GLCache blob rather than a cubin, which is why the carve here is
+ * `nvcache` and not `cubin`.
+ *
+ * Three things the source cannot state, in the order they are decided:
+ *
+ *   1. **The producer**, for a fragment shader, which cannot be compiled alone. The file's own
+ *      vertex entry point is used when it has one, because that is the pairing the author
+ *      wrote; the directive can name another; otherwise one is generated to match the
+ *      fragment shader's inputs exactly.
+ *   2. **The descriptor layout**, reflected out of the SPIR-V unless the directive states it.
+ *      Measured: a wrong layout changes the generated code without changing anything visible.
+ *   3. **The render state**, which 24 measured cells say does not move the code at all - so
+ *      the default is left alone unless the file asks otherwise.
+ */
+async function graphicsCompile(tools, file, options) {
+  const { outDir, flags, chosen, steps, notes, sources, token } = options;
+  const controls = options.controls || { state: {}, layout: null, producer: null, errors: [] };
+  for (const error of controls.errors || []) notes.push(error);
+
+  const stage = chosen.stage;
+  const consumer = await slangToSpirv(tools, file, outDir, {
+    flags: flags.slang, entry: chosen.entry, stage, name: chosen.entry || stage
+  });
+  steps.push({ tool: 'slangc', command: quote(consumer.argv), log: consumer.log });
+
+  // A vertex shader needs no consumer: rasterizer discard with no fragment stage was measured
+  // to produce byte-identical code to a full consumer, because the driver only narrows a
+  // stage's outputs when the *next* stage's inputs are narrower. A fragment shader is the
+  // opposite - it cannot exist in a pipeline without a producer.
+  let vs = consumer.file;
+  let fragment = null;
+  if (stage === 'fragment') {
+    fragment = consumer.file;
+    const named = controls.producer;
+    if (named) {
+      const step = await slangToSpirv(tools, named.file, outDir, {
+        flags: flags.slang, entry: named.entry, stage: 'vertex', name: 'producer'
+      });
+      steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
+      sources.push(named.file);
+      vs = step.file;
+    } else if (chosen.producer) {
+      const step = await slangToSpirv(tools, file, outDir, {
+        flags: flags.slang, entry: chosen.producer.name, stage: 'vertex', name: 'producer'
+      });
+      steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
+      vs = step.file;
+    } else {
+      const generated = await generateProducer(tools, fragment, outDir);
+      steps.push(generated.step);
+      notes.push('no vertex shader was named, so one was generated to match this shader\'s ' +
+        'inputs exactly; the varyings it supplies are runtime values, not the ones your ' +
+        'renderer would');
+      sources.push(generated.source);
+      vs = generated.file;
+    }
+  }
+
+  const layout = controls.layout || await reflectLayout(tools, [vs, fragment].filter(Boolean));
+  if (controls.layout) {
+    notes.push('the descriptor layout was taken from this file rather than reflected');
+  }
+
+  const cacheDir = path.join(outDir, 'cache');
+  const step = await spirvToCache(tools, outDir, {
+    vs, fs: fragment, layout, state: controls.state || {}, cacheDir, token
+  });
+  steps.push({ tool: 'driver', command: quote(step.argv), log: step.log });
+
+  const entries = await carveCache(cacheDir, stage);
+  if (!entries.length) {
+    throw new CompileError(
+      'the driver created the pipeline but wrote nothing this can read back. The shader disk ' +
+      'cache may be disabled - set NVIDIA Control Panel > Shader Cache Size to Unlimited - or ' +
+      'the run may have been interrupted before the driver flushed it.');
+  }
+
+  return {
+    entries,
+    cubinPath: null,
+    cacheDir,
+    arch: options.arch ? `SM${String(options.arch).replace(/^sm_?/i, '')}` : null,
+    lineage: 'graphics',
+    stage,
+    steps,
+    ptxasLog: '',
+    // ptxas never runs here, so there is no second opinion on the register count to
+    // cross-check the code against. The cache object carries the driver's own.
+    ptxasInfo: () => ({
+      registers: null, localBytes: null, sharedBytes: null, spillStores: null, spillLoads: null
+    }),
+    sources,
+    notes
+  };
+}
+
+/** Generate a vertex shader that matches a fragment shader's inputs, and compile it. */
+async function generateProducer(tools, fragmentSpv, outDir) {
+  const source = path.join(outDir, 'producer.slang');
+  const made = await run(tools.python, [tools.reflectHelper, fragmentSpv, '--producer', source]);
+  if (made.failed || !fs.existsSync(source)) fail('producer synthesis', made);
+
+  const step = await slangToSpirv(tools, source, outDir, {
+    entry: 'vsMain', stage: 'vertex', name: 'producer'
+  });
+  return {
+    file: step.file,
+    source,
+    step: { tool: 'slangc', command: quote(step.argv), log: step.log }
+  };
+}
+
+/** The descriptor layout every stage of this pipeline declares between them. */
+async function reflectLayout(tools, modules) {
+  const result = await run(tools.python, [tools.reflectHelper, ...modules, '--json']);
+  if (result.failed) fail('reflection', result);
+  try {
+    return { bindings: JSON.parse(result.stdout).layout.map(
+      d => [d.set, d.binding, d.type, d.count]), pushBytes: 0 };
+  } catch (e) {
+    throw new CompileError(`the descriptor layout could not be read: ${e.message}`);
+  }
+}
+
+/**
+ * Read back what the driver wrote, keeping the object for the stage that was asked for.
+ *
+ * A graphics pipeline deposits several objects - at least the producer and the consumer - so
+ * they are told apart by the stage code the container records, not by position.
+ */
+async function carveCache(cacheDir, stage) {
+  const nvcache = require('./nvcache');
+  const bins = [];
+  const walk = async dir => {
+    for (const e of await fs.promises.readdir(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) await walk(full);
+      else if (e.name.endsWith('.bin')) bins.push(full);
+    }
+  };
+  try { await walk(cacheDir); } catch (e) { return []; }
+
+  const wanted = stage === 'fragment' ? 'pixel' : stage;
+  const out = [];
+  for (const bin of bins) {
+    let toc = null;
+    try { toc = await fs.promises.readFile(`${bin.slice(0, -4)}.toc`); } catch (e) { toc = null; }
+    const { objects } = await nvcache.enumerateObjects(await fs.promises.readFile(bin), {
+      source: bin, backend: 'vk', toc, keepMicrocode: true, minCode: 0
+    });
+    for (const o of objects) {
+      if (o.metadata && o.metadata.stage !== wanted) continue;
+      out.push({
+        name: o.name || `${wanted}Main`,
+        microcode: o.microcode,
+        codeBytes: o.codeBytes,
+        instructions: o.microcode.length / 16,
+        registers: o.metadata ? o.metadata.registers : null,
+        metadata: o.metadata,
+        // Stamped so the banner cannot mistake this for a shader carved out of the user's own
+        // cache: it came from a driver round-trip into a scratch directory, and saying
+        // otherwise would name the wrong file as its source.
+        origin: 'driver'
+      });
+    }
+  }
+  return out;
+}
+
+/**
  * Compile a source file and return its entry points as disassemblable objects.
  *
  * @param {object} tools    resolved executables: slangc, nvcc, ptxas, python, nvrtcHelper
@@ -672,6 +960,15 @@ async function compile(tools, file, options = {}) {
     const chosen = chooseSlangEntry(
       await fs.promises.readFile(file, 'utf8'), options.entry);
     if (chosen.note) notes.push(chosen.note);
+
+    // The fork. A vertex or fragment entry point leaves the CUDA road entirely - there is no
+    // `.cu`, no PTX and no cubin on the other route, so this returns rather than falling
+    // through to the stages below.
+    if (chosen.lineage === 'graphics') {
+      return graphicsCompile(tools, file, {
+        ...options, outDir, home, flags, chosen, steps, notes, sources
+      });
+    }
 
     const step = await slangToCuda(tools, file, outDir, {
       flags: flags.slang,
@@ -740,6 +1037,8 @@ module.exports = {
   toolFlags,
   slangEntryPoints,
   chooseSlangEntry,
+  stageRefusal,
+  LINEAGE,
   languageOf,
   parsePtxasInfo,
   quote,
