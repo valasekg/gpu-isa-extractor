@@ -228,17 +228,22 @@ const SECTION_LOCAL_MEM = 0x15;
 const SECTION_SHARED_MEM = 0x3c;
 const SECTION_PROGRAM_HEADER = 0x2d;
 
-// Code 4 is geometry, established by construction rather than by inference: a pipeline built
-// from exactly one vertex and one geometry module deposits exactly two objects, one of them
-// the already-known code 1, and the other named `gsMain`. Code 3 remains unaccounted for and
-// is deliberately not guessed at - an unknown stage reads as `null` and the banner says
-// "unrecognised stage code 3", which is true, where a wrong name would not be.
+// Codes 4, 9 and 10 were established by construction rather than inference. A pipeline built
+// from exactly one vertex and one geometry module deposits two objects, one of them the
+// already-known code 1 - so the other is geometry. A mesh-only pipeline deposits exactly one,
+// code 9; adding an amplification shader adds code 10, so that is the task stage.
+//
+// Code 3 remains unaccounted for and is deliberately not guessed at. An unknown stage reads as
+// `null` and the banner says "unrecognised stage code 3", which is true, where a name arrived
+// at by counting gaps would not be.
 const STAGE_NAMES = {
-  1: 'vertex', 2: 'pixel', 4: 'geometry', 5: 'compute', 6: 'hull', 7: 'domain'
+  1: 'vertex', 2: 'pixel', 4: 'geometry', 5: 'compute', 6: 'hull', 7: 'domain',
+  9: 'mesh', 10: 'amplification'
 };
 
 const STAGE_LABELS = {
-  vertex: 'VS', pixel: 'PS', geometry: 'GS', compute: 'CS', hull: 'HS', domain: 'DS'
+  vertex: 'VS', pixel: 'PS', geometry: 'GS', compute: 'CS', hull: 'HS', domain: 'DS',
+  mesh: 'MS', amplification: 'AS'
 };
 
 function readMetadata(payload, anchor, sections) {

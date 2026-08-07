@@ -320,7 +320,7 @@ section('5. Entry points and the stage gate');
   // Geometry, hull and domain are deliberately NOT in this list any more - they have
   // pipelines now, and a test that still demanded a refusal would be asserting the feature
   // does not exist.
-  for (const stage of ['raygeneration', 'mesh', 'amplification']) {
+  for (const stage of ['raygeneration', 'closesthit', 'miss']) {
     const src = `[shader("${stage}")] void f() { }`;
     let threw = null;
     try { compile.chooseSlangEntry(src); } catch (e) { threw = e; }
@@ -329,7 +329,7 @@ section('5. Entry points and the stage gate');
       `and ${stage} is pointed at the cache route instead`, threw && threw.message);
   }
   let threw = null;
-  try { compile.chooseSlangEntry('[shader("mesh")] void m() { }', 'm'); } catch (e) { threw = e; }
+  try { compile.chooseSlangEntry('[shader("intersection")] void i() { }', 'i'); } catch (e) { threw = e; }
   check(threw instanceof compile.CompileError,
     'naming an unroutable entry point explicitly is refused too');
 }

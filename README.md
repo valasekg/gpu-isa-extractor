@@ -177,13 +177,14 @@ A shader takes one of two roads, chosen by its stage:
 ```
 compute                       slangc -target cuda  → NVRTC → ptxas → cubin
 vertex, fragment, geometry,   slangc -target spirv → the display driver → its shader cache
-hull, domain
+hull, domain, mesh,
+amplification
 ```
 
 Both end in the same place — microcode, in the same shape as bytes carved out of a cache — so
 the listing is produced by the extension's ordinary `nvdisasm --binary` path either way.
 
-Five worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
+Six worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
 
 | | |
 |---|---|
@@ -192,6 +193,7 @@ Five worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`
 | [`surface-shading.slang`](samples/surface-shading.slang) | the **graphics** road: `IPA` reads out of attribute space, `AST` stores feeding them, `TEX`, `KILL`, and a banner naming the pipeline it was compiled into |
 | [`point-sprites.slang`](samples/point-sprites.slang) | a **geometry** shader expanding one point into a quad: `OUT.EMIT`/`OUT.FINAL`, `ISBERD`, and a topology read out of the shader rather than chosen |
 | [`terrain-tessellation.slang`](samples/terrain-tessellation.slang) | a **hull** and **domain** pair, which cannot be compiled apart — and the measured asymmetry between generating one half and the other |
+| [`meshlet-cull.slang`](samples/meshlet-cull.slang) | **mesh** and **amplification**: the pipeline with no vertex stage at all, and a payload that changes the shader reading it |
 
 Each opens with a comment saying what to look for in its listing, and which flag to change to
 make the code move.
@@ -209,7 +211,7 @@ NVRTC or `nvcc` for CUDA (`-use_fast_math`, `-ffp-contract`). Later stages are r
 `-Xptxas <flag>` and, from a Slang file, `-Xnvrtc <flag>`, following nvcc's own convention.
 `nvIsaExtractor.compile.flags` sets defaults; the file's own line wins.
 
-### Vertex, fragment, geometry and tessellation shaders
+### Graphics shaders
 
 A graphics shader has no CUDA lowering, so it is compiled by asking the **display driver** to
 build one pipeline and then reading what it wrote into an isolated copy of its own shader
@@ -271,9 +273,9 @@ module are attributed to *that* file, which is listed in the banner's source map
 
 ### What it will not do
 
-- **Mesh, amplification and raytracing are unimplemented.** Mesh and amplification need a
-  pipeline shape this does not build yet; raytracing needs a different creation call
-  (`vkCreateRayTracingPipelinesKHR`). Neither is impossible. Read those from a cache file for now.
+- **Raytracing is unimplemented.** It needs a different creation call
+  (`vkCreateRayTracingPipelinesKHR`) rather than a different stage. Not impossible — and a dead
+  end only on the CUDA road. Read those from a cache file for now.
 - **A generated tessellation counterpart is not free in both directions.** A domain shader
   compiles identically whichever hull feeds it; a hull shader does not, because a generated
   domain reads every output it declares and brings no descriptors of its own. The banner says
@@ -301,7 +303,7 @@ NVRTC is the default and needs no host C++ compiler; because it is a DLL with no
 driven through a small Python helper. Set `nvIsaExtractor.compile.backend` to `nvcc` instead if
 you have MSVC. No GPU is needed at all — `ptxas` will target `SM90` from a laptop.
 
-**Vertex, fragment, geometry and tessellation** need neither `ptxas` nor NVRTC, but do need an NVIDIA GPU with
+**Every graphics stage** needs neither `ptxas` nor NVRTC, but does need an NVIDIA GPU with
 a working Vulkan driver, because the driver is the compiler. The Vulkan loader ships with the
 display driver; the SDK is not required.
 

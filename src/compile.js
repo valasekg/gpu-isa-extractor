@@ -13,6 +13,7 @@
  *     fragment                                                       --nvcache.js--> microcode
  *     geometry
  *     hull, domain
+ *     mesh, amplification
  *
  * Both end in the same shape - `cubin.entryPoints` and `nvcache.enumerateObjects` yield the
  * same thing - so a compiled shader travels the *existing* path, `nvdisasm --binary`, the
@@ -45,8 +46,7 @@
  * part of a frame. What that road cannot give is correlation, because the driver keeps no line
  * table; see `graphicsCompile`.
  *
- * Mesh and amplification are unimplemented - they need a pipeline shape this does not build.
- * Raytracing needs a different creation call entirely
+ * Raytracing is what remains, and it needs a different creation call entirely
  * (`vkCreateRayTracingPipelinesKHR`) - it is a dead end only on the CUDA road, where OptiX
  * intrinsics reach `ptxas` and stop at `Call to '_optix_trace_typed_32' requires call
  * prototype`, because they are resolved by the driver's pipeline linker and never by ptxas.
@@ -416,53 +416,54 @@ const SHADER_ATTR_RE = /\[\s*shader\s*\(\s*"(\w+)"\s*\)\s*\]/g;
 const COMPUTE_STAGE = 'compute';
 
 /**
- * Which road out of a `.slang` file each stage takes.
+ * What each shader stage needs before the driver will compile it.
  *
- * Compute goes through CUDA, because that is the only stage with a CUDA lowering and the
- * route ends in a cubin whose line table gives source correlation. Vertex and fragment go
- * through SPIR-V and the display driver, because they have no CUDA lowering at all -
- * `slangc -stage fragment -target cuda` crashes, exit 0xC0000005, no diagnostic - and the
- * driver's graphics compiler is the only thing that turns them into SASS.
+ * This was three tables that had to agree with one another - which road a stage takes, which
+ * stages need something upstream, which stages come in mandatory pairs - and adding mesh
+ * shaders would have made it four. One row per stage says all of it, and a stage this does
+ * not know is refused by `stageRefusal` rather than falling through a gap between tables.
  *
- * Everything else is still refused, and `stageRefusal` still says why.
+ *   lineage   `cuda` for compute, the only stage with a CUDA lowering and so the only one
+ *             whose road ends in a cubin with a line table to correlate against. Everything
+ *             else goes to the display driver, which is a *different backend* - and the right
+ *             one, because it is the compiler that runs when the shader is part of a frame.
+ *   slot      the field `vk_compile.py` takes it in.
+ *   producer  a stage that must run BEFORE it. Every classic graphics stage needs a vertex
+ *             shader; a vertex shader needs nothing, because rasterizer discard with nothing
+ *             downstream was measured to produce byte-identical code to a full consumer - the
+ *             driver narrows a stage's outputs only when the next stage's inputs are narrower.
+ *             Mesh and amplification need none: a mesh pipeline has no vertex stage at all.
+ *   pair      a stage that belongs alongside it - required unless `pairOptional`, which
+ *             means "use it if the file has one". Vulkan rejects a hull shader without
+ *             a domain shader and the reverse, and an amplification shader with no mesh shader
+ *             to dispatch. Where the file holds only one, the other is generated.
+ *   patch     it works on patches, so the pipeline needs a patch size and a patch topology.
+ *             Kept distinct from `pair` on purpose: amplification is paired but not patched.
+ *
+ * The two synthesis directions are not equally safe, and that is measured rather than
+ * reasoned: a domain shader compiled against a generated hull is byte-identical to one
+ * compiled against the real hull, while a hull shader against a generated domain is not -
+ * the generated domain reads every output the hull declares where a real one may read fewer,
+ * so the driver eliminates less. `graphicsCompile` reports the second as an upper bound.
  */
-const LINEAGE = {
-  compute: 'cuda',
-  vertex: 'graphics',
-  hull: 'graphics',
-  domain: 'graphics',
-  geometry: 'graphics',
-  fragment: 'graphics'
+const STAGES = {
+  compute: { lineage: 'cuda' },
+  vertex: { lineage: 'graphics', slot: 'vs' },
+  hull: { lineage: 'graphics', slot: 'hs', producer: 'vertex', pair: 'domain', patch: true },
+  domain: { lineage: 'graphics', slot: 'ds', producer: 'vertex', pair: 'hull', patch: true },
+  geometry: { lineage: 'graphics', slot: 'gs', producer: 'vertex' },
+  fragment: { lineage: 'graphics', slot: 'fs', producer: 'vertex' },
+  // A mesh shader replaces the whole vertex stage, so it stands alone. An amplification shader
+  // exists only to dispatch one, so it never does.
+  // A mesh shader stands alone, but it reads a payload when a task shader supplies one -
+  // and that changes its code, measured: 79fc9202f25d alone against 815104fa01b4 paired.
+  // So the pair is used when the file has one and not required when it does not.
+  mesh: { lineage: 'graphics', slot: 'ms', pair: 'amplification', pairOptional: true },
+  amplification: { lineage: 'graphics', slot: 'ts', pair: 'mesh' }
 };
 
-/**
- * Stages that cannot exist without the other half of their pair.
- *
- * Vulkan rejects a pipeline carrying a tessellation control shader without an evaluation
- * shader, or the reverse - so compiling either means supplying its counterpart, generated
- * from what the real one declares when the file does not contain both.
- *
- * The two directions are not equally safe, and this is measured rather than assumed. A domain
- * shader compiled against a *generated* hull is byte-identical to one compiled against the
- * real hull: it does not depend on which hull feeds it. A hull shader compiled against a
- * generated domain is NOT identical - 80 instructions became 88 - because a generated domain
- * reads every output the hull declares while a real one may read fewer, and the driver
- * eliminates what nothing downstream consumes. That makes the generated case an upper bound
- * rather than a wrong answer, and it is reported as one.
- */
-const TESS_PAIR = { hull: 'domain', domain: 'hull' };
-
-/**
- * Stages that cannot be the only stage in their pipeline.
- *
- * A fragment shader has no fragment-only pipeline, and a geometry shader sits between two
- * others - both need something upstream before the driver will compile them. A vertex shader
- * needs nothing: rasterizer discard with no downstream stage was measured to produce
- * byte-identical code to a full consumer, because the driver narrows a stage's outputs only
- * when the *next* stage's inputs are narrower, and with no next stage there is nothing to
- * narrow against.
- */
-const NEEDS_PRODUCER = new Set(['fragment', 'geometry', 'hull', 'domain']);
+/** The road a stage takes, or undefined for one with no road at all. */
+const lineageOf = stage => (STAGES[stage] || {}).lineage;
 
 /**
  * The entry points a Slang file declares, read from the source rather than from slangc.
@@ -533,31 +534,34 @@ function functionAfter(text, at) {
  */
 function chooseSlangEntry(text, wanted) {
   const found = slangEntryPoints(text);
-  const supported = found.filter(e => LINEAGE[e.stage]);
+  const supported = found.filter(e => lineageOf(e.stage));
   const compute = found.filter(e => e.stage === COMPUTE_STAGE);
 
   const refuse = e => {
     throw new CompileError(`${e.name} is a ${e.stage} entry point. ${stageRefusal()}`);
   };
-  const withProducer = chosen => ({
-    entry: chosen.name,
-    stage: chosen.stage,
-    lineage: LINEAGE[chosen.stage],
-    producer: NEEDS_PRODUCER.has(chosen.stage)
-      ? (found.find(e => e.stage === 'vertex') || null)
-      : null,
-    // The other half of a tessellation pair, when this file holds it. Hull and domain shaders
-    // are written together because neither works alone, so this is the ordinary case rather
-    // than the lucky one.
-    counterpart: TESS_PAIR[chosen.stage]
-      ? (found.find(e => e.stage === TESS_PAIR[chosen.stage]) || null)
-      : null,
-    note: null
-  });
+  const withProducer = chosen => {
+    const spec = STAGES[chosen.stage] || {};
+    return {
+      entry: chosen.name,
+      stage: chosen.stage,
+      lineage: spec.lineage,
+      producer: spec.producer
+        ? (found.find(e => e.stage === spec.producer) || null)
+        : null,
+      // The stage that must be present alongside it, when this file holds one. Paired stages
+      // are written together because neither works alone, so this is the ordinary case rather
+      // than the lucky one.
+      counterpart: spec.pair
+        ? (found.find(e => e.stage === spec.pair) || null)
+        : null,
+      note: null
+    };
+  };
 
   if (wanted) {
     const match = found.find(e => e.name === wanted);
-    if (match && !LINEAGE[match.stage]) refuse(match);
+    if (match && !lineageOf(match.stage)) refuse(match);
     // An entry the scan did not see is still handed to slangc, which knows better than a
     // regex does; with no stage to route on it takes the compute road, as it always did.
     if (!match) return { entry: wanted, stage: null, lineage: 'cuda', producer: null, note: null };
@@ -582,10 +586,12 @@ function chooseSlangEntry(text, wanted) {
   // Compute first, so a file that used to compile still compiles the same thing. Then the
   // consuming stages, because they are the more interesting listing and they pick the vertex
   // shader up as their producer rather than leaving it uncompiled.
+  // Compute first, so a file that used to compile still compiles the same thing. Then the
+  // stages that consume another, because they are the more interesting listing and they pick
+  // their counterpart up rather than leaving it uncompiled.
+  const PREFERENCE = ['fragment', 'geometry', 'domain', 'mesh'];
   const chosen = compute[0] ||
-    supported.find(e => e.stage === 'fragment') ||
-    supported.find(e => e.stage === 'geometry') ||
-    supported.find(e => e.stage === 'domain') ||
+    PREFERENCE.reduce((found_, s) => found_ || supported.find(e => e.stage === s), null) ||
     supported[0];
   const skipped = found.filter(e => e !== chosen);
   const result = withProducer(chosen);
@@ -714,17 +720,16 @@ async function slangToSpirv(tools, source, outDir, { flags = [], entry, stage, n
  * routinely has implicit layers hooking pipeline creation, and any of them can perturb or
  * hang a compile whose result would then be blamed on the shader.
  */
-async function spirvToCache(tools, outDir,
-  { vs, fs: fragment, gs, hs, ds, layout, state, cacheDir, token }) {
+async function spirvToCache(tools, outDir, { modules, layout, state, cacheDir, token }) {
   const request = path.join(outDir, 'vk-request.json');
   await fs.promises.mkdir(cacheDir, { recursive: true });
   await fs.promises.writeFile(request, JSON.stringify({
-    vs, fs: fragment || null, gs: gs || null, hs: hs || null, ds: ds || null, layout, state,
-    // The interface check compares a vertex shader against a fragment one. With a geometry
-    // stage between them the two ends do not meet directly, so the check would compare the
-    // wrong pair - it is left to the driver there rather than made to answer a question it
-    // was not built for.
-    checkInterface: !gs
+    ...modules, layout, state,
+    // The interface check compares a vertex shader against a fragment one directly. With
+    // anything between them the two ends do not meet, so the check would be answering a
+    // question it was not built for - it is left to the driver in that case.
+    checkInterface: !!modules.vs && !!modules.fs &&
+      !modules.gs && !modules.hs && !modules.ds
   }, null, 1), 'utf8');
 
   const result = await run(tools.python, [tools.vkHelper, request], {
@@ -858,20 +863,17 @@ async function graphicsCompile(tools, file, options) {
   });
   steps.push({ tool: 'slangc', command: quote(consumer.argv), log: consumer.log });
 
-  // A vertex shader needs no consumer, for the reason NEEDS_PRODUCER records. The other two
-  // cannot stand alone: a fragment shader has no fragment-only pipeline, and a geometry shader
-  // has nothing to read without a stage in front of it.
-  let vs = consumer.file;
-  let fragment = null;
-  let geometry = null;
+  // Every module this pipeline will hold, keyed by the slot `vk_compile.py` takes it in. A map
+  // rather than a local per stage: the stage table already says which slot each one occupies,
+  // so a new stage adds a row there instead of a variable here.
+  const spec = STAGES[stage];
+  const modules = { [spec.slot]: consumer.file };
   const state = { ...(controls.state || {}) };
 
-  let hull = null;
-  let domainShader = null;
-
-  if (TESS_PAIR[stage]) {
-    // Both halves have to be in the pipeline, so one of them is the shader under test and the
-    // other is either in this file or generated from what this one declares.
+  // Patches are a tessellation idea, not a consequence of being paired. Gating this on `pair`
+  // sent an amplification shader - which is paired, with a mesh shader - looking for a
+  // control-point count it never had.
+  if (spec.patch) {
     const reflected = await reflectModule(tools, consumer.file);
     const points = reflected.patchControlPoints;
     if (!points) {
@@ -882,9 +884,15 @@ async function graphicsCompile(tools, file, options) {
     }
     state.patchControlPoints = points;
     state.topology = 'patch_list';
-    if (stage === 'hull') hull = consumer.file; else domainShader = consumer.file;
+  }
 
-    const wanted = TESS_PAIR[stage];
+  // `pairOptional` means "use it if the file has one" rather than "there is no pipeline
+  // without it" - which is the difference between a mesh shader, which stands alone, and a
+  // hull shader, which does not.
+  if (spec.pair && !(spec.pairOptional && !chosen.counterpart)) {
+    // Both halves have to be in the pipeline, so one of them is the shader under test and the
+    // other is either in this file or generated from what this one declares.
+    const wanted = spec.pair;
     let other;
     if (chosen.counterpart) {
       const step = await slangToSpirv(tools, file, outDir, {
@@ -892,8 +900,18 @@ async function graphicsCompile(tools, file, options) {
       });
       steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
       other = step.file;
-      notes.push(`${chosen.counterpart.name} is compiled with it as the ${wanted} half, ` +
-        'because neither stage exists in a pipeline without the other');
+      notes.push(`${chosen.counterpart.name} is compiled with it as the ${wanted} half` +
+        (spec.pairOptional
+          // Mesh stands alone; pairing it is fidelity rather than necessity, and it changes
+          // the answer - the payload a task shader supplies is data the mesh shader reads.
+          ? ', because this file pairs them and the payload it supplies is part of the answer'
+          : ', because neither stage exists in a pipeline without the other'));
+    } else if (wanted === 'mesh') {
+      throw new CompileError(
+        `${chosen.entry} is an amplification shader, which exists only to dispatch a mesh ` +
+        'shader - there is no pipeline without one. Put the mesh shader in this file and it ' +
+        'will be compiled alongside. One is not generated: the payload they share is a struct, ' +
+        'and reproducing a struct type out of SPIR-V is exactly the guess this refuses to make.');
     } else {
       const generated = await generateCounterpart(tools, consumer.file, wanted, outDir);
       steps.push(generated.step);
@@ -909,24 +927,21 @@ async function graphicsCompile(tools, file, options) {
           'more, and it would bring its own descriptors to the layout - so this listing is an ' +
           'upper bound on the varyings and a different pipeline besides');
     }
-    if (stage === 'hull') domainShader = other; else hull = other;
+    modules[STAGES[wanted].slot] = other;
   } else if (stage === 'geometry') {
-    geometry = consumer.file;
     // The topology is not a choice. A geometry shader declares the primitive it consumes, and
     // the input assembler has to be told to hand it that one - a triangle-input shader behind
     // a point list is a pipeline the driver rejects. Read from the module unless the file
     // overrode it.
-    const reflected = await reflectModule(tools, geometry);
+    const reflected = await reflectModule(tools, consumer.file);
     if (reflected.primitive && !state.topology) {
       state.topology = reflected.primitive.topology;
       notes.push(`this geometry shader consumes ${reflected.primitive.name}, so the pipeline ` +
         `feeds it a ${reflected.primitive.topology}`);
     }
-  } else if (stage === 'fragment') {
-    fragment = consumer.file;
   }
 
-  if (NEEDS_PRODUCER.has(stage)) {
+  if (spec.producer) {
     const named = controls.producer;
     if (named) {
       const step = await slangToSpirv(tools, named.file, outDir, {
@@ -934,13 +949,13 @@ async function graphicsCompile(tools, file, options) {
       });
       steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
       sources.push(named.file);
-      vs = step.file;
+      modules.vs = step.file;
     } else if (chosen.producer) {
       const step = await slangToSpirv(tools, file, outDir, {
         flags: flags.slang, entry: chosen.producer.name, stage: 'vertex', name: 'producer'
       });
       steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
-      vs = step.file;
+      modules.vs = step.file;
     } else {
       const generated = await generateProducer(tools, consumer.file, outDir);
       steps.push(generated.step);
@@ -948,21 +963,18 @@ async function graphicsCompile(tools, file, options) {
         'inputs exactly; the varyings it supplies are runtime values, not the ones your ' +
         'renderer would');
       sources.push(generated.source);
-      vs = generated.file;
+      modules.vs = generated.file;
     }
   }
 
   const layout = controls.layout ||
-    await reflectLayout(tools, [vs, hull, domainShader, geometry, fragment].filter(Boolean));
+    await reflectLayout(tools, Object.values(modules));
   if (controls.layout) {
     notes.push('the descriptor layout was taken from this file rather than reflected');
   }
 
   const cacheDir = path.join(outDir, 'cache');
-  const step = await spirvToCache(tools, outDir, {
-    vs, fs: fragment, gs: geometry, hs: hull, ds: domainShader, layout, state,
-    cacheDir, token
-  });
+  const step = await spirvToCache(tools, outDir, { modules, layout, state, cacheDir, token });
   steps.push({ tool: 'driver', command: quote(step.argv), log: step.log });
 
   const entries = await carveCache(cacheDir, stage, chosen.entry);
@@ -982,7 +994,7 @@ async function graphicsCompile(tools, file, options) {
     bindings
       ? `${bindings} binding(s) ${controls.layout ? 'from the file' : 'by reflection'}`
       : 'no descriptors',
-    NEEDS_PRODUCER.has(stage)
+    STAGES[stage].producer
       ? (controls.producer ? 'producer named by the file'
         : chosen.producer ? `producer ${chosen.producer.name} from this file`
           : 'producer generated to match')
@@ -1267,7 +1279,8 @@ module.exports = {
   slangEntryPoints,
   chooseSlangEntry,
   stageRefusal,
-  LINEAGE,
+  STAGES,
+  lineageOf,
   languageOf,
   parsePtxasInfo,
   quote,

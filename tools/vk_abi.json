@@ -183,6 +183,18 @@
   },
   "sizeof": 240
  },
+ "VkPhysicalDeviceMeshShaderFeaturesEXT": {
+  "fields": {
+   "meshShader": 20,
+   "meshShaderQueries": 32,
+   "multiviewMeshShader": 24,
+   "pNext": 8,
+   "primitiveFragmentShadingRateMeshShader": 28,
+   "sType": 0,
+   "taskShader": 16
+  },
+  "sizeof": 40
+ },
  "VkPhysicalDeviceVulkan11Features": {
   "fields": {
    "multiview": 32,

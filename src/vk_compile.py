@@ -189,6 +189,15 @@ class VkPhysicalDeviceFeatures2(C.Structure):
 # declares the SPIR-V DrawParameters capability, and a module declaring a capability the device
 # never enabled is an invalid pipeline - VUID-VkShaderModuleCreateInfo-pCode-08740. This driver
 # compiles it anyway; the validation layer is the only thing that says otherwise.
+# Mesh shading is an extension rather than core, so its features arrive in their own
+# struct and the device extension has to be enabled alongside them.
+class VkPhysicalDeviceMeshShaderFeaturesEXT(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
+        (n, VkBool32) for n in (
+            "taskShader", "meshShader", "multiviewMeshShader",
+            "primitiveFragmentShadingRateMeshShader", "meshShaderQueries")]
+
+
 class VkPhysicalDeviceVulkan11Features(C.Structure):
     _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
         (n, VkBool32) for n in (
@@ -350,7 +359,8 @@ class VkGraphicsPipelineCreateInfo(C.Structure):
 LAYOUT_STRUCTS = [
     VkApplicationInfo, VkInstanceCreateInfo, VkQueueFamilyProperties,
     VkDeviceQueueCreateInfo, VkPhysicalDeviceFeatures, VkPhysicalDeviceFeatures2,
-    VkPhysicalDeviceVulkan11Features, VkLayerProperties,
+    VkPhysicalDeviceVulkan11Features, VkPhysicalDeviceMeshShaderFeaturesEXT,
+    VkLayerProperties,
     VkDebugUtilsMessengerCreateInfoEXT,
     VkPhysicalDeviceVulkan13Features, VkDeviceCreateInfo,
     VkShaderModuleCreateInfo, VkDescriptorSetLayoutBinding, VkDescriptorSetLayoutCreateInfo,
@@ -396,6 +406,7 @@ ST = dict(
     # struct layouts, and these are values - so `--validate` exists to make the layer's opinion
     # part of the suite.
     DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT=1000128004,
+    PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT=1000328000,
     PHYSICAL_DEVICE_FEATURES_2=1000059000, PHYSICAL_DEVICE_VULKAN_1_1_FEATURES=49,
     PHYSICAL_DEVICE_VULKAN_1_3_FEATURES=53, PIPELINE_RENDERING_CREATE_INFO=1000044002,
 )
@@ -409,6 +420,8 @@ VK_SHADER_STAGE_VERTEX_BIT = 0x1
 VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT = 0x2      # hull
 VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT = 0x4   # domain
 VK_SHADER_STAGE_GEOMETRY_BIT = 0x8
+VK_SHADER_STAGE_TASK_BIT_EXT = 0x40                 # amplification
+VK_SHADER_STAGE_MESH_BIT_EXT = 0x80
 VK_SHADER_STAGE_FRAGMENT_BIT = 0x10
 VK_SHADER_STAGE_ALL_GRAPHICS = 0x1F
 VK_QUEUE_GRAPHICS_BIT = 0x1
@@ -436,6 +449,20 @@ DEBUG_UTILS_EXTENSION = b"VK_EXT_debug_utils"
 SEVERITY_WARNING = 0x100
 SEVERITY_ERROR = 0x1000
 MESSAGE_TYPE_ALL = 0x7
+MESH_EXTENSION = b"VK_EXT_mesh_shader"
+
+# Every stage this can build, in pipeline order: the request field it arrives in, its
+# Vulkan stage bit, and what to call it in a message. One table rather than a named local
+# per stage, because adding one used to mean editing five places that had to agree.
+PIPELINE_STAGES = [
+    ("ts", VK_SHADER_STAGE_TASK_BIT_EXT, "amplification"),
+    ("ms", VK_SHADER_STAGE_MESH_BIT_EXT, "mesh"),
+    ("vs", VK_SHADER_STAGE_VERTEX_BIT, "vertex"),
+    ("hs", VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, "hull"),
+    ("ds", VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, "domain"),
+    ("gs", VK_SHADER_STAGE_GEOMETRY_BIT, "geometry"),
+    ("fs", VK_SHADER_STAGE_FRAGMENT_BIT, "fragment"),
+]
 
 
 # ---------------------------------------------------------------- interpreter gate
@@ -680,13 +707,33 @@ class Poke(object):
                 depth_name, ", ".join(sorted(DEPTH)))
         colour, depth = COLOUR[fmt_name], DEPTH[depth_name]
 
-        vs_path, fs_path, gs_path = request.get("vs"), request.get("fs"), request.get("gs")
-        hs_path, ds_path = request.get("hs"), request.get("ds")
-        if not vs_path:
-            return EXIT_UNUSABLE, "the request names no vertex shader"
-        no_fs = not fs_path
+        # One pass over the stage table instead of a named local per stage. Adding a stage used
+        # to mean editing five places that had to agree - the paths, the reads, the modules,
+        # the stage array and the feature bits - and mesh would have made a sixth copy of each.
+        try:
+            code = {}
+            for slot, _bit, _name in PIPELINE_STAGES:
+                path_ = request.get(slot)
+                if path_:
+                    code[slot] = read_spirv(path_)
+        except (OSError, ValueError) as e:
+            return EXIT_UNUSABLE, str(e)
+
+        # A mesh pipeline has no vertex stage at all - the mesh shader IS the front of it - so
+        # the requirement is one or the other rather than a vertex shader always.
+        mesh_pipeline = "ms" in code or "ts" in code
+        if not mesh_pipeline and "vs" not in code:
+            return EXIT_UNUSABLE, (
+                "the request names no vertex shader, and no mesh shader either. A pipeline "
+                "needs one front stage or the other.")
+        if "ts" in code and "ms" not in code:
+            return EXIT_UNUSABLE, (
+                "an amplification shader exists only to dispatch a mesh shader, and this "
+                "request names none.")
+        no_fs = "fs" not in code
+
         topology_name = state.get("topology",
-                                  "patch_list" if request.get("hs") or request.get("ds")
+                                  "patch_list" if "hs" in code or "ds" in code
                                   else "triangle_list")
         # How many vertices make one patch. There is no sensible default: it is the size
         # of the hull shader's input array, and a wrong one is a pipeline the driver
@@ -695,14 +742,6 @@ class Poke(object):
         if topology_name not in TOPOLOGY:
             return EXIT_UNUSABLE, "unknown topology %r (have %s)" % (
                 topology_name, ", ".join(sorted(TOPOLOGY)))
-        try:
-            vs_code = read_spirv(vs_path)
-            fs_code = None if no_fs else read_spirv(fs_path)
-            gs_code = read_spirv(gs_path) if gs_path else None
-            hs_code = read_spirv(hs_path) if hs_path else None
-            ds_code = read_spirv(ds_path) if ds_path else None
-        except (OSError, ValueError) as e:
-            return EXIT_UNUSABLE, str(e)
 
         # -- instance ----------------------------------------------------
         layers = [l.encode("utf-8") for l in (request.get("layers") or [])]
@@ -790,16 +829,32 @@ class Poke(object):
         f11 = VkPhysicalDeviceVulkan11Features(
             sType=ST["PHYSICAL_DEVICE_VULKAN_1_1_FEATURES"],
             pNext=C.cast(self.ptr(f13), VOID), shaderDrawParameters=VK_TRUE)
-        # A geometry stage is a device feature, not just another entry in the stage array: a
-        # pipeline naming one on a device where it was not enabled is rejected outright.
+        head = self.ptr(f11)
+        device_extensions = []
+        if mesh_pipeline:
+            # Mesh shading is an extension: the feature struct alone is not enough, the device
+            # extension has to be enabled too or the stage bits are not even recognised.
+            device_extensions.append(MESH_EXTENSION)
+            fmesh = VkPhysicalDeviceMeshShaderFeaturesEXT(
+                sType=ST["PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT"],
+                pNext=C.cast(head, VOID),
+                meshShader=VK_TRUE, taskShader=VK_TRUE if "ts" in code else VK_FALSE)
+            head = self.ptr(fmesh)
+        # A geometry or tessellation stage is a device feature, not just another entry in the
+        # stage array: a pipeline naming one on a device where it was not enabled is rejected.
         f2 = VkPhysicalDeviceFeatures2(
-            sType=ST["PHYSICAL_DEVICE_FEATURES_2"], pNext=C.cast(self.ptr(f11), VOID),
+            sType=ST["PHYSICAL_DEVICE_FEATURES_2"], pNext=C.cast(head, VOID),
             features=VkPhysicalDeviceFeatures(
-                geometryShader=VK_TRUE if gs_code else VK_FALSE,
-                tessellationShader=VK_TRUE if (hs_code or ds_code) else VK_FALSE))
-        dci = VkDeviceCreateInfo(sType=ST["DEVICE_CREATE_INFO"],
-                                 pNext=C.cast(self.ptr(f2), VOID),
-                                 queueCreateInfoCount=1, pQueueCreateInfos=self.ptr(qci))
+                geometryShader=VK_TRUE if "gs" in code else VK_FALSE,
+                tessellationShader=VK_TRUE if ("hs" in code or "ds" in code) else VK_FALSE))
+        dext_array = ((C.c_char_p * len(device_extensions))(*device_extensions)
+                      if device_extensions else None)
+        self.keep.append(dext_array)
+        dci = VkDeviceCreateInfo(
+            sType=ST["DEVICE_CREATE_INFO"], pNext=C.cast(self.ptr(f2), VOID),
+            queueCreateInfoCount=1, pQueueCreateInfos=self.ptr(qci),
+            enabledExtensionCount=len(device_extensions),
+            ppEnabledExtensionNames=C.cast(dext_array, VOID) if device_extensions else None)
         device = Handle()
         r = vk["vkCreateDevice"](gpu, C.byref(dci), None, C.byref(device))
         if r != VK_SUCCESS:
@@ -819,28 +874,14 @@ class Poke(object):
             self.modules.append(h.value)
             return h.value, None
 
-        vs, err = module(vs_code, "vertex")
-        if err:
-            return EXIT_REFUSED, err
-        fs = VK_NULL_HANDLE
-        if not no_fs:
-            fs, err = module(fs_code, "fragment")
+        handles = {}
+        for slot, _bit, name in PIPELINE_STAGES:
+            if slot not in code:
+                continue
+            handle, err = module(code[slot], name)
             if err:
                 return EXIT_REFUSED, err
-        gs = VK_NULL_HANDLE
-        if gs_code:
-            gs, err = module(gs_code, "geometry")
-            if err:
-                return EXIT_REFUSED, err
-        hs = ds = VK_NULL_HANDLE
-        if hs_code:
-            hs, err = module(hs_code, "hull")
-            if err:
-                return EXIT_REFUSED, err
-        if ds_code:
-            ds, err = module(ds_code, "domain")
-            if err:
-                return EXIT_REFUSED, err
+            handles[slot] = handle
 
         # -- descriptor layout -------------------------------------------
         # Grouped by set, because a VkPipelineLayout takes one VkDescriptorSetLayout per set
@@ -896,17 +937,9 @@ class Poke(object):
                   % (len(by_set), sum(len(v) for v in by_set.values()), push_bytes))
 
         # -- pipeline ----------------------------------------------------
-        wanted = [(VK_SHADER_STAGE_VERTEX_BIT, vs)]
-        # Order matters only for readability - Vulkan takes them in any order - but the
-        # pipeline order is the one a reader expects.
-        if hs:
-            wanted.append((VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, hs))
-        if ds:
-            wanted.append((VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, ds))
-        if gs:
-            wanted.append((VK_SHADER_STAGE_GEOMETRY_BIT, gs))
-        if not no_fs:
-            wanted.append((VK_SHADER_STAGE_FRAGMENT_BIT, fs))
+        # Straight off the table, in pipeline order. Vulkan takes them in any order; this one
+        # is what a reader expects.
+        wanted = [(bit, handles[slot]) for slot, bit, _n in PIPELINE_STAGES if slot in handles]
         stages = (VkPipelineShaderStageCreateInfo * len(wanted))()
         for k, (bit, handle) in enumerate(wanted):
             stages[k].sType = ST["PIPELINE_SHADER_STAGE_CREATE_INFO"]
@@ -923,7 +956,7 @@ class Poke(object):
         vp = VkPipelineViewportStateCreateInfo(sType=ST["PIPELINE_VIEWPORT_STATE_CREATE_INFO"],
                                                viewportCount=1, scissorCount=1)
         tess = None
-        if hs or ds:
+        if "hs" in handles or "ds" in handles:
             if patch_points < 1:
                 return EXIT_UNUSABLE, (
                     "a tessellation pipeline needs state.patchControlPoints - the number of "
@@ -971,7 +1004,10 @@ class Poke(object):
             pNext=C.cast(self.ptr(rendering), VOID),
             stageCount=len(wanted),
             pStages=C.cast(stages, C.POINTER(VkPipelineShaderStageCreateInfo)),
-            pVertexInputState=self.ptr(vi), pInputAssemblyState=self.ptr(ia),
+            # A mesh pipeline has no vertex input and no input assembler: the mesh shader
+            # produces primitives directly, so both are ignored and passing them is noise.
+            pVertexInputState=None if mesh_pipeline else self.ptr(vi),
+            pInputAssemblyState=None if mesh_pipeline else self.ptr(ia),
             pTessellationState=C.cast(self.ptr(tess), VOID) if tess else None,
             pViewportState=self.ptr(vp), pRasterizationState=self.ptr(rs),
             pMultisampleState=self.ptr(ms), pDepthStencilState=self.ptr(ds),
@@ -991,12 +1027,11 @@ class Poke(object):
         self.note("colour format     %s (%d)" % (fmt_name, colour))
         self.note("depth format      %s (%d)" % (depth_name, depth))
         self.note("samples           %u" % samples)
-        self.note("topology          %s%s" % (
-            topology_name, " (%d control points)" % patch_points if tess else ""))
+        if not mesh_pipeline:
+            self.note("topology          %s%s" % (
+                topology_name, " (%d control points)" % patch_points if tess else ""))
         self.note("stages            %s" % " + ".join(
-            n for n, present in (("vertex", True), ("hull", bool(hs)), ("domain", bool(ds)),
-                                 ("geometry", bool(gs)),
-                                 ("fragment", not no_fs)) if present))
+            name for slot, _bit, name in PIPELINE_STAGES if slot in handles))
         return EXIT_OK, None
 
 

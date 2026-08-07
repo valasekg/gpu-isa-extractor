@@ -420,9 +420,52 @@ function findBin(dir) {
     }
   }
 
+  // ------------------------------------------------------------------ mesh
+
+  section('6. The mesh and amplification stages');
+
+  const ms = path.join(FIXTURES, 'msMain.spv');
+  const as = path.join(FIXTURES, 'asMain.spv');
+  if (!PY) {
+    skip('no Python interpreter');
+  } else if (!fs.existsSync(ms)) {
+    skip('no mesh fixtures');
+  } else if (!probe || probe.code !== 0) {
+    skip('no usable Vulkan device for the mesh round-trip');
+  } else {
+    // A mesh pipeline has no vertex stage at all - the mesh shader IS the front of it - so
+    // this is the one graphics pipeline built with no vertex input and no input assembler.
+    const alone = await pipeline('mesh', { ms, fs: null, layout: { bindings: [] } });
+    if (check(!alone.error, 'a mesh shader alone makes a pipeline', alone.error)) {
+      // Stage code 9, established by construction: this pipeline holds exactly one module.
+      check(alone.mesh === '79fc9202f25d', 'the mesh microcode is what was recorded',
+        `got ${alone.mesh}, want 79fc9202f25d`);
+    }
+
+    if (fs.existsSync(as)) {
+      const both = await pipeline('mesh-amp', { ms, ts: as, fs: null, layout: { bindings: [] } });
+      if (check(!both.error, 'an amplification shader dispatches it', both.error)) {
+        // ...and code 10 is what the second object is, since only the task stage was added.
+        check(!!both.amplification, 'depositing an amplification object beside the mesh one',
+          JSON.stringify(both));
+        // The mesh shader reads a payload the task shader supplies, so it is NOT the same
+        // shader in the two pipelines. Mesh depends on its producer the way every consuming
+        // stage does.
+        check(both.mesh !== alone.mesh,
+          'and the mesh half differs, because the payload it reads now has a source',
+          `both ${both.mesh}`);
+      }
+      // A task shader with nothing to dispatch is not a pipeline.
+      const orphan = await pipeline('amp-alone', { ts: as, fs: null, layout: { bindings: [] } });
+      check(!!orphan.error && /mesh/.test(orphan.error),
+        'an amplification shader with no mesh shader is refused by name',
+        orphan.error || 'it was accepted');
+    }
+  }
+
   // ------------------------------------------------------------------ validation
 
-  section('6. What the validation layer makes of these pipelines');
+  section('7. What the validation layer makes of these pipelines');
 
   // The check that would have found the bug that hid the longest. `dynamicRendering` was
   // never enabled - the 1.3 features struct carried the sType of the 1.1 one - and every
@@ -451,7 +494,9 @@ function findBin(dir) {
       { tag: 'tessellation', request: { vs: path.join(FIXTURES, 'tessVs.spv'), fs: null,
         hs: path.join(FIXTURES, 'tessHs.spv'), ds: path.join(FIXTURES, 'tessDs.spv'),
         layout: { bindings: [] },
-        state: { topology: 'patch_list', patchControlPoints: 4 } } }
+        state: { topology: 'patch_list', patchControlPoints: 4 } } },
+      { tag: 'mesh', request: { ms: path.join(FIXTURES, 'msMain.spv'),
+        ts: path.join(FIXTURES, 'asMain.spv'), fs: null, layout: { bindings: [] } } }
     ].filter(c => Object.values(c.request)
       .every(v => typeof v !== 'string' || fs.existsSync(v)));
 
