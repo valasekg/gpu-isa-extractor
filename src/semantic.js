@@ -27,6 +27,19 @@ const TOKEN_MODIFIERS = [
   'dst', 'src', 'discard', 'tier1', 'tier2', 'tier3', 'reuse'
 ];
 
+/**
+ * Registers that are not storage but a constant: RZ and URZ read as zero, PT and UPT as
+ * true, SRZ as zero. The grammar gives each its own dimmed scope on sight, and the semantic
+ * pass deliberately leaves them alone in a source slot - see the loop below.
+ */
+const ZERO_REGISTERS = new Set(['RZ', 'URZ', 'PT', 'UPT', 'SRZ']);
+
+/** The text a parsed token covers, for comparing against a name. */
+function sliceOf(line, token) {
+  const range = token.head || token;
+  return line.slice(range.start, range.end);
+}
+
 const legend = new vscode.SemanticTokensLegend(TOKEN_TYPES, TOKEN_MODIFIERS);
 
 const KIND_TO_TYPE = {
@@ -116,6 +129,20 @@ class SassSemanticTokensProvider {
       for (const token of parsed.tokens) {
         const type = KIND_TO_TYPE[token.kind];
         if (!type) continue;
+        // The grammar already dims a register that reads as a constant, and repainting it
+        // here at full register brightness is the same flash the opcode comment above warns
+        // about, only in the other direction: RZ arrives dim and turns bright. Letting the
+        // token fall through leaves VS Code with nothing to override the grammar with, so
+        // the dim colour survives by construction rather than by every theme agreeing to
+        // define a matching semantic rule.
+        //
+        // Only in a source slot. A zero register in a *destination* is a real statement -
+        // "computed and thrown away" - which `role: 'discard'` styles and `hover.js`
+        // explains, so that one keeps its token.
+        if (ZERO_REGISTERS.has(sliceOf(text, token)) &&
+            token.role !== 'dst' && token.role !== 'discard') {
+          continue;
+        }
         const range = token.head || token;
         push(builder, lineNo, range.start, range.end, type, bits(token.role));
       }
