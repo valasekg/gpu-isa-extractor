@@ -175,14 +175,15 @@ different path, or simply attributes no instructions to those lines.
 A shader takes one of two roads, chosen by its stage:
 
 ```
-compute                      slangc -target cuda  → NVRTC → ptxas → cubin
-vertex, fragment, geometry   slangc -target spirv → the display driver → its shader cache
+compute                       slangc -target cuda  → NVRTC → ptxas → cubin
+vertex, fragment, geometry,   slangc -target spirv → the display driver → its shader cache
+hull, domain
 ```
 
 Both end in the same place — microcode, in the same shape as bytes carved out of a cache — so
 the listing is produced by the extension's ordinary `nvdisasm --binary` path either way.
 
-Four worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
+Five worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
 
 | | |
 |---|---|
@@ -190,6 +191,7 @@ Four worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`
 | [`prefix-blur.slang`](samples/prefix-blur.slang) | three `BSSY`/`BSYNC` pairs, `MUFU.RSQ`, and markers naming both the `.slang` and Slang's inlined CUDA prelude |
 | [`surface-shading.slang`](samples/surface-shading.slang) | the **graphics** road: `IPA` reads out of attribute space, `AST` stores feeding them, `TEX`, `KILL`, and a banner naming the pipeline it was compiled into |
 | [`point-sprites.slang`](samples/point-sprites.slang) | a **geometry** shader expanding one point into a quad: `OUT.EMIT`/`OUT.FINAL`, `ISBERD`, and a topology read out of the shader rather than chosen |
+| [`terrain-tessellation.slang`](samples/terrain-tessellation.slang) | a **hull** and **domain** pair, which cannot be compiled apart — and the measured asymmetry between generating one half and the other |
 
 Each opens with a comment saying what to look for in its listing, and which flag to change to
 make the code move.
@@ -207,7 +209,7 @@ NVRTC or `nvcc` for CUDA (`-use_fast_math`, `-ffp-contract`). Later stages are r
 `-Xptxas <flag>` and, from a Slang file, `-Xnvrtc <flag>`, following nvcc's own convention.
 `nvIsaExtractor.compile.flags` sets defaults; the file's own line wins.
 
-### Vertex, fragment and geometry shaders
+### Vertex, fragment, geometry and tessellation shaders
 
 A graphics shader has no CUDA lowering, so it is compiled by asking the **display driver** to
 build one pipeline and then reading what it wrote into an isolated copy of its own shader
@@ -269,10 +271,13 @@ module are attributed to *that* file, which is listed in the banner's source map
 
 ### What it will not do
 
-- **Compute, vertex, fragment and geometry only.** Tessellation, mesh and amplification need a
-  longer chain of stages synthesised around them; raytracing needs a different creation call
-  (`vkCreateRayTracingPipelinesKHR`). None of them is impossible — all are unimplemented. Read
-  those from a cache file for now.
+- **Mesh, amplification and raytracing are unimplemented.** Mesh and amplification need a
+  pipeline shape this does not build yet; raytracing needs a different creation call
+  (`vkCreateRayTracingPipelinesKHR`). Neither is impossible. Read those from a cache file for now.
+- **A generated tessellation counterpart is not free in both directions.** A domain shader
+  compiles identically whichever hull feeds it; a hull shader does not, because a generated
+  domain reads every output it declares and brings no descriptors of its own. The banner says
+  which case you got.
 - **No source correlation for graphics shaders.** The compute road gets it from the cubin's
   line table; a driver-compiled shader has no cubin and the container carries no debug section
   — checked across 3,340 cache objects. SPIR-V built with `slangc -g`, source text and all,
@@ -296,7 +301,7 @@ NVRTC is the default and needs no host C++ compiler; because it is a DLL with no
 driven through a small Python helper. Set `nvIsaExtractor.compile.backend` to `nvcc` instead if
 you have MSVC. No GPU is needed at all — `ptxas` will target `SM90` from a laptop.
 
-**Vertex, fragment and geometry** need neither `ptxas` nor NVRTC, but do need an NVIDIA GPU with
+**Vertex, fragment, geometry and tessellation** need neither `ptxas` nor NVRTC, but do need an NVIDIA GPU with
 a working Vulkan driver, because the driver is the compiler. The Vulkan loader ships with the
 display driver; the SDK is not required.
 

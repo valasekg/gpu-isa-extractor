@@ -265,6 +265,11 @@ class VkPipelineInputAssemblyStateCreateInfo(C.Structure):
                 ("topology", VkEnum), ("primitiveRestartEnable", VkBool32)]
 
 
+class VkPipelineTessellationStateCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("patchControlPoints", u32)]
+
+
 class VkPipelineViewportStateCreateInfo(C.Structure):
     _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
                 ("viewportCount", u32), ("pViewports", VOID),
@@ -351,6 +356,7 @@ LAYOUT_STRUCTS = [
     VkShaderModuleCreateInfo, VkDescriptorSetLayoutBinding, VkDescriptorSetLayoutCreateInfo,
     VkPushConstantRange, VkPipelineLayoutCreateInfo, VkPipelineShaderStageCreateInfo,
     VkPipelineVertexInputStateCreateInfo, VkPipelineInputAssemblyStateCreateInfo,
+    VkPipelineTessellationStateCreateInfo,
     VkPipelineViewportStateCreateInfo, VkPipelineRasterizationStateCreateInfo,
     VkPipelineMultisampleStateCreateInfo, VkStencilOpState,
     VkPipelineDepthStencilStateCreateInfo, VkPipelineColorBlendAttachmentState,
@@ -380,6 +386,7 @@ ST = dict(
     PIPELINE_MULTISAMPLE_STATE_CREATE_INFO=24, PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO=25,
     PIPELINE_COLOR_BLEND_STATE_CREATE_INFO=26, PIPELINE_DYNAMIC_STATE_CREATE_INFO=27,
     GRAPHICS_PIPELINE_CREATE_INFO=28, DESCRIPTOR_SET_LAYOUT_CREATE_INFO=32,
+    PIPELINE_TESSELLATION_STATE_CREATE_INFO=21,
     PIPELINE_LAYOUT_CREATE_INFO=30,
     # 53, not 49. 49 is PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, and a struct chained under it is
     # read as a 1.1 feature block - where `dynamicRendering` does not exist, so it is silently
@@ -399,6 +406,8 @@ COLOUR = {"r8g8b8a8_unorm": 37, "b8g8r8a8_unorm": 44, "r8g8b8a8_srgb": 43,
 DEPTH = {"none": 0, "d16": 124, "d32": 126, "d24s8": 129, "d32s8": 130}
 
 VK_SHADER_STAGE_VERTEX_BIT = 0x1
+VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT = 0x2      # hull
+VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT = 0x4   # domain
 VK_SHADER_STAGE_GEOMETRY_BIT = 0x8
 VK_SHADER_STAGE_FRAGMENT_BIT = 0x10
 VK_SHADER_STAGE_ALL_GRAPHICS = 0x1F
@@ -413,6 +422,8 @@ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST = 3
 TOPOLOGY = {
     "point_list": 0, "line_list": 1, "triangle_list": 3,
     "line_list_with_adjacency": 6, "triangle_list_with_adjacency": 7,
+    # Tessellation consumes patches and nothing else; the patch SIZE is separate state.
+    "patch_list": 10,
 }
 VK_COMPARE_OP_LESS = 1
 VK_COLOR_COMPONENT_RGBA = 0xF
@@ -670,10 +681,17 @@ class Poke(object):
         colour, depth = COLOUR[fmt_name], DEPTH[depth_name]
 
         vs_path, fs_path, gs_path = request.get("vs"), request.get("fs"), request.get("gs")
+        hs_path, ds_path = request.get("hs"), request.get("ds")
         if not vs_path:
             return EXIT_UNUSABLE, "the request names no vertex shader"
         no_fs = not fs_path
-        topology_name = state.get("topology", "triangle_list")
+        topology_name = state.get("topology",
+                                  "patch_list" if request.get("hs") or request.get("ds")
+                                  else "triangle_list")
+        # How many vertices make one patch. There is no sensible default: it is the size
+        # of the hull shader's input array, and a wrong one is a pipeline the driver
+        # accepts while tessellating something nobody wrote.
+        patch_points = int(state.get("patchControlPoints", 0) or 0)
         if topology_name not in TOPOLOGY:
             return EXIT_UNUSABLE, "unknown topology %r (have %s)" % (
                 topology_name, ", ".join(sorted(TOPOLOGY)))
@@ -681,6 +699,8 @@ class Poke(object):
             vs_code = read_spirv(vs_path)
             fs_code = None if no_fs else read_spirv(fs_path)
             gs_code = read_spirv(gs_path) if gs_path else None
+            hs_code = read_spirv(hs_path) if hs_path else None
+            ds_code = read_spirv(ds_path) if ds_path else None
         except (OSError, ValueError) as e:
             return EXIT_UNUSABLE, str(e)
 
@@ -775,7 +795,8 @@ class Poke(object):
         f2 = VkPhysicalDeviceFeatures2(
             sType=ST["PHYSICAL_DEVICE_FEATURES_2"], pNext=C.cast(self.ptr(f11), VOID),
             features=VkPhysicalDeviceFeatures(
-                geometryShader=VK_TRUE if gs_code else VK_FALSE))
+                geometryShader=VK_TRUE if gs_code else VK_FALSE,
+                tessellationShader=VK_TRUE if (hs_code or ds_code) else VK_FALSE))
         dci = VkDeviceCreateInfo(sType=ST["DEVICE_CREATE_INFO"],
                                  pNext=C.cast(self.ptr(f2), VOID),
                                  queueCreateInfoCount=1, pQueueCreateInfos=self.ptr(qci))
@@ -809,6 +830,15 @@ class Poke(object):
         gs = VK_NULL_HANDLE
         if gs_code:
             gs, err = module(gs_code, "geometry")
+            if err:
+                return EXIT_REFUSED, err
+        hs = ds = VK_NULL_HANDLE
+        if hs_code:
+            hs, err = module(hs_code, "hull")
+            if err:
+                return EXIT_REFUSED, err
+        if ds_code:
+            ds, err = module(ds_code, "domain")
             if err:
                 return EXIT_REFUSED, err
 
@@ -867,6 +897,12 @@ class Poke(object):
 
         # -- pipeline ----------------------------------------------------
         wanted = [(VK_SHADER_STAGE_VERTEX_BIT, vs)]
+        # Order matters only for readability - Vulkan takes them in any order - but the
+        # pipeline order is the one a reader expects.
+        if hs:
+            wanted.append((VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, hs))
+        if ds:
+            wanted.append((VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, ds))
         if gs:
             wanted.append((VK_SHADER_STAGE_GEOMETRY_BIT, gs))
         if not no_fs:
@@ -886,6 +922,16 @@ class Poke(object):
             topology=TOPOLOGY[topology_name])
         vp = VkPipelineViewportStateCreateInfo(sType=ST["PIPELINE_VIEWPORT_STATE_CREATE_INFO"],
                                                viewportCount=1, scissorCount=1)
+        tess = None
+        if hs or ds:
+            if patch_points < 1:
+                return EXIT_UNUSABLE, (
+                    "a tessellation pipeline needs state.patchControlPoints - the number of "
+                    "vertices in one patch, which is the size of the hull shader's input "
+                    "array. There is no default worth guessing.")
+            tess = VkPipelineTessellationStateCreateInfo(
+                sType=ST["PIPELINE_TESSELLATION_STATE_CREATE_INFO"],
+                patchControlPoints=patch_points)
         rs = VkPipelineRasterizationStateCreateInfo(
             sType=ST["PIPELINE_RASTERIZATION_STATE_CREATE_INFO"],
             polygonMode=VK_POLYGON_MODE_FILL, cullMode=VK_CULL_MODE_NONE,
@@ -926,6 +972,7 @@ class Poke(object):
             stageCount=len(wanted),
             pStages=C.cast(stages, C.POINTER(VkPipelineShaderStageCreateInfo)),
             pVertexInputState=self.ptr(vi), pInputAssemblyState=self.ptr(ia),
+            pTessellationState=C.cast(self.ptr(tess), VOID) if tess else None,
             pViewportState=self.ptr(vp), pRasterizationState=self.ptr(rs),
             pMultisampleState=self.ptr(ms), pDepthStencilState=self.ptr(ds),
             pColorBlendState=self.ptr(cb), pDynamicState=self.ptr(dyn),
@@ -944,9 +991,11 @@ class Poke(object):
         self.note("colour format     %s (%d)" % (fmt_name, colour))
         self.note("depth format      %s (%d)" % (depth_name, depth))
         self.note("samples           %u" % samples)
-        self.note("topology          %s" % topology_name)
+        self.note("topology          %s%s" % (
+            topology_name, " (%d control points)" % patch_points if tess else ""))
         self.note("stages            %s" % " + ".join(
-            n for n, present in (("vertex", True), ("geometry", bool(gs)),
+            n for n, present in (("vertex", True), ("hull", bool(hs)), ("domain", bool(ds)),
+                                 ("geometry", bool(gs)),
                                  ("fragment", not no_fs)) if present))
         return EXIT_OK, None
 

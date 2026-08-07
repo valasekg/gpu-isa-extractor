@@ -298,6 +298,17 @@ section('5. Entry points and the stage gate');
   equal(geom.lineage, 'graphics', 'a geometry shader routes to the driver too');
   equal(geom.stage, 'geometry', 'carrying its stage');
 
+  // Tessellation is the first pair where BOTH halves are mandatory: Vulkan rejects a pipeline
+  // holding one without the other, so each names the other as its counterpart.
+  const pair = '[shader("hull")] void hsMain() { }\n[shader("domain")] void dsMain() { }';
+  const tess = compile.chooseSlangEntry(pair);
+  equal(tess.stage, 'domain', 'a hull/domain file compiles the domain half by default');
+  check(tess.counterpart && tess.counterpart.name === 'hsMain',
+    'and names the hull half as its counterpart', JSON.stringify(tess.counterpart));
+  const asHull = compile.chooseSlangEntry(pair, 'hsMain');
+  check(asHull.counterpart && asHull.counterpart.name === 'dsMain',
+    'and the reverse holds when the hull is named', JSON.stringify(asHull.counterpart));
+
   const compute = compile.chooseSlangEntry('[shader("compute")] void only() { }');
   equal(compute.lineage, 'cuda', 'compute still goes through CUDA');
   equal(compute.entry, undefined,
@@ -306,8 +317,10 @@ section('5. Entry points and the stage gate');
 
 {
   // The stages with no road at all. Their refusal is the one that has to keep working.
-  // Geometry is deliberately NOT in this list any more - it has a pipeline now.
-  for (const stage of ['raygeneration', 'hull', 'domain', 'mesh']) {
+  // Geometry, hull and domain are deliberately NOT in this list any more - they have
+  // pipelines now, and a test that still demanded a refusal would be asserting the feature
+  // does not exist.
+  for (const stage of ['raygeneration', 'mesh', 'amplification']) {
     const src = `[shader("${stage}")] void f() { }`;
     let threw = null;
     try { compile.chooseSlangEntry(src); } catch (e) { threw = e; }

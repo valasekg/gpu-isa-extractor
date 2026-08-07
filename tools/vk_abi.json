@@ -355,6 +355,15 @@
   },
   "sizeof": 48
  },
+ "VkPipelineTessellationStateCreateInfo": {
+  "fields": {
+   "flags": 16,
+   "pNext": 8,
+   "patchControlPoints": 20,
+   "sType": 0
+  },
+  "sizeof": 24
+ },
  "VkPipelineVertexInputStateCreateInfo": {
   "fields": {
    "flags": 16,

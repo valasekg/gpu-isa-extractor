@@ -262,10 +262,10 @@ async function diagnose(context) {
     add(level,
       can ? `compiling ${can} shaders is available` : 'compiling source files is unavailable',
       ...detail,
-      'Compute goes through CUDA and carries source correlation. Vertex and fragment are ' +
-      'compiled by the local driver, which needs an NVIDIA GPU present and yields no ' +
-      'correlation - the driver keeps no line table. Geometry, tessellation, mesh and ' +
-      'raytracing stages have no route at all; read those from a cache file.');
+      'Compute goes through CUDA and carries source correlation. Vertex, fragment, geometry, ' +
+      'hull and domain are compiled by the local driver, which needs an NVIDIA GPU present ' +
+      'and yields no correlation - the driver keeps no line table. Mesh, amplification and ' +
+      'raytracing are not implemented; read those from a cache file.');
   }
 
   // 8. storage

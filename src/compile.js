@@ -12,6 +12,7 @@
  *     vertex             .slang --slangc--> .spv --the display driver--> its shader cache
  *     fragment                                                       --nvcache.js--> microcode
  *     geometry
+ *     hull, domain
  *
  * Both end in the same shape - `cubin.entryPoints` and `nvcache.enumerateObjects` yield the
  * same thing - so a compiled shader travels the *existing* path, `nvdisasm --binary`, the
@@ -38,14 +39,14 @@
  * file), so a decision made after it would report a segfault instead of a route.
  *
  * Compute goes through CUDA because it is the only stage with a CUDA lowering, and because
- * that road ends in a cubin whose line table gives source correlation. Vertex, fragment and
- * geometry go to the driver, whose graphics compiler is a *different backend* from the CUDA
- * one - which is the point rather than a compromise: it is the compiler that runs when the
- * shader is part of a frame. What that road cannot give is correlation, because the driver
- * keeps no line table; see `graphicsCompile`.
+ * that road ends in a cubin whose line table gives source correlation. Every graphics stage
+ * goes to the driver, whose graphics compiler is a *different backend* from the CUDA one -
+ * which is the point rather than a compromise: it is the compiler that runs when the shader is
+ * part of a frame. What that road cannot give is correlation, because the driver keeps no line
+ * table; see `graphicsCompile`.
  *
- * Hull, domain, mesh and amplification are unimplemented: each needs a longer chain of stages
- * synthesised around it. Raytracing needs a different creation call entirely
+ * Mesh and amplification are unimplemented - they need a pipeline shape this does not build.
+ * Raytracing needs a different creation call entirely
  * (`vkCreateRayTracingPipelinesKHR`) - it is a dead end only on the CUDA road, where OptiX
  * intrinsics reach `ptxas` and stop at `Call to '_optix_trace_typed_32' requires call
  * prototype`, because they are resolved by the driver's pipeline linker and never by ptxas.
@@ -428,9 +429,28 @@ const COMPUTE_STAGE = 'compute';
 const LINEAGE = {
   compute: 'cuda',
   vertex: 'graphics',
+  hull: 'graphics',
+  domain: 'graphics',
   geometry: 'graphics',
   fragment: 'graphics'
 };
+
+/**
+ * Stages that cannot exist without the other half of their pair.
+ *
+ * Vulkan rejects a pipeline carrying a tessellation control shader without an evaluation
+ * shader, or the reverse - so compiling either means supplying its counterpart, generated
+ * from what the real one declares when the file does not contain both.
+ *
+ * The two directions are not equally safe, and this is measured rather than assumed. A domain
+ * shader compiled against a *generated* hull is byte-identical to one compiled against the
+ * real hull: it does not depend on which hull feeds it. A hull shader compiled against a
+ * generated domain is NOT identical - 80 instructions became 88 - because a generated domain
+ * reads every output the hull declares while a real one may read fewer, and the driver
+ * eliminates what nothing downstream consumes. That makes the generated case an upper bound
+ * rather than a wrong answer, and it is reported as one.
+ */
+const TESS_PAIR = { hull: 'domain', domain: 'hull' };
 
 /**
  * Stages that cannot be the only stage in their pipeline.
@@ -442,7 +462,7 @@ const LINEAGE = {
  * when the *next* stage's inputs are narrower, and with no next stage there is nothing to
  * narrow against.
  */
-const NEEDS_PRODUCER = new Set(['fragment', 'geometry']);
+const NEEDS_PRODUCER = new Set(['fragment', 'geometry', 'hull', 'domain']);
 
 /**
  * The entry points a Slang file declares, read from the source rather than from slangc.
@@ -526,6 +546,12 @@ function chooseSlangEntry(text, wanted) {
     producer: NEEDS_PRODUCER.has(chosen.stage)
       ? (found.find(e => e.stage === 'vertex') || null)
       : null,
+    // The other half of a tessellation pair, when this file holds it. Hull and domain shaders
+    // are written together because neither works alone, so this is the ordinary case rather
+    // than the lucky one.
+    counterpart: TESS_PAIR[chosen.stage]
+      ? (found.find(e => e.stage === TESS_PAIR[chosen.stage]) || null)
+      : null,
     note: null
   });
 
@@ -559,6 +585,7 @@ function chooseSlangEntry(text, wanted) {
   const chosen = compute[0] ||
     supported.find(e => e.stage === 'fragment') ||
     supported.find(e => e.stage === 'geometry') ||
+    supported.find(e => e.stage === 'domain') ||
     supported[0];
   const skipped = found.filter(e => e !== chosen);
   const result = withProducer(chosen);
@@ -652,7 +679,26 @@ async function slangToSpirv(tools, source, outDir, { flags = [], entry, stage, n
     '-o', out
   ];
   const result = await run(tools.slangc, args);
-  if (result.failed || !fs.existsSync(out)) fail('slangc', result);
+  if (result.failed || !fs.existsSync(out)) {
+    // slangc 2024.13 dies with an internal assert on a hull shader whose inside tessellation
+    // factor is a bare scalar - the idiomatic HLSL spelling for a triangle domain. The
+    // one-element array form compiles. Without this, the user gets `assert failure: toStyle !=
+    // TypeCastStyle::Unknown` and no indication that their shader is fine and their compiler
+    // is not.
+    const log = `${result.stderr || ''}${result.stdout || ''}`;
+    if (stage === 'hull' && /TypeCastStyle::Unknown|InternalError/.test(log)) {
+      throw new CompileError(
+        'slangc could not compile this hull shader, and the failure is a bug in slangc rather ' +
+        'than an error in the shader. Version 2024.13 asserts on a scalar SV_InsideTessFactor, ' +
+        'which is the ordinary spelling for a `tri` domain. Declaring it as a one-element ' +
+        'array compiles:\n' +
+        '    float inside[1] : SV_InsideTessFactor;   // instead of: float inside : SV_...\n' +
+        'A quad domain, which takes two inside factors and so is already an array, is ' +
+        'unaffected.',
+        { tool: 'slangc', argv: result.argv, log });
+    }
+    fail('slangc', result);
+  }
   return { file: out, argv: result.argv, log: result.stderr || result.stdout };
 }
 
@@ -669,11 +715,11 @@ async function slangToSpirv(tools, source, outDir, { flags = [], entry, stage, n
  * hang a compile whose result would then be blamed on the shader.
  */
 async function spirvToCache(tools, outDir,
-  { vs, fs: fragment, gs, layout, state, cacheDir, token }) {
+  { vs, fs: fragment, gs, hs, ds, layout, state, cacheDir, token }) {
   const request = path.join(outDir, 'vk-request.json');
   await fs.promises.mkdir(cacheDir, { recursive: true });
   await fs.promises.writeFile(request, JSON.stringify({
-    vs, fs: fragment || null, gs: gs || null, layout, state,
+    vs, fs: fragment || null, gs: gs || null, hs: hs || null, ds: ds || null, layout, state,
     // The interface check compares a vertex shader against a fragment one. With a geometry
     // stage between them the two ends do not meet directly, so the check would compare the
     // wrong pair - it is left to the driver there rather than made to answer a question it
@@ -820,7 +866,51 @@ async function graphicsCompile(tools, file, options) {
   let geometry = null;
   const state = { ...(controls.state || {}) };
 
-  if (stage === 'geometry') {
+  let hull = null;
+  let domainShader = null;
+
+  if (TESS_PAIR[stage]) {
+    // Both halves have to be in the pipeline, so one of them is the shader under test and the
+    // other is either in this file or generated from what this one declares.
+    const reflected = await reflectModule(tools, consumer.file);
+    const points = reflected.patchControlPoints;
+    if (!points) {
+      throw new CompileError(
+        `${chosen.entry} declares no patch size - every input of a hull or domain shader is ` +
+        'an array indexed by control point, and the array length is the patch. Without it ' +
+        'there is no pipeline to build.');
+    }
+    state.patchControlPoints = points;
+    state.topology = 'patch_list';
+    if (stage === 'hull') hull = consumer.file; else domainShader = consumer.file;
+
+    const wanted = TESS_PAIR[stage];
+    let other;
+    if (chosen.counterpart) {
+      const step = await slangToSpirv(tools, file, outDir, {
+        flags: flags.slang, entry: chosen.counterpart.name, stage: wanted, name: wanted
+      });
+      steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
+      other = step.file;
+      notes.push(`${chosen.counterpart.name} is compiled with it as the ${wanted} half, ` +
+        'because neither stage exists in a pipeline without the other');
+    } else {
+      const generated = await generateCounterpart(tools, consumer.file, wanted, outDir);
+      steps.push(generated.step);
+      sources.push(generated.source);
+      other = generated.file;
+      notes.push(stage === 'domain'
+        // Measured: byte-identical either way. Saying so is worth more than a warning.
+        ? `no hull shader was named, so one was generated. A domain shader compiles ` +
+          'identically whichever hull feeds it, so this costs nothing'
+        // Measured: 80 instructions became 88. An upper bound, and it must say so.
+        : 'no domain shader was named, so one was generated that reads every output this ' +
+          'shader declares. A real domain shader reading fewer would let the driver eliminate ' +
+          'more, and it would bring its own descriptors to the layout - so this listing is an ' +
+          'upper bound on the varyings and a different pipeline besides');
+    }
+    if (stage === 'hull') domainShader = other; else hull = other;
+  } else if (stage === 'geometry') {
     geometry = consumer.file;
     // The topology is not a choice. A geometry shader declares the primitive it consumes, and
     // the input assembler has to be told to hand it that one - a triangle-input shader behind
@@ -863,14 +953,15 @@ async function graphicsCompile(tools, file, options) {
   }
 
   const layout = controls.layout ||
-    await reflectLayout(tools, [vs, geometry, fragment].filter(Boolean));
+    await reflectLayout(tools, [vs, hull, domainShader, geometry, fragment].filter(Boolean));
   if (controls.layout) {
     notes.push('the descriptor layout was taken from this file rather than reflected');
   }
 
   const cacheDir = path.join(outDir, 'cache');
   const step = await spirvToCache(tools, outDir, {
-    vs, fs: fragment, gs: geometry, layout, state, cacheDir, token
+    vs, fs: fragment, gs: geometry, hs: hull, ds: domainShader, layout, state,
+    cacheDir, token
   });
   steps.push({ tool: 'driver', command: quote(step.argv), log: step.log });
 
@@ -896,7 +987,10 @@ async function graphicsCompile(tools, file, options) {
         : chosen.producer ? `producer ${chosen.producer.name} from this file`
           : 'producer generated to match')
       : 'no consumer (rasterizer discard)',
-    state.topology && state.topology !== 'triangle_list' ? `${state.topology} in` : null,
+    state.topology && state.topology !== 'triangle_list'
+      ? `${state.topology} in` +
+        (state.patchControlPoints ? ` of ${state.patchControlPoints}` : '')
+      : null,
     describeState(state)
   ].filter(Boolean).join(', ');
 
@@ -965,6 +1059,29 @@ async function reflectModule(tools, module) {
   } catch (e) {
     throw new CompileError(`${path.basename(module)} could not be reflected: ${e.message}`);
   }
+}
+
+/**
+ * Generate the other half of a tessellation pair, and compile it.
+ *
+ * Not optional and not a convenience: Vulkan rejects a pipeline holding a hull shader without
+ * a domain shader, or the reverse, so a file containing only one of them cannot be compiled
+ * at all without this.
+ */
+async function generateCounterpart(tools, module, wanted, outDir) {
+  const source = path.join(outDir, `${wanted}-generated.slang`);
+  const made = await run(tools.python,
+    [tools.reflectHelper, module, '--counterpart', source]);
+  if (made.failed || !fs.existsSync(source)) fail('counterpart synthesis', made);
+
+  const step = await slangToSpirv(tools, source, outDir, {
+    entry: wanted === 'hull' ? 'hsMain' : 'dsMain', stage: wanted, name: wanted
+  });
+  return {
+    file: step.file,
+    source,
+    step: { tool: 'slangc', command: quote(step.argv), log: step.log }
+  };
 }
 
 /** The descriptor layout every stage of this pipeline declares between them. */

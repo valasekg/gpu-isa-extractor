@@ -92,6 +92,19 @@ DESCRIPTOR_NAMES = {
 EXEC_MODEL = {0: "vertex", 1: "tessellation_control", 2: "tessellation_evaluation",
               3: "geometry", 4: "fragment", 5: "compute"}
 
+# Slang spells these the HLSL way - hull and domain - and puts the whole set on the HULL
+# shader, where GLSL would put most of them on the evaluation stage. A domain shader
+# declares only its domain, which is why a generated hull shader can be derived from a
+# domain shader but not the other way round without the modes below.
+TESS_DOMAIN = {22: "triangles", 24: "quads", 25: "isolines"}
+TESS_SPACING = {1: "equal", 2: "fractional_even", 3: "fractional_odd"}
+TESS_WINDING = {4: "cw", 5: "ccw"}
+EXEC_OUTPUT_VERTICES = 26
+
+# How many tessellation factors each domain takes. A hull shader that writes the wrong
+# number for its domain is not a hull shader for that domain.
+TESS_FACTORS = {"triangles": (3, 1), "quads": (4, 2), "isolines": (2, 0)}
+
 # What a geometry shader declares it consumes, and the input-assembly topology that feeds it.
 # A triangle-input geometry shader behind a point-list topology is not a pipeline, so this is
 # read out of the module rather than assumed.
@@ -145,7 +158,7 @@ class Module(object):
         self.decorations = {}                    # id -> {decoration: [operands]}
         self.variables = []                      # (result_type_id, result_id, storage_class)
         self.entry_points = []                   # (stage, name)
-        self.execution_modes = []                # mode numbers, in declaration order
+        self.execution_modes = []                # (mode, [operands]), in declaration order
         self._collect()
 
     def _collect(self):
@@ -156,7 +169,7 @@ class Module(object):
                 self.entry_points.append(
                     (EXEC_MODEL.get(w[0], "model%d" % w[0]), decode_string(w[2:])))
             elif op == OP_EXECUTION_MODE and len(w) >= 2:
-                self.execution_modes.append(w[1])
+                self.execution_modes.append((w[1], list(w[2:])))
             elif op == OP_DECORATE and len(w) >= 2:
                 self.decorations.setdefault(w[0], {})[w[1]] = list(w[2:])
             elif op == OP_CONSTANT and len(w) >= 3:
@@ -323,7 +336,7 @@ class Module(object):
         declares `lines` builds a pipeline the driver rejects, and guessing it for one that
         declares nothing at all means the module is not a geometry shader to begin with.
         """
-        for mode in self.execution_modes:
+        for mode, _operands in self.execution_modes:
             if mode in INPUT_PRIMITIVE:
                 return INPUT_PRIMITIVE[mode]
         raise ReflectError(
@@ -346,6 +359,67 @@ class Module(object):
                     "location %d is %s, which is not an array; a geometry shader's inputs are "
                     "indexed by vertex" % (v["location"], spelling))
             out.append({**v, "type": spelling[:spelling.index("[")]})
+        return out
+
+    def tessellation(self):
+        """What a hull or domain shader declares about the tessellator.
+
+        A hull shader carries the whole set - domain, spacing, winding and how many control
+        points it outputs. A domain shader carries only the domain, because in HLSL (and so in
+        Slang) the rest is the hull shader's to state. That asymmetry decides which direction
+        can be synthesised from which: a hull shader is enough to derive a matching domain
+        shader, and a domain shader is enough only because everything a hull shader needs
+        beyond the domain has a defensible default.
+        """
+        out = {"domain": None, "spacing": None, "winding": None, "outputVertices": None}
+        for mode, operands in self.execution_modes:
+            if mode in TESS_DOMAIN:
+                out["domain"] = TESS_DOMAIN[mode]
+            elif mode in TESS_SPACING:
+                out["spacing"] = TESS_SPACING[mode]
+            elif mode in TESS_WINDING:
+                out["winding"] = TESS_WINDING[mode]
+            elif mode == EXEC_OUTPUT_VERTICES and operands:
+                out["outputVertices"] = operands[0]
+        if not out["domain"]:
+            raise ReflectError(
+                "this module declares no tessellation domain, so the patch it works on is not "
+                "knowable; a hull or domain shader always declares one")
+        out["factors"] = TESS_FACTORS[out["domain"]]
+        return out
+
+    def patch_size(self):
+        """How many vertices are in the patch this stage reads.
+
+        Every non-builtin input of a hull or domain shader is an array indexed by control
+        point, so the array length IS the patch size. It is not an execution mode and there is
+        no default worth guessing - a wrong one is a pipeline the driver accepts while
+        tessellating something nobody wrote.
+        """
+        sizes = set()
+        for v in self.interface(SC_INPUT):
+            spelling = v["type"]
+            if "[" in spelling:
+                sizes.add(int(spelling[spelling.index("[") + 1:spelling.index("]")]))
+        if len(sizes) > 1:
+            raise ReflectError(
+                "this module's inputs are arrays of differing lengths %s, so the patch size is "
+                "ambiguous" % sorted(sizes))
+        return sizes.pop() if sizes else None
+
+    def per_control_point_inputs(self):
+        """Inputs with the per-control-point array dimension stripped."""
+        out = []
+        for v in self.interface(SC_INPUT):
+            spelling = v["type"]
+            out.append({**v, "type": spelling.split("[")[0]})
+        return out
+
+    def per_control_point_outputs(self):
+        out = []
+        for v in self.interface(SC_OUTPUT):
+            spelling = v["type"]
+            out.append({**v, "type": spelling.split("[")[0]})
         return out
 
     def slang_type(self, type_id, who):
@@ -495,6 +569,112 @@ def _seed(base, components, index):
     return "%s%d(%s)" % (base, components, ", ".join([scalar] * components))
 
 
+def tess_counterpart(stage, tess, varyings, patch_points):
+    """The other half of a tessellation pair, as Slang source.
+
+    Hull and domain shaders cannot exist apart: Vulkan rejects a pipeline carrying one without
+    the other, so compiling either means supplying its counterpart. Unlike a vertex producer,
+    this one is not free-form - the domain, the control-point count and the number of
+    tessellation factors all have to agree with what the real shader declared, or the pipeline
+    is rejected outright rather than silently tolerated.
+
+    The generated hull shader writes its inside factors as a ONE-ELEMENT ARRAY even for a
+    triangle domain, where the idiomatic HLSL spelling is a bare scalar. That is deliberate:
+    slangc 2024.13 crashes with `assert failure: toStyle != TypeCastStyle::Unknown` on a
+    scalar `SV_InsideTessFactor` in a `tri` domain, and the array form compiles. Generated
+    code gets to sidestep a compiler bug that a user's own shader cannot.
+    """
+    outer, inner = tess["factors"]
+    domain = {"triangles": "tri", "quads": "quad", "isolines": "isoline"}[tess["domain"]]
+    fields = []
+    assigns = []
+    for i, v in enumerate(varyings):
+        parsed = parse_type(v["type"])
+        if not parsed:
+            raise ReflectError(
+                "location %d is %s, which a generated %s shader cannot declare"
+                % (v["location"], v["type"], stage))
+        base, components = parsed
+        fields.append("    [[vk::location(%d)]] %s v%d : TEXCOORD%d;"
+                      % (v["location"], v["type"], i, i))
+        assigns.append((i, base, components))
+
+    const_fields = ["    float edges[%d] : SV_TessFactor;" % outer]
+    if inner:
+        const_fields.append("    float inside[%d] : SV_InsideTessFactor;" % inner)
+
+    common = [
+        "// Generated: the other half of a tessellation pair. Hull and domain shaders cannot",
+        "// exist apart, so compiling one means supplying the other.",
+        "struct Patch",
+        "{",
+    ] + fields + [
+        "};",
+        "",
+        "struct PatchConstants",
+        "{",
+    ] + const_fields + [
+        "};",
+        "",
+    ]
+
+    if stage == "hull":
+        body = [
+            "PatchConstants hsConst(InputPatch<Patch, %d> patch)" % patch_points,
+            "{",
+            "    PatchConstants c;",
+        ] + ["    c.edges[%d] = 2.0f;" % k for k in range(outer)] \
+          + (["    c.inside[%d] = 2.0f;" % k for k in range(inner)] if inner else []) + [
+            "    return c;",
+            "}",
+            "",
+            '[shader("hull")]',
+            '[domain("%s")]' % domain,
+            '[partitioning("%s")]' % (tess["spacing"] or "integer").replace("equal", "integer"),
+            '[outputtopology("%s")]' % ("triangle_cw" if tess["winding"] != "ccw"
+                                        else "triangle_ccw"),
+            "[outputcontrolpoints(%d)]" % (tess["outputVertices"] or patch_points),
+            '[patchconstantfunc("hsConst")]',
+            "Patch hsMain(InputPatch<Patch, %d> patch, uint i : SV_OutputControlPointID)"
+            % patch_points,
+            "{",
+            "    return patch[i];",
+            "}",
+            "",
+        ]
+    elif stage == "domain":
+        # A domain shader must write a position, or there is no pipeline. The varyings are
+        # passed through from the first control point, which keeps every one of them live -
+        # the conservative choice, matching what a full consumer does elsewhere.
+        location = "float3 bary" if tess["domain"] == "triangles" else "float2 uv"
+        body = [
+            "struct DomainOut",
+            "{",
+            "    float4 pos : SV_Position;",
+        ] + ["    [[vk::location(%d)]] %s v%d : TEXCOORD%d;"
+             % (v["location"], v["type"], i, i) for i, v in enumerate(varyings)] + [
+            "};",
+            "",
+            '[shader("domain")]',
+            '[domain("%s")]' % domain,
+            "DomainOut dsMain(PatchConstants constants, %s : SV_DomainLocation,"
+            % location,
+            "                 const OutputPatch<Patch, %d> patch)" % patch_points,
+            "{",
+            "    DomainOut o;",
+            "    o.pos = float4(%s, 1.0f);"
+            % ("bary" if tess["domain"] == "triangles" else "uv, 0.0f"),
+        ] + ["    o.v%d = patch[0].v%d;" % (i, i) for i, _b, _c in assigns] + [
+            "    return o;",
+            "}",
+            "",
+        ]
+    else:
+        raise ReflectError("no counterpart is generated for a %s shader" % stage)
+
+    return "\n".join(common + body)
+
+
 def interfaces_match(producer_outputs, consumer_inputs):
     """None when the two interfaces agree slot for slot, else why they do not."""
     a = [(v["location"], v["type"]) for v in producer_outputs]
@@ -519,6 +699,11 @@ def reflect(path):
         name, topology, vertices = module.input_primitive()
         out["primitive"] = {"name": name, "topology": topology, "vertices": vertices}
         out["perVertexInputs"] = module.per_vertex_inputs()
+    if any(s.startswith("tessellation") for s, _ in module.entry_points):
+        out["tessellation"] = module.tessellation()
+        out["patchControlPoints"] = module.patch_size()
+        out["perControlPointInputs"] = module.per_control_point_inputs()
+        out["perControlPointOutputs"] = module.per_control_point_outputs()
     return out
 
 
@@ -561,6 +746,50 @@ def main(argv):
         producer_out = argv[at + 1]
     paths = [a for i, a in enumerate(argv[1:], 1)
              if not a.startswith("--") and a != producer_out]
+
+    # `--counterpart <out.slang>` writes the other half of a tessellation pair: a domain
+    # shader for a hull module, a hull shader for a domain one.
+    counterpart_out = None
+    if "--counterpart" in argv:
+        at = argv.index("--counterpart")
+        if at + 1 >= len(argv):
+            sys.stderr.write("--counterpart needs a path to write the generated shader to\n")
+            return 2
+        counterpart_out = argv[at + 1]
+        paths = [a for a in paths if a != counterpart_out]
+
+    if counterpart_out:
+        if len(paths) != 1:
+            sys.stderr.write("--counterpart takes exactly one module to match\n")
+            return 2
+        try:
+            with open(paths[0], "rb") as handle:
+                module = Module(handle.read())
+            stage = module.entry_points[0][0] if module.entry_points else ""
+            tess = module.tessellation()
+            points = module.patch_size()
+            if stage == "tessellation_control":
+                # The domain shader reads what the hull shader wrote.
+                source = tess_counterpart("domain", tess, module.per_control_point_outputs(),
+                                          tess["outputVertices"] or points)
+                wanted = "domain"
+            elif stage == "tessellation_evaluation":
+                # The hull shader must produce what the domain shader reads.
+                source = tess_counterpart("hull", tess, module.per_control_point_inputs(),
+                                          points)
+                wanted = "hull"
+            else:
+                sys.stderr.write("%s is a %s shader, which has no tessellation counterpart\n"
+                                 % (paths[0], stage))
+                return 2
+        except ReflectError as e:
+            sys.stderr.write("counterpart synthesis refused: %s\n" % e)
+            return 1
+        with open(counterpart_out, "w", encoding="utf-8") as handle:
+            handle.write(source)
+        sys.stderr.write("generated a %s shader for a %s domain, %d control point(s)\n"
+                         % (wanted, tess["domain"], points or 0))
+        return 0
 
     if producer_out:
         if len(paths) != 1:

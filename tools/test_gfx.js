@@ -335,9 +335,94 @@ function findBin(dir) {
     }
   }
 
+  // ------------------------------------------------------------------ tessellation
+
+  section('5. The tessellation stages');
+
+  const hs = path.join(FIXTURES, 'tessHs.spv');
+  const ds = path.join(FIXTURES, 'tessDs.spv');
+  if (!PY) {
+    skip('no Python interpreter');
+  } else if (!fs.existsSync(hs)) {
+    skip('no tessellation fixtures');
+  } else {
+    // A hull shader carries the whole declaration - domain, spacing, winding, how many control
+    // points it emits. A domain shader carries only the domain, because in HLSL the rest is
+    // the hull shader's to state. That asymmetry is why the two synthesis directions differ.
+    const rh = run(PY, [REFLECT, hs, '--json']);
+    if (check(rh.code === 0, 'a hull module reflects', rh.stderr)) {
+      const m = JSON.parse(rh.stdout).modules[0];
+      check(m.tessellation && m.tessellation.domain === 'quads' &&
+        m.tessellation.spacing === 'fractional_odd' && m.tessellation.outputVertices === 4,
+        'with its domain, spacing and control-point count', JSON.stringify(m.tessellation));
+      check(m.patchControlPoints === 4,
+        'and the patch size, taken from its input array length', String(m.patchControlPoints));
+    }
+    const rd = run(PY, [REFLECT, ds, '--json']);
+    if (check(rd.code === 0, 'a domain module reflects', rd.stderr)) {
+      const m = JSON.parse(rd.stdout).modules[0];
+      check(m.tessellation && m.tessellation.domain === 'quads' &&
+        m.tessellation.spacing === null,
+        'carrying its domain but not the spacing, which is the hull shader\'s to declare',
+        JSON.stringify(m.tessellation));
+    }
+
+    if (!probe || probe.code !== 0) {
+      skip('no usable Vulkan device for the tessellation round-trip');
+    } else {
+      const trio = {
+        vs: path.join(FIXTURES, 'tessVs.spv'), fs: null, hs, ds,
+        layout: { bindings: [] },
+        state: { topology: 'patch_list', patchControlPoints: 4 }
+      };
+      const real = await pipeline('tess', trio);
+      if (check(!real.error, 'a vertex + hull + domain pipeline is created', real.error)) {
+        check(real.hull === '618d558286e5', 'the hull microcode is what was recorded',
+          `got ${real.hull}, want 618d558286e5`);
+        check(real.domain === '22d5ea41c851', 'the domain microcode is what was recorded',
+          `got ${real.domain}, want 22d5ea41c851`);
+      }
+
+      // The two synthesis directions are NOT equally safe, and the difference is measured
+      // rather than assumed. A generated hull leaves the domain shader untouched. A generated
+      // domain reads every output the hull declares, where a real one may read fewer - so the
+      // driver eliminates less and the hull comes out larger. That makes the second an upper
+      // bound, which the compile path reports as one.
+      const genHs = path.join(FIXTURES, 'tessGenHs.spv');
+      if (fs.existsSync(genHs)) {
+        // Compiling a DOMAIN shader: the hull is the one being generated, and the stage under
+        // test comes out unchanged.
+        const synth = await pipeline('tess-gen-hs', { ...trio, hs: genHs });
+        check(!synth.error && synth.domain === real.domain,
+          'compiling a domain shader against a GENERATED hull leaves it byte-identical',
+          synth.error || `got ${synth.domain}, want ${real.domain}`);
+      }
+      const genDs = path.join(FIXTURES, 'tessGenDs.spv');
+      if (fs.existsSync(genDs)) {
+        // Compiling a HULL shader: the domain is generated, and it reads every output the
+        // hull declares where the real one reads fewer - so less is eliminated and the hull
+        // comes out larger. An upper bound, which the compile path reports as one.
+        const synth = await pipeline('tess-gen-ds', { ...trio, ds: genDs });
+        check(!synth.error && synth.hull !== real.hull,
+          'compiling a hull shader against a GENERATED domain does NOT, which is why that ' +
+          'case is reported as an upper bound',
+          synth.error || `both ${synth.hull}`);
+      }
+
+      // A tessellation pipeline with no patch size is not a pipeline. There is no default
+      // worth guessing: it is the hull shader's input array length.
+      const noPatch = await pipeline('tess-no-patch', {
+        ...trio, state: { topology: 'patch_list' }
+      });
+      check(!!noPatch.error && /patchControlPoints/.test(noPatch.error),
+        'a tessellation pipeline with no patch size is refused by name',
+        noPatch.error || 'it was accepted');
+    }
+  }
+
   // ------------------------------------------------------------------ validation
 
-  section('5. What the validation layer makes of these pipelines');
+  section('6. What the validation layer makes of these pipelines');
 
   // The check that would have found the bug that hid the longest. `dynamicRendering` was
   // never enabled - the 1.3 features struct carried the sType of the 1.1 one - and every
@@ -362,7 +447,11 @@ function findBin(dir) {
         layout: { bindings: [] } } },
       { tag: 'geometry', request: { vs: path.join(FIXTURES, 'gsProducer.spv'),
         fs: null, gs: path.join(FIXTURES, 'gsMain.spv'),
-        layout: { bindings: [] }, state: { topology: 'triangle_list' } } }
+        layout: { bindings: [] }, state: { topology: 'triangle_list' } } },
+      { tag: 'tessellation', request: { vs: path.join(FIXTURES, 'tessVs.spv'), fs: null,
+        hs: path.join(FIXTURES, 'tessHs.spv'), ds: path.join(FIXTURES, 'tessDs.spv'),
+        layout: { bindings: [] },
+        state: { topology: 'patch_list', patchControlPoints: 4 } } }
     ].filter(c => Object.values(c.request)
       .every(v => typeof v !== 'string' || fs.existsSync(v)));
 
