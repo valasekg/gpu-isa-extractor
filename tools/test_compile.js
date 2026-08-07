@@ -102,9 +102,64 @@ section('2. Routing flags to the tool each belongs to');
   equal(trailing.ptxas.length, 0, 'a dangling -Xptxas consumes nothing and does not throw');
 }
 
+// --------------------------------------------------------------------------- pipeline
+
+section('3. Pipeline controls for a graphics shader');
+
+{
+  const HOME = path.resolve('/work/shaders');
+  const r = compile.routeFlags(['-O3', '-Xvk', 'samples=4', '-Xvk', 'bind=0:0:8:1',
+    '-Xvk', 'bind=0:1:2:1', '-Xvk=format=r16g16b16a16_sf']);
+  equal(r.primary.join(' '), '-O3', 'bare flags are untouched by the vk route');
+  equal(r.vk.length, 4, '-Xvk collects, in both spellings');
+
+  const p = compile.pipelineControls(r.vk, HOME);
+  equal(p.errors.length, 0, 'well-formed controls raise nothing', p.errors.join('; '));
+  equal(p.state.samples, 4, 'a sample count is read as a number');
+  equal(p.state.format, 'r16g16b16a16_sf', 'a render-target format is read');
+  equal(JSON.stringify(p.layout.bindings), '[[0,0,8,1],[0,1,2,1]]',
+    'bindings become set:binding:type:count, count defaulting to 1');
+}
+
+{
+  // The distinction that matters: saying nothing is NOT the same as saying "no descriptors".
+  // An empty layout where one should have been reflected drops every binding the shader
+  // declares, and the measured effect of a wrong layout is different code, not an error.
+  const quiet = compile.pipelineControls([], path.resolve('/w'));
+  check(quiet.layout === null, 'a file that says nothing gets no layout, not an empty one');
+  const stated = compile.pipelineControls(['push=128'], path.resolve('/w'));
+  check(stated.layout !== null && stated.layout.pushBytes === 128,
+    'but a stated push-constant range does make the layout explicit');
+}
+
+{
+  const HOME = path.resolve('/work/shaders');
+  const p = compile.pipelineControls(['producer=../common/fullscreen.slang:vsMain'], HOME);
+  equal(p.producer.file, path.resolve(HOME, '../common/fullscreen.slang'),
+    'a producer path resolves against the shader, like an include directory does');
+  equal(p.producer.entry, 'vsMain', 'and its entry point is split off');
+
+  const bare = compile.pipelineControls(['producer=fullscreen.slang'], HOME);
+  equal(bare.producer.entry, null, 'naming no entry point is allowed');
+  // A drive letter carries a colon of its own, which a naive split would read as an entry.
+  const drive = compile.pipelineControls(['producer=C:\\shaders\\full.slang'], HOME);
+  equal(drive.producer.entry, null, 'a Windows drive letter is not mistaken for an entry point');
+  equal(drive.producer.file, path.resolve('C:\\shaders\\full.slang'), 'and the path survives');
+}
+
+{
+  const bad = compile.pipelineControls(
+    ['bind=0:0', 'samples=3', 'nonsense=1', 'format'], path.resolve('/w'));
+  equal(bad.errors.length, 4, 'every malformed control is reported, not the first only',
+    JSON.stringify(bad.errors));
+  check(/power of two/.test(bad.errors[1]), 'a sample count that is not a power of two is named');
+  check(/not a pipeline control/.test(bad.errors[2]), 'an unknown control is named');
+  check(bad.layout === null, 'and nothing malformed leaks into the layout');
+}
+
 // --------------------------------------------------------------------------- includes
 
-section('3. Include directories');
+section('4. Include directories');
 
 // Built with `path.resolve` rather than written out, so the expectations are the platform's
 // own spelling and the suite says the same thing on both.
@@ -202,7 +257,7 @@ function dirsOf(args) {
 
 // --------------------------------------------------------------------------- stages
 
-section('4. Entry points and the stage gate');
+section('5. Entry points and the stage gate');
 
 {
   const src = `
@@ -253,7 +308,7 @@ section('4. Entry points and the stage gate');
     'naming a graphics entry point explicitly is still refused');
 }
 
-section('5. Languages');
+section('6. Languages');
 
 {
   equal(compile.languageOf('a.slang'), 'slang', '.slang');
@@ -263,7 +318,7 @@ section('5. Languages');
   equal(compile.languageOf('a.bin'), null, 'a cache blob is not a source file');
 }
 
-section('6. What ptxas -v reports');
+section('7. What ptxas -v reports');
 
 {
   const log = [
@@ -288,7 +343,7 @@ section('6. What ptxas -v reports');
 
 // --------------------------------------------------------------------------- cubin
 
-section('7. Reading a cubin');
+section('8. Reading a cubin');
 
 /** Build an ELF64 cubin with one .text section, field by field. */
 function buildCubin({ machine = 190, sm = 86, entry = 'k', code = null, regs = 12 } = {}) {
@@ -379,7 +434,7 @@ function buildCubin({ machine = 190, sm = 86, entry = 'k', code = null, regs = 1
 
 // --------------------------------------------------------------------------- correlation
 
-section('8. Source correlation');
+section('9. Source correlation');
 
 const NVDISASM_G = [
   '//--------------------- .text.csMain              --------------------------',
@@ -454,7 +509,7 @@ const NVDISASM_G = [
   equal(merged.text, listing, 'no map means no change');
 }
 
-section('9. The banner address map');
+section('10. The banner address map');
 
 {
   const records = [
@@ -565,7 +620,7 @@ section('9. The banner address map');
     'and so is the case where there was no copy at all');
 }
 
-section('10. Correlating a selection, not just a cursor');
+section('11. Correlating a selection, not just a cursor');
 
 {
   const listing = [
@@ -622,7 +677,7 @@ section('10. Correlating a selection, not just a cursor');
     'selecting a whole file collapses to one range, not half a million');
 }
 
-section('11. Markers must not reach the statistics');
+section('12. Markers must not reach the statistics');
 
 {
   // `stats.analyze` scans the whole listing string for register operands rather than each

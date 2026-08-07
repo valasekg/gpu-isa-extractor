@@ -1,0 +1,829 @@
+#!/usr/bin/env python3
+"""Make the GPU driver compile a graphics shader, by creating one Vulkan pipeline.
+
+A vertex or fragment shader has no CUDA lowering, so the `.slang -> .cu -> .ptx -> .cubin`
+route this extension uses for compute cannot reach it - `slangc -stage fragment -target cuda`
+crashes outright. The only compiler that turns a graphics shader into SASS is the one inside
+the display driver, and the only way to ask it is to create a pipeline. That is all this file
+does: no swapchain, no images, no render pass, no draw. Dynamic rendering is what makes that
+possible, because the colour and depth formats become pipeline state rather than properties of
+a VkRenderPass that would need real attachments behind it.
+
+Run with `__GL_SHADER_DISK_CACHE_PATH` pointed at a fresh directory and the driver's output is
+the only thing in it, ready for the same carve the cache path already performs.
+
+## Why Python
+
+Vulkan is a C API behind a loader, and the extension host cannot call native code - the same
+problem `nvrtc_compile.py` has with NVRTC, solved the same way, for the same reason: a ctypes
+file needs no build step, no npm, and no per-platform binary in the VSIX. Measured on this
+machine, this file reproduces a C++ harness's microcode byte for byte, and all 21 struct
+layouts match what MSVC computes from the real headers.
+
+## Contract
+
+    py vk_compile.py <request.json>
+    py vk_compile.py --probe        # which loader, which devices; compile nothing
+    py vk_compile.py --layout       # sizeof/offsetof per struct, for the ABI cross-check
+
+    {"vs": "producer.spv",          # required
+     "fs": "shader.spv",            # or null for rasterizer discard
+     "layout": {"bindings": [[set, binding, descriptorType, count]], "pushBytes": 0},
+     "state": {"format": "r8g8b8a8_unorm", "samples": 1, "depth": "none"},
+     "layers": ["VK_LAYER_KHRONOS_validation"],
+     "checkInterface": true,
+     "loader": null}
+
+Exit codes: 0 created, 1 the driver refused the pipeline, 2 Vulkan unusable or the request is
+bad, 3 this interpreter cannot be used, 4 the driver faulted.
+"""
+
+import ctypes as C
+import faulthandler
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE, EXIT_INTERPRETER, EXIT_FAULTED = 0, 1, 2, 3, 4
+
+# ---------------------------------------------------------------- base types
+u32, i32, f32, sz = C.c_uint32, C.c_int32, C.c_float, C.c_size_t
+VkBool32 = C.c_uint32
+VkFlags = C.c_uint32
+VkEnum = C.c_int32           # every Vulkan enum is pinned to 32 bits by its _MAX_ENUM member
+Handle = C.c_void_p          # dispatchable: VkInstance/VkPhysicalDevice/VkDevice
+NonDisp = C.c_uint64         # non-dispatchable: VkShaderModule/VkPipeline/... always 64 bits
+VOID = C.c_void_p
+
+VK_SUCCESS = 0
+VK_TRUE, VK_FALSE = 1, 0
+VK_NULL_HANDLE = 0
+
+
+def api_version(major, minor, patch=0):
+    return (major << 22) | (minor << 12) | patch
+
+
+# ---------------------------------------------------------------- structs
+class VkExtent3D(C.Structure):
+    _fields_ = [("width", u32), ("height", u32), ("depth", u32)]
+
+
+class VkApplicationInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID),
+                ("pApplicationName", C.c_char_p), ("applicationVersion", u32),
+                ("pEngineName", C.c_char_p), ("engineVersion", u32), ("apiVersion", u32)]
+
+
+class VkInstanceCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("pApplicationInfo", C.POINTER(VkApplicationInfo)),
+                ("enabledLayerCount", u32), ("ppEnabledLayerNames", VOID),
+                ("enabledExtensionCount", u32), ("ppEnabledExtensionNames", VOID)]
+
+
+# vkGetPhysicalDeviceProperties writes 824 bytes, almost all of it VkPhysicalDeviceLimits -
+# 110 fields nobody here reads. Declaring only the prefix and letting the driver write past the
+# end of the allocation is a heap smash, so the tail is reserved rather than described.
+class VkPhysicalDeviceProperties(C.Structure):
+    _fields_ = [("apiVersion", u32), ("driverVersion", u32),
+                ("vendorID", u32), ("deviceID", u32), ("deviceType", VkEnum),
+                ("deviceName", C.c_char * 256), ("pipelineCacheUUID", C.c_uint8 * 16),
+                ("_tail", C.c_uint8 * 4096)]
+
+
+class VkQueueFamilyProperties(C.Structure):
+    _fields_ = [("queueFlags", VkFlags), ("queueCount", u32),
+                ("timestampValidBits", u32), ("minImageTransferGranularity", VkExtent3D)]
+
+
+class VkDeviceQueueCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("queueFamilyIndex", u32), ("queueCount", u32),
+                ("pQueuePriorities", C.POINTER(f32))]
+
+
+class VkPhysicalDeviceVulkan13Features(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
+        (n, VkBool32) for n in (
+            "robustImageAccess", "inlineUniformBlock",
+            "descriptorBindingInlineUniformBlockUpdateAfterBind",
+            "pipelineCreationCacheControl", "privateData",
+            "shaderDemoteToHelperInvocation", "shaderTerminateInvocation",
+            "subgroupSizeControl", "computeFullSubgroups", "synchronization2",
+            "textureCompressionASTC_HDR", "shaderZeroInitializeWorkgroupMemory",
+            "dynamicRendering", "shaderIntegerDotProduct", "maintenance4")]
+
+
+class VkDeviceCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("queueCreateInfoCount", u32),
+                ("pQueueCreateInfos", C.POINTER(VkDeviceQueueCreateInfo)),
+                ("enabledLayerCount", u32), ("ppEnabledLayerNames", VOID),
+                ("enabledExtensionCount", u32), ("ppEnabledExtensionNames", VOID),
+                ("pEnabledFeatures", VOID)]
+
+
+class VkShaderModuleCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("codeSize", sz), ("pCode", VOID)]
+
+
+class VkDescriptorSetLayoutBinding(C.Structure):
+    _fields_ = [("binding", u32), ("descriptorType", VkEnum), ("descriptorCount", u32),
+                ("stageFlags", VkFlags), ("pImmutableSamplers", VOID)]
+
+
+class VkDescriptorSetLayoutCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("bindingCount", u32),
+                ("pBindings", C.POINTER(VkDescriptorSetLayoutBinding))]
+
+
+class VkPushConstantRange(C.Structure):
+    _fields_ = [("stageFlags", VkFlags), ("offset", u32), ("size", u32)]
+
+
+class VkPipelineLayoutCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("setLayoutCount", u32), ("pSetLayouts", C.POINTER(NonDisp)),
+                ("pushConstantRangeCount", u32),
+                ("pPushConstantRanges", C.POINTER(VkPushConstantRange))]
+
+
+class VkPipelineShaderStageCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("stage", VkFlags), ("module", NonDisp),
+                ("pName", C.c_char_p), ("pSpecializationInfo", VOID)]
+
+
+class VkPipelineVertexInputStateCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("vertexBindingDescriptionCount", u32), ("pVertexBindingDescriptions", VOID),
+                ("vertexAttributeDescriptionCount", u32),
+                ("pVertexAttributeDescriptions", VOID)]
+
+
+class VkPipelineInputAssemblyStateCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("topology", VkEnum), ("primitiveRestartEnable", VkBool32)]
+
+
+class VkPipelineViewportStateCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("viewportCount", u32), ("pViewports", VOID),
+                ("scissorCount", u32), ("pScissors", VOID)]
+
+
+class VkPipelineRasterizationStateCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("depthClampEnable", VkBool32), ("rasterizerDiscardEnable", VkBool32),
+                ("polygonMode", VkEnum), ("cullMode", VkFlags), ("frontFace", VkEnum),
+                ("depthBiasEnable", VkBool32), ("depthBiasConstantFactor", f32),
+                ("depthBiasClamp", f32), ("depthBiasSlopeFactor", f32), ("lineWidth", f32)]
+
+
+class VkPipelineMultisampleStateCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("rasterizationSamples", VkFlags), ("sampleShadingEnable", VkBool32),
+                ("minSampleShading", f32), ("pSampleMask", VOID),
+                ("alphaToCoverageEnable", VkBool32), ("alphaToOneEnable", VkBool32)]
+
+
+class VkStencilOpState(C.Structure):
+    _fields_ = [("failOp", VkEnum), ("passOp", VkEnum), ("depthFailOp", VkEnum),
+                ("compareOp", VkEnum), ("compareMask", u32), ("writeMask", u32),
+                ("reference", u32)]
+
+
+class VkPipelineDepthStencilStateCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("depthTestEnable", VkBool32), ("depthWriteEnable", VkBool32),
+                ("depthCompareOp", VkEnum), ("depthBoundsTestEnable", VkBool32),
+                ("stencilTestEnable", VkBool32), ("front", VkStencilOpState),
+                ("back", VkStencilOpState), ("minDepthBounds", f32), ("maxDepthBounds", f32)]
+
+
+class VkPipelineColorBlendAttachmentState(C.Structure):
+    _fields_ = [("blendEnable", VkBool32), ("srcColorBlendFactor", VkEnum),
+                ("dstColorBlendFactor", VkEnum), ("colorBlendOp", VkEnum),
+                ("srcAlphaBlendFactor", VkEnum), ("dstAlphaBlendFactor", VkEnum),
+                ("alphaBlendOp", VkEnum), ("colorWriteMask", VkFlags)]
+
+
+class VkPipelineColorBlendStateCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("logicOpEnable", VkBool32), ("logicOp", VkEnum), ("attachmentCount", u32),
+                ("pAttachments", C.POINTER(VkPipelineColorBlendAttachmentState)),
+                ("blendConstants", f32 * 4)]
+
+
+class VkPipelineDynamicStateCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("dynamicStateCount", u32), ("pDynamicStates", C.POINTER(VkEnum))]
+
+
+class VkPipelineRenderingCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("viewMask", u32),
+                ("colorAttachmentCount", u32), ("pColorAttachmentFormats", C.POINTER(VkEnum)),
+                ("depthAttachmentFormat", VkEnum), ("stencilAttachmentFormat", VkEnum)]
+
+
+class VkGraphicsPipelineCreateInfo(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("flags", VkFlags),
+                ("stageCount", u32),
+                ("pStages", C.POINTER(VkPipelineShaderStageCreateInfo)),
+                ("pVertexInputState", C.POINTER(VkPipelineVertexInputStateCreateInfo)),
+                ("pInputAssemblyState", C.POINTER(VkPipelineInputAssemblyStateCreateInfo)),
+                ("pTessellationState", VOID),
+                ("pViewportState", C.POINTER(VkPipelineViewportStateCreateInfo)),
+                ("pRasterizationState", C.POINTER(VkPipelineRasterizationStateCreateInfo)),
+                ("pMultisampleState", C.POINTER(VkPipelineMultisampleStateCreateInfo)),
+                ("pDepthStencilState", C.POINTER(VkPipelineDepthStencilStateCreateInfo)),
+                ("pColorBlendState", C.POINTER(VkPipelineColorBlendStateCreateInfo)),
+                ("pDynamicState", C.POINTER(VkPipelineDynamicStateCreateInfo)),
+                ("layout", NonDisp), ("renderPass", NonDisp), ("subpass", u32),
+                ("basePipelineHandle", NonDisp), ("basePipelineIndex", i32)]
+
+
+LAYOUT_STRUCTS = [
+    VkApplicationInfo, VkInstanceCreateInfo, VkQueueFamilyProperties,
+    VkDeviceQueueCreateInfo, VkPhysicalDeviceVulkan13Features, VkDeviceCreateInfo,
+    VkShaderModuleCreateInfo, VkDescriptorSetLayoutBinding, VkDescriptorSetLayoutCreateInfo,
+    VkPushConstantRange, VkPipelineLayoutCreateInfo, VkPipelineShaderStageCreateInfo,
+    VkPipelineVertexInputStateCreateInfo, VkPipelineInputAssemblyStateCreateInfo,
+    VkPipelineViewportStateCreateInfo, VkPipelineRasterizationStateCreateInfo,
+    VkPipelineMultisampleStateCreateInfo, VkStencilOpState,
+    VkPipelineDepthStencilStateCreateInfo, VkPipelineColorBlendAttachmentState,
+    VkPipelineColorBlendStateCreateInfo, VkPipelineDynamicStateCreateInfo,
+    VkPipelineRenderingCreateInfo, VkGraphicsPipelineCreateInfo,
+]
+
+
+def layout_report():
+    """sizeof and every offsetof, so a C compiler can be asked whether ctypes agrees."""
+    out = {}
+    for s in LAYOUT_STRUCTS:
+        out[s.__name__] = {
+            "sizeof": C.sizeof(s),
+            "fields": {n: getattr(s, n).offset
+                       for n, *_ in s._fields_ if not n.startswith("_")},
+        }
+    return out
+
+
+# ---------------------------------------------------------------- constants
+ST = dict(
+    APPLICATION_INFO=0, INSTANCE_CREATE_INFO=1, DEVICE_QUEUE_CREATE_INFO=2,
+    DEVICE_CREATE_INFO=3, SHADER_MODULE_CREATE_INFO=16, PIPELINE_SHADER_STAGE_CREATE_INFO=18,
+    PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO=19, PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO=20,
+    PIPELINE_VIEWPORT_STATE_CREATE_INFO=22, PIPELINE_RASTERIZATION_STATE_CREATE_INFO=23,
+    PIPELINE_MULTISAMPLE_STATE_CREATE_INFO=24, PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO=25,
+    PIPELINE_COLOR_BLEND_STATE_CREATE_INFO=26, PIPELINE_DYNAMIC_STATE_CREATE_INFO=27,
+    GRAPHICS_PIPELINE_CREATE_INFO=28, DESCRIPTOR_SET_LAYOUT_CREATE_INFO=32,
+    PIPELINE_LAYOUT_CREATE_INFO=30,
+    PHYSICAL_DEVICE_VULKAN_1_3_FEATURES=49, PIPELINE_RENDERING_CREATE_INFO=1000044002,
+)
+
+COLOUR = {"r8g8b8a8_unorm": 37, "b8g8r8a8_unorm": 44, "r8g8b8a8_srgb": 43,
+          "a2b10g10r10": 64, "r16g16b16a16_sf": 97, "r32g32b32a32_sf": 109,
+          "r32g32b32a32_ui": 107, "r16g16b16a16_ui": 95}
+DEPTH = {"none": 0, "d16": 124, "d32": 126, "d24s8": 129, "d32s8": 130}
+
+VK_SHADER_STAGE_VERTEX_BIT = 0x1
+VK_SHADER_STAGE_FRAGMENT_BIT = 0x10
+VK_SHADER_STAGE_ALL_GRAPHICS = 0x1F
+VK_QUEUE_GRAPHICS_BIT = 0x1
+VK_POLYGON_MODE_FILL = 0
+VK_CULL_MODE_NONE = 0
+VK_FRONT_FACE_COUNTER_CLOCKWISE = 0
+VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST = 3
+VK_COMPARE_OP_LESS = 1
+VK_COLOR_COMPONENT_RGBA = 0xF
+VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR = 0, 1
+
+VK_ERROR_INCOMPATIBLE_DRIVER = -9
+
+
+# ---------------------------------------------------------------- interpreter gate
+
+def refuse_interpreter():
+    """Why this interpreter cannot be used, or None.
+
+    Both refusals are about the same contract: a native library loaded into *this* process
+    writes files that *another* process reads back. Anything that redirects either the pointer
+    width or the filesystem breaks it in a way that looks like a shader problem.
+    """
+    if C.sizeof(C.c_void_p) != 8:
+        return ("this is a 32-bit Python (%d-bit pointers). Vulkan's dispatchable handles and "
+                "every struct offset here assume 64 bits. Install a 64-bit Python 3, or set "
+                "nvIsaExtractor.compile.pythonPath to one." % (C.sizeof(C.c_void_p) * 8))
+
+    # A Microsoft Store Python runs under packaged-app filesystem redirection, which retargets
+    # writes under %LOCALAPPDATA% - including the shader cache directory this whole feature
+    # reads back from. `python` on a stock Windows resolves to the Store alias, so this is the
+    # common case rather than an exotic one.
+    for candidate in (sys.executable or "", getattr(sys, "_base_executable", "") or ""):
+        if "windowsapps" in candidate.replace("\\", "/").lower():
+            return ("this is a Microsoft Store Python (%s). Its filesystem redirection moves "
+                    "the shader cache this feature reads back, so the compile would appear to "
+                    "produce nothing. Install Python 3 from python.org, or set "
+                    "nvIsaExtractor.compile.pythonPath to a real interpreter." % candidate)
+    return None
+
+
+# ---------------------------------------------------------------- loader
+
+def load_loader(explicit=None):
+    names = [explicit] if explicit else []
+    if sys.platform == "win32":
+        names += ["vulkan-1.dll"]
+    elif sys.platform == "darwin":
+        names += ["libvulkan.1.dylib", "libMoltenVK.dylib"]
+    else:
+        names += ["libvulkan.so.1", "libvulkan.so"]
+    tried = []
+    for n in names:
+        if not n or n in tried:
+            continue
+        tried.append(n)
+        try:
+            return C.CDLL(n), n, tried
+        except OSError:
+            continue
+    return None, None, tried
+
+
+def bind(lib):
+    """Declare argtypes and restype on every entry point, without exception.
+
+    ctypes' default restype is c_int, so anything returning a pointer is truncated to 32 bits
+    and the failure is a wild pointer rather than an error. Nothing here is left to the default.
+    """
+    sig = {
+        "vkCreateInstance": ([VOID, VOID, VOID], i32),
+        "vkDestroyInstance": ([Handle, VOID], None),
+        "vkEnumeratePhysicalDevices": ([Handle, VOID, VOID], i32),
+        "vkGetPhysicalDeviceProperties": ([Handle, VOID], None),
+        "vkGetPhysicalDeviceQueueFamilyProperties": ([Handle, VOID, VOID], None),
+        "vkCreateDevice": ([Handle, VOID, VOID, VOID], i32),
+        "vkDestroyDevice": ([Handle, VOID], None),
+        "vkCreateShaderModule": ([Handle, VOID, VOID, VOID], i32),
+        "vkDestroyShaderModule": ([Handle, NonDisp, VOID], None),
+        "vkCreateDescriptorSetLayout": ([Handle, VOID, VOID, VOID], i32),
+        "vkDestroyDescriptorSetLayout": ([Handle, NonDisp, VOID], None),
+        "vkCreatePipelineLayout": ([Handle, VOID, VOID, VOID], i32),
+        "vkDestroyPipelineLayout": ([Handle, NonDisp, VOID], None),
+        "vkCreateGraphicsPipelines": ([Handle, NonDisp, u32, VOID, VOID, VOID], i32),
+        "vkDestroyPipeline": ([Handle, NonDisp, VOID], None),
+    }
+    fns = {}
+    for name, (argtypes, restype) in sig.items():
+        fn = getattr(lib, name)
+        fn.argtypes = argtypes
+        fn.restype = restype
+        fns[name] = fn
+    return fns
+
+
+def read_spirv(path):
+    with open(path, "rb") as h:
+        blob = h.read()
+    if not blob or len(blob) % 4:
+        raise ValueError("%s is %d bytes, not a whole number of SPIR-V words"
+                         % (path, len(blob)))
+    return blob
+
+
+# ---------------------------------------------------------------- the pipeline
+
+class Poke(object):
+    """One pipeline creation, with teardown that happens on every path.
+
+    Teardown is not tidiness. The driver flushes what it compiled to its shader disk cache as
+    the device is destroyed, and that cache file is the entire output of this program - so a
+    path that returns without destroying the device produces nothing to carve, and the failure
+    looks like "the shader has no instructions" rather than "the run was abandoned".
+    """
+
+    def __init__(self, vk, note):
+        self.vk = vk
+        self.note = note
+        self.instance = None
+        self.device = None
+        self.modules = []
+        self.set_layouts = []
+        self.pipeline_layout = None
+        self.pipeline = None
+        self.keep = []            # anything a Vulkan struct points at, kept alive until teardown
+
+    def destroy(self):
+        vk, device = self.vk, self.device
+        if device is not None:
+            if self.pipeline:
+                vk["vkDestroyPipeline"](device, self.pipeline, None)
+            if self.pipeline_layout:
+                vk["vkDestroyPipelineLayout"](device, self.pipeline_layout, None)
+            for h in self.set_layouts:
+                vk["vkDestroyDescriptorSetLayout"](device, h, None)
+            for h in self.modules:
+                vk["vkDestroyShaderModule"](device, h, None)
+            vk["vkDestroyDevice"](device, None)
+        if self.instance is not None:
+            vk["vkDestroyInstance"](self.instance, None)
+
+    # -- pointers ---------------------------------------------------------
+    def ptr(self, obj):
+        """A pointer field's value, with the pointee kept alive.
+
+        `C.pointer(x)` alone is not enough when x is a temporary: the object it points at can
+        be collected while the struct still holds the address, and the driver then reads freed
+        memory - silently, and usually correctly, until it does not.
+        """
+        self.keep.append(obj)
+        return C.pointer(obj)
+
+    def build(self, request):
+        vk = self.vk
+        state = request.get("state") or {}
+        fmt_name = state.get("format", "r8g8b8a8_unorm")
+        depth_name = state.get("depth", "none")
+        samples = int(state.get("samples", 1))
+        if fmt_name not in COLOUR:
+            return EXIT_UNUSABLE, "unknown colour format %r (have %s)" % (
+                fmt_name, ", ".join(sorted(COLOUR)))
+        if depth_name not in DEPTH:
+            return EXIT_UNUSABLE, "unknown depth format %r (have %s)" % (
+                depth_name, ", ".join(sorted(DEPTH)))
+        colour, depth = COLOUR[fmt_name], DEPTH[depth_name]
+
+        vs_path, fs_path = request.get("vs"), request.get("fs")
+        if not vs_path:
+            return EXIT_UNUSABLE, "the request names no vertex shader"
+        no_fs = not fs_path
+        try:
+            vs_code = read_spirv(vs_path)
+            fs_code = None if no_fs else read_spirv(fs_path)
+        except (OSError, ValueError) as e:
+            return EXIT_UNUSABLE, str(e)
+
+        # -- instance ----------------------------------------------------
+        layers = [l.encode("utf-8") for l in (request.get("layers") or [])]
+        layer_array = (C.c_char_p * len(layers))(*layers) if layers else None
+        app = VkApplicationInfo(sType=ST["APPLICATION_INFO"],
+                                pApplicationName=b"nv-isa-extractor",
+                                apiVersion=api_version(1, 3))
+        ici = VkInstanceCreateInfo(
+            sType=ST["INSTANCE_CREATE_INFO"], pApplicationInfo=self.ptr(app),
+            enabledLayerCount=len(layers),
+            ppEnabledLayerNames=C.cast(layer_array, VOID) if layers else None)
+        self.keep.append(layer_array)
+        instance = Handle()
+        r = vk["vkCreateInstance"](C.byref(ici), None, C.byref(instance))
+        if r != VK_SUCCESS:
+            if r == VK_ERROR_INCOMPATIBLE_DRIVER:
+                return EXIT_UNUSABLE, (
+                    "vkCreateInstance: VK_ERROR_INCOMPATIBLE_DRIVER (-9). No Vulkan driver is "
+                    "registered here. A datacenter or headless driver installs no Vulkan ICD, "
+                    "and a Remote Desktop session may enumerate none.")
+            return EXIT_UNUSABLE, "vkCreateInstance failed (VkResult %d)" % r
+        self.instance = instance
+
+        # -- device ------------------------------------------------------
+        n = u32()
+        vk["vkEnumeratePhysicalDevices"](instance, C.byref(n), None)
+        devices = (Handle * max(n.value, 1))()
+        vk["vkEnumeratePhysicalDevices"](instance, C.byref(n), C.byref(devices))
+
+        gpu, props = None, None
+        seen = []
+        for k in range(n.value):
+            p = VkPhysicalDeviceProperties()
+            vk["vkGetPhysicalDeviceProperties"](Handle(devices[k]), C.byref(p))
+            seen.append("%s (vendor 0x%04X)" % (p.deviceName.decode("utf-8", "replace"),
+                                                p.vendorID))
+            if p.vendorID == 0x10DE and gpu is None:
+                gpu, props = Handle(devices[k]), p
+        self.note("devices: %s" % ("; ".join(seen) if seen else "none"))
+        if gpu is None:
+            return EXIT_UNUSABLE, (
+                "no NVIDIA device is visible to Vulkan (%d device(s): %s). SASS is NVIDIA "
+                "machine code, so there is nothing to disassemble from another vendor's driver."
+                % (n.value, ", ".join(seen) or "none"))
+
+        vk["vkGetPhysicalDeviceQueueFamilyProperties"](gpu, C.byref(n), None)
+        fams = (VkQueueFamilyProperties * max(n.value, 1))()
+        vk["vkGetPhysicalDeviceQueueFamilyProperties"](gpu, C.byref(n), C.byref(fams))
+        graphics = next((k for k in range(n.value)
+                         if fams[k].queueFlags & VK_QUEUE_GRAPHICS_BIT), None)
+        if graphics is None:
+            return EXIT_UNUSABLE, "the NVIDIA device exposes no graphics queue family"
+
+        priority = f32(1.0)
+        qci = VkDeviceQueueCreateInfo(sType=ST["DEVICE_QUEUE_CREATE_INFO"],
+                                      queueFamilyIndex=graphics, queueCount=1,
+                                      pQueuePriorities=self.ptr(priority))
+        f13 = VkPhysicalDeviceVulkan13Features(
+            sType=ST["PHYSICAL_DEVICE_VULKAN_1_3_FEATURES"], dynamicRendering=VK_TRUE)
+        dci = VkDeviceCreateInfo(sType=ST["DEVICE_CREATE_INFO"],
+                                 pNext=C.cast(self.ptr(f13), VOID),
+                                 queueCreateInfoCount=1, pQueueCreateInfos=self.ptr(qci))
+        device = Handle()
+        r = vk["vkCreateDevice"](gpu, C.byref(dci), None, C.byref(device))
+        if r != VK_SUCCESS:
+            return EXIT_UNUSABLE, "vkCreateDevice failed (VkResult %d)" % r
+        self.device = device
+
+        # -- modules -----------------------------------------------------
+        def module(blob, what):
+            buf = C.create_string_buffer(blob, len(blob))
+            self.keep.append(buf)
+            smci = VkShaderModuleCreateInfo(sType=ST["SHADER_MODULE_CREATE_INFO"],
+                                            codeSize=len(blob), pCode=C.cast(buf, VOID))
+            h = NonDisp()
+            rc = vk["vkCreateShaderModule"](device, C.byref(smci), None, C.byref(h))
+            if rc != VK_SUCCESS:
+                return None, "vkCreateShaderModule(%s) failed (VkResult %d)" % (what, rc)
+            self.modules.append(h.value)
+            return h.value, None
+
+        vs, err = module(vs_code, "vertex")
+        if err:
+            return EXIT_REFUSED, err
+        fs = VK_NULL_HANDLE
+        if not no_fs:
+            fs, err = module(fs_code, "fragment")
+            if err:
+                return EXIT_REFUSED, err
+
+        # -- descriptor layout -------------------------------------------
+        # Grouped by set, because a VkPipelineLayout takes one VkDescriptorSetLayout per set
+        # and the sets must be contiguous from 0 - a gap is not expressible.
+        spec = request.get("layout") or {}
+        by_set = {}
+        for entry in spec.get("bindings") or []:
+            s, b, t, count = (list(entry) + [1])[:4]
+            by_set.setdefault(int(s), []).append((int(b), int(t), int(count)))
+        if by_set and sorted(by_set) != list(range(max(by_set) + 1)):
+            return EXIT_UNUSABLE, (
+                "the descriptor sets are %s, which is not contiguous from 0; an empty set "
+                "cannot be skipped in a pipeline layout" % sorted(by_set))
+
+        set_handles = (NonDisp * max(len(by_set), 1))()
+        for index in sorted(by_set):
+            entries = sorted(by_set[index])
+            arr = (VkDescriptorSetLayoutBinding * len(entries))()
+            for k, (b, t, count) in enumerate(entries):
+                arr[k].binding = b
+                arr[k].descriptorType = t
+                arr[k].descriptorCount = count
+                arr[k].stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS
+            self.keep.append(arr)
+            dslci = VkDescriptorSetLayoutCreateInfo(
+                sType=ST["DESCRIPTOR_SET_LAYOUT_CREATE_INFO"],
+                bindingCount=len(entries),
+                pBindings=C.cast(arr, C.POINTER(VkDescriptorSetLayoutBinding)))
+            h = NonDisp()
+            r = vk["vkCreateDescriptorSetLayout"](device, C.byref(dslci), None, C.byref(h))
+            if r != VK_SUCCESS:
+                return EXIT_REFUSED, "vkCreateDescriptorSetLayout(set %d) failed (VkResult %d)" \
+                    % (index, r)
+            self.set_layouts.append(h.value)
+            set_handles[index] = h.value
+
+        push_bytes = int(spec.get("pushBytes") or 0)
+        push = VkPushConstantRange(stageFlags=VK_SHADER_STAGE_ALL_GRAPHICS, offset=0,
+                                   size=push_bytes)
+        self.keep.append(set_handles)
+        plci = VkPipelineLayoutCreateInfo(
+            sType=ST["PIPELINE_LAYOUT_CREATE_INFO"],
+            setLayoutCount=len(by_set),
+            pSetLayouts=C.cast(set_handles, C.POINTER(NonDisp)) if by_set else None,
+            pushConstantRangeCount=1 if push_bytes else 0,
+            pPushConstantRanges=self.ptr(push) if push_bytes else None)
+        lay = NonDisp()
+        r = vk["vkCreatePipelineLayout"](device, C.byref(plci), None, C.byref(lay))
+        if r != VK_SUCCESS:
+            return EXIT_REFUSED, "vkCreatePipelineLayout failed (VkResult %d)" % r
+        self.pipeline_layout = lay.value
+        self.note("layout: %d set(s), %d binding(s), %d push byte(s)"
+                  % (len(by_set), sum(len(v) for v in by_set.values()), push_bytes))
+
+        # -- pipeline ----------------------------------------------------
+        stages = (VkPipelineShaderStageCreateInfo * 2)()
+        stages[0].sType = ST["PIPELINE_SHADER_STAGE_CREATE_INFO"]
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT
+        stages[0].module = vs
+        stages[0].pName = b"main"
+        stages[1].sType = ST["PIPELINE_SHADER_STAGE_CREATE_INFO"]
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT
+        stages[1].module = fs
+        stages[1].pName = b"main"
+        self.keep.append(stages)
+
+        vi = VkPipelineVertexInputStateCreateInfo(
+            sType=ST["PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO"])
+        ia = VkPipelineInputAssemblyStateCreateInfo(
+            sType=ST["PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO"],
+            topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        vp = VkPipelineViewportStateCreateInfo(sType=ST["PIPELINE_VIEWPORT_STATE_CREATE_INFO"],
+                                               viewportCount=1, scissorCount=1)
+        rs = VkPipelineRasterizationStateCreateInfo(
+            sType=ST["PIPELINE_RASTERIZATION_STATE_CREATE_INFO"],
+            polygonMode=VK_POLYGON_MODE_FILL, cullMode=VK_CULL_MODE_NONE,
+            frontFace=VK_FRONT_FACE_COUNTER_CLOCKWISE, lineWidth=1.0,
+            rasterizerDiscardEnable=VK_TRUE if no_fs else VK_FALSE)
+        ms = VkPipelineMultisampleStateCreateInfo(
+            sType=ST["PIPELINE_MULTISAMPLE_STATE_CREATE_INFO"], rasterizationSamples=samples)
+        ds = VkPipelineDepthStencilStateCreateInfo(
+            sType=ST["PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO"],
+            depthTestEnable=VK_TRUE if depth else VK_FALSE,
+            depthWriteEnable=VK_TRUE if depth else VK_FALSE,
+            depthCompareOp=VK_COMPARE_OP_LESS)
+        # The write mask must be non-zero. A masked-off attachment makes the fragment shader's
+        # output dead, and the whole varying chain back through the vertex shader dies with it.
+        blend = VkPipelineColorBlendAttachmentState(blendEnable=VK_FALSE,
+                                                    colorWriteMask=VK_COLOR_COMPONENT_RGBA)
+        cb = VkPipelineColorBlendStateCreateInfo(
+            sType=ST["PIPELINE_COLOR_BLEND_STATE_CREATE_INFO"],
+            attachmentCount=0 if no_fs else 1,
+            pAttachments=None if no_fs else self.ptr(blend))
+        dynamics = (VkEnum * 2)(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR)
+        dyn = VkPipelineDynamicStateCreateInfo(
+            sType=ST["PIPELINE_DYNAMIC_STATE_CREATE_INFO"],
+            dynamicStateCount=2, pDynamicStates=C.cast(dynamics, C.POINTER(VkEnum)))
+        self.keep.append(dynamics)
+
+        colour_fmt = VkEnum(colour)
+        rendering = VkPipelineRenderingCreateInfo(
+            sType=ST["PIPELINE_RENDERING_CREATE_INFO"],
+            colorAttachmentCount=0 if no_fs else 1,
+            pColorAttachmentFormats=None if no_fs else self.ptr(colour_fmt),
+            depthAttachmentFormat=depth,
+            stencilAttachmentFormat=depth if depth in (DEPTH["d24s8"], DEPTH["d32s8"]) else 0)
+
+        gpci = VkGraphicsPipelineCreateInfo(
+            sType=ST["GRAPHICS_PIPELINE_CREATE_INFO"],
+            pNext=C.cast(self.ptr(rendering), VOID),
+            stageCount=1 if no_fs else 2,
+            pStages=C.cast(stages, C.POINTER(VkPipelineShaderStageCreateInfo)),
+            pVertexInputState=self.ptr(vi), pInputAssemblyState=self.ptr(ia),
+            pViewportState=self.ptr(vp), pRasterizationState=self.ptr(rs),
+            pMultisampleState=self.ptr(ms), pDepthStencilState=self.ptr(ds),
+            pColorBlendState=self.ptr(cb), pDynamicState=self.ptr(dyn),
+            layout=self.pipeline_layout)
+
+        pipeline = NonDisp()
+        r = vk["vkCreateGraphicsPipelines"](device, VK_NULL_HANDLE, 1, C.byref(gpci), None,
+                                            C.byref(pipeline))
+        if r != VK_SUCCESS:
+            return EXIT_REFUSED, "vkCreateGraphicsPipelines failed (VkResult %d)" % r
+        self.pipeline = pipeline.value
+
+        self.note("device            %s" % props.deviceName.decode("utf-8", "replace"))
+        v = props.apiVersion
+        self.note("api               %u.%u.%u" % (v >> 22, (v >> 12) & 0x3FF, v & 0xFFF))
+        self.note("colour format     %s (%d)" % (fmt_name, colour))
+        self.note("depth format      %s (%d)" % (depth_name, depth))
+        self.note("samples           %u" % samples)
+        return EXIT_OK, None
+
+
+def check_interface(request, note):
+    """Refuse a producer/consumer pair whose interfaces do not match.
+
+    The driver will not do this for us: measured on an RTX A4500, a mismatched pair violates
+    VUID-RuntimeSpirv-OpEntryPoint-08743 and VUID-RuntimeSpirv-maintenance4-06817, and the
+    driver still compiles it, still exits 0, and still yields byte-identical fragment code.
+    Only the validation layer objects. A listing produced from such a pipeline would describe
+    something undefined, so the check is done here rather than hoped for downstream.
+    """
+    if not request.get("fs") or not request.get("checkInterface", True):
+        return None
+    try:
+        import spirv_reflect
+    except ImportError:
+        note("spirv_reflect is not importable; the stage interface was NOT checked")
+        return None
+    try:
+        with open(request["vs"], "rb") as h:
+            produced = spirv_reflect.Module(h.read()).interface(spirv_reflect.SC_OUTPUT)
+        with open(request["fs"], "rb") as h:
+            consumed = spirv_reflect.Module(h.read()).interface(spirv_reflect.SC_INPUT)
+    except spirv_reflect.ReflectError as e:
+        note("the stage interface could not be read (%s); it was NOT checked" % e)
+        return None
+    return spirv_reflect.interfaces_match(produced, consumed)
+
+
+def probe(loader):
+    lib, which, tried = load_loader(loader)
+    if lib is None:
+        sys.stderr.write("could not load the Vulkan loader. Looked for: %s\n"
+                         "It ships with the display driver; the Vulkan SDK is not required.\n"
+                         % ", ".join(tried))
+        return EXIT_UNUSABLE
+    vk = bind(lib)
+    sys.stdout.write("loader            %s\n" % which)
+
+    app = VkApplicationInfo(sType=ST["APPLICATION_INFO"], pApplicationName=b"nv-isa-extractor",
+                            apiVersion=api_version(1, 3))
+    ici = VkInstanceCreateInfo(sType=ST["INSTANCE_CREATE_INFO"], pApplicationInfo=C.pointer(app))
+    instance = Handle()
+    r = vk["vkCreateInstance"](C.byref(ici), None, C.byref(instance))
+    if r != VK_SUCCESS:
+        sys.stderr.write("vkCreateInstance failed (VkResult %d)%s\n"
+                         % (r, " - no Vulkan ICD is registered" if r == VK_ERROR_INCOMPATIBLE_DRIVER else ""))
+        return EXIT_UNUSABLE
+    try:
+        n = u32()
+        vk["vkEnumeratePhysicalDevices"](instance, C.byref(n), None)
+        devices = (Handle * max(n.value, 1))()
+        vk["vkEnumeratePhysicalDevices"](instance, C.byref(n), C.byref(devices))
+        nvidia = 0
+        for k in range(n.value):
+            p = VkPhysicalDeviceProperties()
+            vk["vkGetPhysicalDeviceProperties"](Handle(devices[k]), C.byref(p))
+            v = p.apiVersion
+            sys.stdout.write("device            %s (vendor 0x%04X, api %u.%u.%u)\n"
+                             % (p.deviceName.decode("utf-8", "replace"), p.vendorID,
+                                v >> 22, (v >> 12) & 0x3FF, v & 0xFFF))
+            if p.vendorID == 0x10DE:
+                nvidia += 1
+        if not nvidia:
+            sys.stderr.write("no NVIDIA device is visible to Vulkan (%d device(s))\n" % n.value)
+            return EXIT_UNUSABLE
+    finally:
+        vk["vkDestroyInstance"](instance, None)
+    return EXIT_OK
+
+
+def main(argv):
+    faulthandler.enable()                 # so a SIGSEGV on Linux prints where it died
+
+    if "--layout" in argv:
+        json.dump(layout_report(), sys.stdout, indent=1, sort_keys=True)
+        return EXIT_OK
+
+    refusal = refuse_interpreter()
+    if refusal:
+        sys.stderr.write("%s\n" % refusal)
+        return EXIT_INTERPRETER
+
+    if "--probe" in argv:
+        return probe(os.environ.get("VK_LOADER"))
+
+    if len(argv) != 2:
+        sys.stderr.write(__doc__)
+        return EXIT_UNUSABLE
+    with open(argv[1], "r", encoding="utf-8") as handle:
+        request = json.load(handle)
+
+    def note(line):
+        sys.stdout.write("%s\n" % line)
+
+    mismatch = check_interface(request, note)
+    if mismatch:
+        sys.stderr.write(
+            "the producer and the fragment shader do not agree on their interface: %s.\n"
+            "A pipeline built from them is undefined, and the driver would compile it anyway.\n"
+            % mismatch)
+        return EXIT_REFUSED
+
+    lib, which, tried = load_loader(request.get("loader") or os.environ.get("VK_LOADER"))
+    if lib is None:
+        sys.stderr.write("could not load the Vulkan loader. Looked for: %s\n" % ", ".join(tried))
+        return EXIT_UNUSABLE
+    note("loader            %s" % which)
+
+    poke = Poke(bind(lib), note)
+    try:
+        # A real driver fault cannot be induced on demand, and an untested exit path is a
+        # claim rather than a behaviour - so the request can ask for one.
+        if request.get("faultForTesting"):
+            raise OSError("exception: access violation reading 0x0000000000000000")
+        code, error = poke.build(request)
+    except OSError as e:
+        # On Windows, CPython turns a driver access violation into a catchable OSError. Caught
+        # here so it cannot fall through to the success path - and the process is ended at once
+        # rather than unwinding, because `destroy` would make more calls into a driver that has
+        # already faulted.
+        sys.stderr.write("the display driver faulted while compiling this shader: %s\n" % e)
+        sys.stderr.flush()
+        os._exit(EXIT_FAULTED)
+    else:
+        poke.destroy()
+
+    if error:
+        sys.stderr.write("%s\n" % error)
+        return code
+    note("ok")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

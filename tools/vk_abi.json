@@ -1,0 +1,313 @@
+{
+ "VkApplicationInfo": {
+  "fields": {
+   "apiVersion": 44,
+   "applicationVersion": 24,
+   "engineVersion": 40,
+   "pApplicationName": 16,
+   "pEngineName": 32,
+   "pNext": 8,
+   "sType": 0
+  },
+  "sizeof": 48
+ },
+ "VkDescriptorSetLayoutBinding": {
+  "fields": {
+   "binding": 0,
+   "descriptorCount": 8,
+   "descriptorType": 4,
+   "pImmutableSamplers": 16,
+   "stageFlags": 12
+  },
+  "sizeof": 24
+ },
+ "VkDescriptorSetLayoutCreateInfo": {
+  "fields": {
+   "bindingCount": 20,
+   "flags": 16,
+   "pBindings": 24,
+   "pNext": 8,
+   "sType": 0
+  },
+  "sizeof": 32
+ },
+ "VkDeviceCreateInfo": {
+  "fields": {
+   "enabledExtensionCount": 48,
+   "enabledLayerCount": 32,
+   "flags": 16,
+   "pEnabledFeatures": 64,
+   "pNext": 8,
+   "pQueueCreateInfos": 24,
+   "ppEnabledExtensionNames": 56,
+   "ppEnabledLayerNames": 40,
+   "queueCreateInfoCount": 20,
+   "sType": 0
+  },
+  "sizeof": 72
+ },
+ "VkDeviceQueueCreateInfo": {
+  "fields": {
+   "flags": 16,
+   "pNext": 8,
+   "pQueuePriorities": 32,
+   "queueCount": 24,
+   "queueFamilyIndex": 20,
+   "sType": 0
+  },
+  "sizeof": 40
+ },
+ "VkGraphicsPipelineCreateInfo": {
+  "fields": {
+   "basePipelineHandle": 128,
+   "basePipelineIndex": 136,
+   "flags": 16,
+   "layout": 104,
+   "pColorBlendState": 88,
+   "pDepthStencilState": 80,
+   "pDynamicState": 96,
+   "pInputAssemblyState": 40,
+   "pMultisampleState": 72,
+   "pNext": 8,
+   "pRasterizationState": 64,
+   "pStages": 24,
+   "pTessellationState": 48,
+   "pVertexInputState": 32,
+   "pViewportState": 56,
+   "renderPass": 112,
+   "sType": 0,
+   "stageCount": 20,
+   "subpass": 120
+  },
+  "sizeof": 144
+ },
+ "VkInstanceCreateInfo": {
+  "fields": {
+   "enabledExtensionCount": 48,
+   "enabledLayerCount": 32,
+   "flags": 16,
+   "pApplicationInfo": 24,
+   "pNext": 8,
+   "ppEnabledExtensionNames": 56,
+   "ppEnabledLayerNames": 40,
+   "sType": 0
+  },
+  "sizeof": 64
+ },
+ "VkPhysicalDeviceVulkan13Features": {
+  "fields": {
+   "computeFullSubgroups": 48,
+   "descriptorBindingInlineUniformBlockUpdateAfterBind": 24,
+   "dynamicRendering": 64,
+   "inlineUniformBlock": 20,
+   "maintenance4": 72,
+   "pNext": 8,
+   "pipelineCreationCacheControl": 28,
+   "privateData": 32,
+   "robustImageAccess": 16,
+   "sType": 0,
+   "shaderDemoteToHelperInvocation": 36,
+   "shaderIntegerDotProduct": 68,
+   "shaderTerminateInvocation": 40,
+   "shaderZeroInitializeWorkgroupMemory": 60,
+   "subgroupSizeControl": 44,
+   "synchronization2": 52,
+   "textureCompressionASTC_HDR": 56
+  },
+  "sizeof": 80
+ },
+ "VkPipelineColorBlendAttachmentState": {
+  "fields": {
+   "alphaBlendOp": 24,
+   "blendEnable": 0,
+   "colorBlendOp": 12,
+   "colorWriteMask": 28,
+   "dstAlphaBlendFactor": 20,
+   "dstColorBlendFactor": 8,
+   "srcAlphaBlendFactor": 16,
+   "srcColorBlendFactor": 4
+  },
+  "sizeof": 32
+ },
+ "VkPipelineColorBlendStateCreateInfo": {
+  "fields": {
+   "attachmentCount": 28,
+   "blendConstants": 40,
+   "flags": 16,
+   "logicOp": 24,
+   "logicOpEnable": 20,
+   "pAttachments": 32,
+   "pNext": 8,
+   "sType": 0
+  },
+  "sizeof": 56
+ },
+ "VkPipelineDepthStencilStateCreateInfo": {
+  "fields": {
+   "back": 68,
+   "depthBoundsTestEnable": 32,
+   "depthCompareOp": 28,
+   "depthTestEnable": 20,
+   "depthWriteEnable": 24,
+   "flags": 16,
+   "front": 40,
+   "maxDepthBounds": 100,
+   "minDepthBounds": 96,
+   "pNext": 8,
+   "sType": 0,
+   "stencilTestEnable": 36
+  },
+  "sizeof": 104
+ },
+ "VkPipelineDynamicStateCreateInfo": {
+  "fields": {
+   "dynamicStateCount": 20,
+   "flags": 16,
+   "pDynamicStates": 24,
+   "pNext": 8,
+   "sType": 0
+  },
+  "sizeof": 32
+ },
+ "VkPipelineInputAssemblyStateCreateInfo": {
+  "fields": {
+   "flags": 16,
+   "pNext": 8,
+   "primitiveRestartEnable": 24,
+   "sType": 0,
+   "topology": 20
+  },
+  "sizeof": 32
+ },
+ "VkPipelineLayoutCreateInfo": {
+  "fields": {
+   "flags": 16,
+   "pNext": 8,
+   "pPushConstantRanges": 40,
+   "pSetLayouts": 24,
+   "pushConstantRangeCount": 32,
+   "sType": 0,
+   "setLayoutCount": 20
+  },
+  "sizeof": 48
+ },
+ "VkPipelineMultisampleStateCreateInfo": {
+  "fields": {
+   "alphaToCoverageEnable": 40,
+   "alphaToOneEnable": 44,
+   "flags": 16,
+   "minSampleShading": 28,
+   "pNext": 8,
+   "pSampleMask": 32,
+   "rasterizationSamples": 20,
+   "sType": 0,
+   "sampleShadingEnable": 24
+  },
+  "sizeof": 48
+ },
+ "VkPipelineRasterizationStateCreateInfo": {
+  "fields": {
+   "cullMode": 32,
+   "depthBiasClamp": 48,
+   "depthBiasConstantFactor": 44,
+   "depthBiasEnable": 40,
+   "depthBiasSlopeFactor": 52,
+   "depthClampEnable": 20,
+   "flags": 16,
+   "frontFace": 36,
+   "lineWidth": 56,
+   "pNext": 8,
+   "polygonMode": 28,
+   "rasterizerDiscardEnable": 24,
+   "sType": 0
+  },
+  "sizeof": 64
+ },
+ "VkPipelineRenderingCreateInfo": {
+  "fields": {
+   "colorAttachmentCount": 20,
+   "depthAttachmentFormat": 32,
+   "pColorAttachmentFormats": 24,
+   "pNext": 8,
+   "sType": 0,
+   "stencilAttachmentFormat": 36,
+   "viewMask": 16
+  },
+  "sizeof": 40
+ },
+ "VkPipelineShaderStageCreateInfo": {
+  "fields": {
+   "flags": 16,
+   "module": 24,
+   "pName": 32,
+   "pNext": 8,
+   "pSpecializationInfo": 40,
+   "sType": 0,
+   "stage": 20
+  },
+  "sizeof": 48
+ },
+ "VkPipelineVertexInputStateCreateInfo": {
+  "fields": {
+   "flags": 16,
+   "pNext": 8,
+   "pVertexAttributeDescriptions": 40,
+   "pVertexBindingDescriptions": 24,
+   "sType": 0,
+   "vertexAttributeDescriptionCount": 32,
+   "vertexBindingDescriptionCount": 20
+  },
+  "sizeof": 48
+ },
+ "VkPipelineViewportStateCreateInfo": {
+  "fields": {
+   "flags": 16,
+   "pNext": 8,
+   "pScissors": 40,
+   "pViewports": 24,
+   "sType": 0,
+   "scissorCount": 32,
+   "viewportCount": 20
+  },
+  "sizeof": 48
+ },
+ "VkPushConstantRange": {
+  "fields": {
+   "offset": 4,
+   "size": 8,
+   "stageFlags": 0
+  },
+  "sizeof": 12
+ },
+ "VkQueueFamilyProperties": {
+  "fields": {
+   "minImageTransferGranularity": 12,
+   "queueCount": 4,
+   "queueFlags": 0,
+   "timestampValidBits": 8
+  },
+  "sizeof": 24
+ },
+ "VkShaderModuleCreateInfo": {
+  "fields": {
+   "codeSize": 24,
+   "flags": 16,
+   "pCode": 32,
+   "pNext": 8,
+   "sType": 0
+  },
+  "sizeof": 40
+ },
+ "VkStencilOpState": {
+  "fields": {
+   "compareMask": 16,
+   "compareOp": 12,
+   "depthFailOp": 8,
+   "failOp": 0,
+   "passOp": 4,
+   "reference": 24,
+   "writeMask": 20
+  },
+  "sizeof": 28
+ }
+}

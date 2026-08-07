@@ -157,8 +157,10 @@ function readDirective(text) {
  * accepted rather than rejected so that a directive can be moved between files unchanged.
  */
 function routeFlags(flags) {
-  const out = { primary: [], nvrtc: [], ptxas: [] };
-  const forward = { '-Xptxas': 'ptxas', '-Xnvrtc': 'nvrtc', '-Xslang': 'primary' };
+  const out = { primary: [], nvrtc: [], ptxas: [], vk: [] };
+  const forward = {
+    '-Xptxas': 'ptxas', '-Xnvrtc': 'nvrtc', '-Xslang': 'primary', '-Xvk': 'vk'
+  };
 
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i];
@@ -179,6 +181,112 @@ function routeFlags(flags) {
 /** The flags in force for a file: the setting first, then the file's own, which win. */
 function effectiveFlags(directive, configured) {
   return routeFlags([...tokenize(configured || ''), ...(directive ? directive.flags : [])]);
+}
+
+// --------------------------------------------------------------------------- pipeline
+
+/**
+ * What a graphics shader is compiled *into*, which the shader alone cannot say.
+ *
+ * A vertex or fragment shader has no SASS of its own. It has SASS **for a pipeline** - and a
+ * pipeline carries state the source file never mentions: which descriptor layout binds its
+ * resources, and, for a fragment shader, which vertex shader feeds it. Both were measured to
+ * matter, and to matter silently:
+ *
+ *   - Substituting `UNIFORM_BUFFER_DYNAMIC` for `UNIFORM_BUFFER` took one shader from 48
+ *     instructions to 40. Adding four bindings it never touches changed the code at the *same*
+ *     instruction count. Neither is detectable from the listing.
+ *   - A producer whose interface does not match its consumer makes the pipeline undefined -
+ *     and the driver compiles it anyway, exits zero, and yields code that looks right.
+ *
+ * The defaults are the honest general answer: reflect the layout out of the SPIR-V, generate a
+ * producer that matches the consumer exactly, and render to one 8-bit target with no depth and
+ * no multisampling - a configuration measured across 24 cells not to change the code. What the
+ * defaults cannot know is how *your engine* binds the shader, and that is not guessable. So
+ * the file can say, on the same line that already carries its compile flags:
+ *
+ *     // nv-isa-extractor -Xvk bind=0:0:8:1 -Xvk samples=4
+ *     // nv-isa-extractor -Xvk producer=fullscreen.slang:vsMain
+ *
+ * Anything stated here is recorded in the listing's banner, because a listing that does not
+ * say which pipeline it describes is claiming more than it knows.
+ *
+ *     bind=<set>:<binding>:<type>:<count>   a descriptor, in VkDescriptorType numbering;
+ *                                           any `bind` at all replaces the reflected layout
+ *     push=<bytes>                          a push-constant range the shader declares
+ *     producer=<file>[:<entry>]             compile the fragment shader against this vertex
+ *                                           shader instead of a generated one
+ *     format=<name>  depth=<name>  samples=<n>       the render target it draws into
+ */
+const VK_CONTROLS = ['bind', 'push', 'producer', 'format', 'depth', 'samples'];
+
+/**
+ * Read the `-Xvk` controls into the shape `vk_compile.py` takes as its request.
+ *
+ * @returns {{state, layout, producer, errors: string[]}} `layout` is null when the file said
+ *   nothing, which is the signal to reflect one rather than to use an empty one - those are
+ *   very different pipelines and conflating them would silently drop every descriptor.
+ */
+function pipelineControls(flags, home) {
+  const state = {};
+  const bindings = [];
+  const errors = [];
+  let push = null;
+  let producer = null;
+
+  for (const flag of flags || []) {
+    const eq = flag.indexOf('=');
+    const key = eq > 0 ? flag.slice(0, eq) : flag;
+    const value = eq > 0 ? flag.slice(eq + 1) : '';
+    if (!VK_CONTROLS.includes(key)) {
+      errors.push(`-Xvk ${flag}: not a pipeline control (have ${VK_CONTROLS.join(', ')})`);
+      continue;
+    }
+    if (!value) { errors.push(`-Xvk ${key} needs a value, as ${key}=...`); continue; }
+
+    if (key === 'bind') {
+      // set:binding:type[:count], the type being VkDescriptorType's own numbering - the same
+      // integers a reflector emits, so a value read out of one tool can be pasted into the
+      // other without a translation table to keep in step.
+      const parts = value.split(':').map(Number);
+      if (parts.length < 3 || parts.length > 4 || parts.some(n => !Number.isInteger(n) || n < 0)) {
+        errors.push(`-Xvk bind=${value}: expected set:binding:type[:count], all non-negative`);
+        continue;
+      }
+      bindings.push([parts[0], parts[1], parts[2], parts.length === 4 ? parts[3] : 1]);
+    } else if (key === 'push') {
+      const bytes = Number(value);
+      if (!Number.isInteger(bytes) || bytes < 0) errors.push(`-Xvk push=${value}: expected bytes`);
+      else push = bytes;
+    } else if (key === 'samples') {
+      const n = Number(value);
+      // Vulkan's sample counts are a bitmask, so only powers of two exist.
+      if (!Number.isInteger(n) || n < 1 || (n & (n - 1))) {
+        errors.push(`-Xvk samples=${value}: expected a power of two`);
+      } else state.samples = n;
+    } else if (key === 'producer') {
+      const at = value.lastIndexOf(':');
+      // A Windows path carries a colon after the drive letter, so only a colon past the
+      // filename separates the entry point.
+      const split = at > value.replace(/\\/g, '/').lastIndexOf('/') ? at : -1;
+      const file = split > 0 ? value.slice(0, split) : value;
+      producer = {
+        file: path.resolve(home, file),
+        entry: split > 0 ? value.slice(split + 1) : null
+      };
+    } else {
+      state[key] = value;
+    }
+  }
+
+  return {
+    state,
+    layout: bindings.length || push !== null
+      ? { bindings, pushBytes: push || 0 }
+      : null,
+    producer,
+    errors
+  };
 }
 
 // --------------------------------------------------------------------------- includes
@@ -625,6 +733,8 @@ module.exports = {
   readDirective,
   routeFlags,
   effectiveFlags,
+  VK_CONTROLS,
+  pipelineControls,
   includeFlag,
   splitIncludes,
   toolFlags,
