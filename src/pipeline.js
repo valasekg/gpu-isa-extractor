@@ -15,6 +15,7 @@ const path = require('path');
 const vscode = require('vscode');
 
 const nvcache = require('./nvcache');
+const spawn = require('./spawn');
 const ctrl = require('./ctrl');
 
 const CONFIG = 'nvIsaExtractor';
@@ -236,43 +237,19 @@ function collapse(objects) {
  * default 1 MB buffer would truncate it. An argument array with no shell keeps paths with
  * spaces intact without quoting rules entering into it.
  */
-function runNvdisasm(exe, arch, rawPath, token) {
-  return new Promise((resolve, reject) => {
-    const args = ['--binary', arch, '--no-dataflow', rawPath];
-    const child = cp.spawn(exe, args, { windowsHide: true });
+async function runNvdisasm(exe, arch, rawPath, token) {
+  const args = ['--binary', arch, '--no-dataflow', rawPath];
+  const result = await spawn.text(exe, args, { token });
 
-    const out = [];
-    const err = [];
-    let killed = false;
-
-    const cancel = token && token.onCancellationRequested(() => {
-      killed = true;
-      child.kill();
-    });
-
-    child.stdout.on('data', d => out.push(d));
-    child.stderr.on('data', d => err.push(d));
-    child.on('error', e => {
-      if (cancel) cancel.dispose();
-      reject(new Error(`could not run ${exe}: ${e.message}`));
-    });
-    child.on('close', code => {
-      if (cancel) cancel.dispose();
-      if (killed) return reject(new Error('cancelled'));
-      if (code !== 0) {
-        const message = Buffer.concat(err).toString().trim().split('\n').slice(0, 4).join('\n');
-        return reject(new Error(
-          `nvdisasm exited ${code}${message ? `:\n${message}` : ''}\n` +
-          `The carved microcode was kept at ${rawPath} so the failure can be reproduced:\n` +
-          `  ${exe} --binary ${arch} --no-dataflow "${rawPath}"`));
-      }
-      // nvdisasm writes CRLF on Windows. Normalising here keeps generated listings identical
-      // to the reference tooling's output and keeps the annotator's line arithmetic simple.
-      const text = Buffer.concat(out).toString('utf8')
-        .replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/^﻿/, '');
-      resolve({ text, command: `${exe} --binary ${arch} --no-dataflow "${rawPath}"` });
-    });
-  });
+  if (result.cancelled) throw new Error('cancelled');
+  if (result.code !== 0) {
+    const message = result.stderr.trim().split('\n').slice(0, 4).join('\n');
+    throw new Error(
+      `nvdisasm exited ${result.code}${message ? `:\n${message}` : ''}\n` +
+      `The carved microcode was kept at ${rawPath} so the failure can be reproduced:\n` +
+      `  ${result.command}`);
+  }
+  return { text: result.stdout, command: result.command };
 }
 
 /**
