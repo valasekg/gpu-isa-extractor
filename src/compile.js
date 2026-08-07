@@ -217,8 +217,12 @@ function effectiveFlags(directive, configured) {
  *     producer=<file>[:<entry>]             compile the fragment shader against this vertex
  *                                           shader instead of a generated one
  *     format=<name>  depth=<name>  samples=<n>       the render target it draws into
+ *     topology=<name>                       what the input assembler feeds a geometry shader;
+ *                                           read from the shader's declared input primitive
+ *                                           when the file does not say, and still checked
+ *                                           against it either way
  */
-const VK_CONTROLS = ['bind', 'push', 'producer', 'format', 'depth', 'samples'];
+const VK_CONTROLS = ['bind', 'push', 'producer', 'format', 'depth', 'samples', 'topology'];
 
 /**
  * Read the `-Xvk` controls into the shape `vk_compile.py` takes as its request.

@@ -182,13 +182,14 @@ vertex, fragment, geometry   slangc -target spirv → the display driver → its
 Both end in the same place — microcode, in the same shape as bytes carved out of a cache — so
 the listing is produced by the extension's ordinary `nvdisasm --binary` path either way.
 
-Three worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
+Four worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
 
 | | |
 |---|---|
 | [`tiled-matmul.cu`](samples/tiled-matmul.cu) | shared-memory staging, `BAR.SYNC`, paired scoreboard loads, an unrolled inner product, and a guard the compiler **predicates** rather than branches |
 | [`prefix-blur.slang`](samples/prefix-blur.slang) | three `BSSY`/`BSYNC` pairs, `MUFU.RSQ`, and markers naming both the `.slang` and Slang's inlined CUDA prelude |
 | [`surface-shading.slang`](samples/surface-shading.slang) | the **graphics** road: `IPA` reads out of attribute space, `AST` stores feeding them, `TEX`, `KILL`, and a banner naming the pipeline it was compiled into |
+| [`point-sprites.slang`](samples/point-sprites.slang) | a **geometry** shader expanding one point into a quad: `OUT.EMIT`/`OUT.FINAL`, `ISBERD`, and a topology read out of the shader rather than chosen |
 
 Each opens with a comment saying what to look for in its listing, and which flag to change to
 make the code move.
