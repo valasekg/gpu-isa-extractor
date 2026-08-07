@@ -30,6 +30,8 @@ MAGIC = 0x07230203
 
 # ------------------------------------------------------------------ the subset that matters
 
+OP_CAPABILITY = 17
+OP_EXTENSION = 10
 OP_NAME = 5
 OP_ENTRY_POINT = 15
 OP_EXECUTION_MODE = 16
@@ -159,6 +161,8 @@ class Module(object):
         self.variables = []                      # (result_type_id, result_id, storage_class)
         self.entry_points = []                   # (stage, name)
         self.execution_modes = []                # (mode, [operands]), in declaration order
+        self.capabilities = []                   # SPIR-V capability numbers
+        self.extensions = []                     # SPIR-V extension names
         self._collect()
 
     def _collect(self):
@@ -168,6 +172,10 @@ class Module(object):
             elif op == OP_ENTRY_POINT and len(w) >= 2:
                 self.entry_points.append(
                     (EXEC_MODEL.get(w[0], "model%d" % w[0]), decode_string(w[2:])))
+            elif op == OP_CAPABILITY and w:
+                self.capabilities.append(w[0])
+            elif op == OP_EXTENSION and w:
+                self.extensions.append(decode_string(w))
             elif op == OP_EXECUTION_MODE and len(w) >= 2:
                 self.execution_modes.append((w[1], list(w[2:])))
             elif op == OP_DECORATE and len(w) >= 2:
@@ -690,6 +698,11 @@ def reflect(path):
         module = Module(handle.read())
     out = {
         "entryPoints": [{"stage": s, "name": n} for s, n in module.entry_points],
+        # What the module says it needs. A capability declared but never enabled on the device
+        # is an invalid pipeline that this driver builds anyway - measured three times now - so
+        # the harness turns on what the modules ask for rather than a hardcoded set.
+        "capabilities": sorted(set(module.capabilities)),
+        "extensions": sorted(set(module.extensions)),
         "descriptors": module.descriptors(),
         "inputs": module.interface(SC_INPUT),
         "outputs": module.interface(SC_OUTPUT),

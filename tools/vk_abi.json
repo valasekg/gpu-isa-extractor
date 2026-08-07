@@ -115,6 +115,28 @@
   },
   "sizeof": 520
  },
+ "VkPhysicalDeviceAccelerationStructureFeaturesKHR": {
+  "fields": {
+   "accelerationStructure": 16,
+   "accelerationStructureCaptureReplay": 20,
+   "accelerationStructureHostCommands": 28,
+   "accelerationStructureIndirectBuild": 24,
+   "descriptorBindingAccelerationStructureUpdateAfterBind": 32,
+   "pNext": 8,
+   "sType": 0
+  },
+  "sizeof": 40
+ },
+ "VkPhysicalDeviceBufferDeviceAddressFeatures": {
+  "fields": {
+   "bufferDeviceAddress": 16,
+   "bufferDeviceAddressCaptureReplay": 20,
+   "bufferDeviceAddressMultiDevice": 24,
+   "pNext": 8,
+   "sType": 0
+  },
+  "sizeof": 32
+ },
  "VkPhysicalDeviceFeatures": {
   "fields": {
    "alphaToOne": 68,
@@ -192,6 +214,26 @@
    "primitiveFragmentShadingRateMeshShader": 28,
    "sType": 0,
    "taskShader": 16
+  },
+  "sizeof": 40
+ },
+ "VkPhysicalDeviceRayQueryFeaturesKHR": {
+  "fields": {
+   "pNext": 8,
+   "rayQuery": 16,
+   "sType": 0
+  },
+  "sizeof": 24
+ },
+ "VkPhysicalDeviceRayTracingPipelineFeaturesKHR": {
+  "fields": {
+   "pNext": 8,
+   "rayTracingPipeline": 16,
+   "rayTracingPipelineShaderGroupHandleCaptureReplay": 20,
+   "rayTracingPipelineShaderGroupHandleCaptureReplayMixed": 24,
+   "rayTracingPipelineTraceRaysIndirect": 28,
+   "rayTraversalPrimitiveCulling": 32,
+   "sType": 0
   },
   "sizeof": 40
  },

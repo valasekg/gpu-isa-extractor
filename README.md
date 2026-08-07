@@ -184,7 +184,7 @@ amplification
 Both end in the same place — microcode, in the same shape as bytes carved out of a cache — so
 the listing is produced by the extension's ordinary `nvdisasm --binary` path either way.
 
-Six worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
+Seven worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
 
 | | |
 |---|---|
@@ -194,6 +194,7 @@ Six worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
 | [`point-sprites.slang`](samples/point-sprites.slang) | a **geometry** shader expanding one point into a quad: `OUT.EMIT`/`OUT.FINAL`, `ISBERD`, and a topology read out of the shader rather than chosen |
 | [`terrain-tessellation.slang`](samples/terrain-tessellation.slang) | a **hull** and **domain** pair, which cannot be compiled apart — and the measured asymmetry between generating one half and the other |
 | [`meshlet-cull.slang`](samples/meshlet-cull.slang) | **mesh** and **amplification**: the pipeline with no vertex stage at all, and a payload that changes the shader reading it |
+| [`inline-shadow-ray.slang`](samples/inline-shadow-ray.slang) | **inline ray tracing** inside a fragment shader — no raytracing pipeline needed, and the largest listing here at 408 instructions |
 
 Each opens with a comment saying what to look for in its listing, and which flag to change to
 make the code move.
@@ -273,9 +274,10 @@ module are attributed to *that* file, which is listed in the banner's source map
 
 ### What it will not do
 
-- **Raytracing is unimplemented.** It needs a different creation call
-  (`vkCreateRayTracingPipelinesKHR`) rather than a different stage. Not impossible — and a dead
-  end only on the CUDA road. Read those from a cache file for now.
+- **Raytracing *pipelines* are unimplemented** — raygen, miss and hit shaders need
+  `vkCreateRayTracingPipelinesKHR` and a shader binding table rather than another stage.
+  **Inline ray tracing works today**, because `RayQuery` lives inside an ordinary shader and
+  needs no pipeline of its own.
 - **A generated tessellation counterpart is not free in both directions.** A domain shader
   compiles identically whichever hull feeds it; a hull shader does not, because a generated
   domain reads every output it declares and brings no descriptors of its own. The banner says

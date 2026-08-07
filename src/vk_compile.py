@@ -191,6 +191,37 @@ class VkPhysicalDeviceFeatures2(C.Structure):
 # compiles it anyway; the validation layer is the only thing that says otherwise.
 # Mesh shading is an extension rather than core, so its features arrive in their own
 # struct and the device extension has to be enabled alongside them.
+# Ray query lives inside an ORDINARY shader - no raytracing pipeline, no shader groups -
+# so it needs nothing here but the features and extensions the modules declare. Which is the
+# whole point: `RayQuery` reached a working listing through the existing graphics path, and
+# only the validation layer noticed the pipeline was invalid while it did so.
+class VkPhysicalDeviceRayQueryFeaturesKHR(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("rayQuery", VkBool32)]
+
+
+class VkPhysicalDeviceAccelerationStructureFeaturesKHR(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
+        (n, VkBool32) for n in (
+            "accelerationStructure", "accelerationStructureCaptureReplay",
+            "accelerationStructureIndirectBuild", "accelerationStructureHostCommands",
+            "descriptorBindingAccelerationStructureUpdateAfterBind")]
+
+
+class VkPhysicalDeviceRayTracingPipelineFeaturesKHR(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
+        (n, VkBool32) for n in (
+            "rayTracingPipeline", "rayTracingPipelineShaderGroupHandleCaptureReplay",
+            "rayTracingPipelineShaderGroupHandleCaptureReplayMixed",
+            "rayTracingPipelineTraceRaysIndirect", "rayTraversalPrimitiveCulling")]
+
+
+class VkPhysicalDeviceBufferDeviceAddressFeatures(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
+        (n, VkBool32) for n in (
+            "bufferDeviceAddress", "bufferDeviceAddressCaptureReplay",
+            "bufferDeviceAddressMultiDevice")]
+
+
 class VkPhysicalDeviceMeshShaderFeaturesEXT(C.Structure):
     _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
         (n, VkBool32) for n in (
@@ -360,6 +391,10 @@ LAYOUT_STRUCTS = [
     VkApplicationInfo, VkInstanceCreateInfo, VkQueueFamilyProperties,
     VkDeviceQueueCreateInfo, VkPhysicalDeviceFeatures, VkPhysicalDeviceFeatures2,
     VkPhysicalDeviceVulkan11Features, VkPhysicalDeviceMeshShaderFeaturesEXT,
+    VkPhysicalDeviceRayQueryFeaturesKHR,
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR,
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR,
+    VkPhysicalDeviceBufferDeviceAddressFeatures,
     VkLayerProperties,
     VkDebugUtilsMessengerCreateInfoEXT,
     VkPhysicalDeviceVulkan13Features, VkDeviceCreateInfo,
@@ -407,6 +442,10 @@ ST = dict(
     # part of the suite.
     DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT=1000128004,
     PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT=1000328000,
+    PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR=1000348013,
+    PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR=1000150013,
+    PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR=1000347000,
+    PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES=1000257000,
     PHYSICAL_DEVICE_FEATURES_2=1000059000, PHYSICAL_DEVICE_VULKAN_1_1_FEATURES=49,
     PHYSICAL_DEVICE_VULKAN_1_3_FEATURES=53, PIPELINE_RENDERING_CREATE_INFO=1000044002,
 )
@@ -450,6 +489,12 @@ SEVERITY_WARNING = 0x100
 SEVERITY_ERROR = 0x1000
 MESSAGE_TYPE_ALL = 0x7
 MESH_EXTENSION = b"VK_EXT_mesh_shader"
+
+# SPIR-V capability numbers a module can declare that the device has to be told about.
+# Derived from the modules rather than hardcoded, because a capability declared and never
+# enabled is an invalid pipeline this driver builds anyway - three times measured now.
+CAP_RAY_QUERY = 4479
+CAP_RAY_TRACING = 4472
 
 # Every stage this can build, in pipeline order: the request field it arrives in, its
 # Vulkan stage bit, and what to call it in a message. One table rather than a named local
@@ -721,6 +766,18 @@ class Poke(object):
 
         # A mesh pipeline has no vertex stage at all - the mesh shader IS the front of it - so
         # the requirement is one or the other rather than a vertex shader always.
+        # What the modules say they need. The request may state it, and where it does not
+        # the SPIR-V is read - a capability is not something to guess at either way.
+        caps = set(request.get("capabilities") or [])
+        if not caps:
+            try:
+                import spirv_reflect
+                for blob in code.values():
+                    caps.update(spirv_reflect.Module(blob).capabilities)
+            except Exception:                                     # noqa: BLE001
+                self.note("the declared capabilities could not be read; only the base "
+                          "feature set is enabled")
+
         mesh_pipeline = "ms" in code or "ts" in code
         if not mesh_pipeline and "vs" not in code:
             return EXIT_UNUSABLE, (
@@ -831,6 +888,35 @@ class Poke(object):
             pNext=C.cast(self.ptr(f13), VOID), shaderDrawParameters=VK_TRUE)
         head = self.ptr(f11)
         device_extensions = []
+
+        # Ray query needs no pipeline of its own - it lives inside an ordinary shader - so it
+        # is nothing but a chain of features and extensions. The acceleration structure it
+        # traverses is a descriptor like any other, which is why nothing else had to change.
+        if CAP_RAY_QUERY in caps or CAP_RAY_TRACING in caps:
+            device_extensions += [b"VK_KHR_acceleration_structure",
+                                  b"VK_KHR_deferred_host_operations"]
+            faddr = VkPhysicalDeviceBufferDeviceAddressFeatures(
+                sType=ST["PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES"],
+                pNext=C.cast(head, VOID), bufferDeviceAddress=VK_TRUE)
+            faccel = VkPhysicalDeviceAccelerationStructureFeaturesKHR(
+                sType=ST["PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR"],
+                pNext=C.cast(self.ptr(faddr), VOID), accelerationStructure=VK_TRUE)
+            head = self.ptr(faccel)
+            if CAP_RAY_QUERY in caps:
+                device_extensions.append(b"VK_KHR_ray_query")
+                fquery = VkPhysicalDeviceRayQueryFeaturesKHR(
+                    sType=ST["PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR"],
+                    pNext=C.cast(head, VOID), rayQuery=VK_TRUE)
+                head = self.ptr(fquery)
+            if CAP_RAY_TRACING in caps:
+                # Slang declares RayTracingKHR even for inline ray tracing, so this follows the
+                # module rather than the feature being used.
+                device_extensions.append(b"VK_KHR_ray_tracing_pipeline")
+                fpipe = VkPhysicalDeviceRayTracingPipelineFeaturesKHR(
+                    sType=ST["PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR"],
+                    pNext=C.cast(head, VOID), rayTracingPipeline=VK_TRUE)
+                head = self.ptr(fpipe)
+            self.note("ray tracing       enabled from the modules' declared capabilities")
         if mesh_pipeline:
             # Mesh shading is an extension: the feature struct alone is not enough, the device
             # extension has to be enabled too or the stage bits are not even recognised.

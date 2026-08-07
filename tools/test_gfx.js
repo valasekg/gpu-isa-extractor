@@ -463,9 +463,54 @@ function findBin(dir) {
     }
   }
 
+  // ------------------------------------------------------------------ ray query
+
+  section('7. Inline ray tracing');
+
+  // Ray query needs no raytracing pipeline: it lives inside an ordinary shader, so the
+  // existing graphics path reaches it. What it does need is the features and extensions the
+  // modules declare - and without them the driver builds the pipeline anyway and returns 408
+  // instructions of plausible SASS. Nine validation errors, none of them visible in the
+  // output. That is why the capabilities are read from the SPIR-V rather than hardcoded.
+  const rqFs = path.join(FIXTURES, 'rqFs.spv');
+  if (!PY) {
+    skip('no Python interpreter');
+  } else if (!fs.existsSync(rqFs)) {
+    skip('no ray-query fixture');
+  } else {
+    const r = run(PY, [REFLECT, rqFs, '--json']);
+    if (check(r.code === 0, 'a ray-query module reflects', r.stderr)) {
+      const m = JSON.parse(r.stdout).modules[0];
+      check((m.capabilities || []).includes(4479),
+        'declaring the RayQueryKHR capability the device has to be told about',
+        JSON.stringify(m.capabilities));
+      check((m.extensions || []).includes('SPV_KHR_ray_query'),
+        'and the SPIR-V extension that goes with it', JSON.stringify(m.extensions));
+      check(m.descriptors.some(d => d.type === 1000150000),
+        'with the acceleration structure reflected as an ordinary descriptor',
+        JSON.stringify(m.descriptors.map(d => d.type)));
+    }
+
+    if (!probe || probe.code !== 0) {
+      skip('no usable Vulkan device for the ray-query round-trip');
+    } else {
+      const got = await pipeline('rayquery', {
+        vs: path.join(FIXTURES, 'rqVs.spv'), fs: rqFs,
+        layout: { bindings: [[0, 0, 1000150000, 1], [0, 1, 6, 1]] }, validate: true
+      });
+      // `validate: true` is the point of this one: it passed WITHOUT the features before, and
+      // the only thing that said otherwise was the layer.
+      check(!got.error, 'a ray-query pipeline is valid once its capabilities are enabled',
+        got.error);
+      check(!got.error && got.pixel === 'b0d9cfaca1c4',
+        'and the fragment microcode is what was recorded',
+        `got ${got.pixel}, want b0d9cfaca1c4`);
+    }
+  }
+
   // ------------------------------------------------------------------ validation
 
-  section('7. What the validation layer makes of these pipelines');
+  section('8. What the validation layer makes of these pipelines');
 
   // The check that would have found the bug that hid the longest. `dynamicRendering` was
   // never enabled - the 1.3 features struct carried the sType of the 1.1 one - and every
@@ -496,7 +541,10 @@ function findBin(dir) {
         layout: { bindings: [] },
         state: { topology: 'patch_list', patchControlPoints: 4 } } },
       { tag: 'mesh', request: { ms: path.join(FIXTURES, 'msMain.spv'),
-        ts: path.join(FIXTURES, 'asMain.spv'), fs: null, layout: { bindings: [] } } }
+        ts: path.join(FIXTURES, 'asMain.spv'), fs: null, layout: { bindings: [] } } },
+      { tag: 'ray query', request: { vs: path.join(FIXTURES, 'rqVs.spv'),
+        fs: path.join(FIXTURES, 'rqFs.spv'),
+        layout: { bindings: [[0, 0, 1000150000, 1], [0, 1, 6, 1]] } } }
     ].filter(c => Object.values(c.request)
       .every(v => typeof v !== 'string' || fs.existsSync(v)));
 
