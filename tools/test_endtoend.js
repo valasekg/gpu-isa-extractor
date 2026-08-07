@@ -14,6 +14,7 @@
  *   ELECTRON_RUN_AS_NODE=1 Code.exe tools/test_endtoend.js
  */
 
+const cp = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -142,6 +143,10 @@ function glBlobs() {
   check(typeof pipeline.sweep === 'function', 'pipeline.js loads against the VS Code API');
   check(typeof output.openListing === 'function', 'output.js loads');
   check(typeof doctor.diagnose === 'function', 'doctor.js loads');
+  // compileview builds its decoration types at module scope, so it fails to load rather than
+  // failing at first use if the editor API it expects is not there.
+  check(typeof require(path.join(__dirname, '..', 'src', 'compileview.js')).compileCommand
+    === 'function', 'compileview.js loads against the VS Code API');
   check(typeof require(path.join(__dirname, '..', 'extension.js')).activate === 'function',
     'extension.js loads and exports activate');
 
@@ -337,6 +342,221 @@ function glBlobs() {
     await output.pruneListings(context, () => {});
     check(fs.existsSync(openOne), 'a listing open in an editor is not pruned under the user');
     vscodeStub.workspace.textDocuments = [];
+  }
+
+  section('6. Compiling a kernel to a listing');
+
+  {
+    // The compiled path against the real toolchain: nvrtc or nvcc, then ptxas, then the very
+    // same nvdisasm invocation the cache path makes. It is skipped rather than failed where
+    // the tools are absent, like every other check here that needs something installed.
+    const compile = require(path.join(__dirname, '..', 'src', 'compile.js'));
+    const compileview = require(path.join(__dirname, '..', 'src', 'compileview.js'));
+    const correlate = require(path.join(__dirname, '..', 'src', 'correlate.js'));
+
+    const tools = await compileview.resolveTools();
+    if (!tools.ptxas || !(tools.python || tools.nvcc)) {
+      skip('ptxas, or a CUDA front end, is not installed');
+    } else {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvisa-compile-'));
+      const source = path.join(dir, 'k.cu');
+      fs.writeFileSync(source,
+        '// nv-isa-extractor -use_fast_math -Xptxas -maxrregcount=32\n' +
+        'extern "C" __global__ void saxpy(const float* x, float* y, float a, int n)\n' +
+        '{\n' +
+        '    int i = blockIdx.x * blockDim.x + threadIdx.x;\n' +
+        '    if (i < n) y[i] = a * x[i] + y[i];\n' +
+        '}\n');
+
+      const directive = compile.readDirective(fs.readFileSync(source, 'utf8'));
+      check(!!directive, 'the flag directive is read out of the file');
+      const flags = compile.effectiveFlags(directive, '');
+      check(flags.ptxas.includes('-maxrregcount=32'),
+        '-Xptxas routes to the assembler', JSON.stringify(flags));
+
+      let built = null;
+      try {
+        built = await compile.compile(tools, source, {
+          arch: 'SM86', outDir: path.join(dir, 'out'), flags
+        });
+      } catch (e) {
+        skip(`the toolchain could not compile a kernel here: ${e.message.split('\n')[0]}`);
+      }
+
+      if (built) {
+        check(built.entries.length === 1, 'the kernel yields one entry point');
+        const entry = built.entries[0];
+        check(entry.name === 'saxpy', 'named after the __global__ function', entry.name);
+        check(entry.codeBytes % 16 === 0,
+          'its .text section is a whole number of instructions');
+        check(built.arch === 'SM86', 'the cubin reports the architecture it was built for',
+          built.arch);
+        check(built.ptxasInfo('saxpy').registers > 0,
+          'ptxas -v reports a register count for the banner to cross-check');
+
+        // The point of the whole arrangement: the carved-microcode pipeline runs unchanged.
+        const { path: nvdisasm } = await pipeline.resolveNvdisasm();
+        const raw = path.join(dir, 'saxpy.raw');
+        fs.writeFileSync(raw, entry.microcode);
+        const sass = cp.execFileSync(
+          nvdisasm, ['--binary', built.arch, '--no-dataflow', raw],
+          { maxBuffer: 1 << 26 }).toString().replace(/\r\n/g, '\n');
+        const annotated = ctrl.annotate(sass, entry.microcode);
+        check(annotated.annotated > 0,
+          'the control-code column decodes over a compiled kernel',
+          JSON.stringify({ annotated: annotated.annotated, skipped: annotated.skipped }));
+        check(!annotated.suspect,
+          'and its reuse tripwire agrees with what nvdisasm printed',
+          `${annotated.mismatchTotal} mismatch(es)`);
+
+        // Correlation, from a second pass over the cubin.
+        const g = cp.execFileSync(nvdisasm, ['-c', '-g', built.cubinPath],
+          { maxBuffer: 1 << 26 }).toString().replace(/\r\n/g, '\n');
+        const parsed = correlate.parse(g, entry.name);
+        const records = parsed.entries.get(entry.name);
+        check(!!records && records.length > 0,
+          'nvdisasm -g yields source positions for a compiled kernel');
+        if (records) {
+          const merged = correlate.annotate(
+            annotated.text, correlate.byAddress(records, entry.codeBytes),
+            { labels: correlate.labelsFor(parsed.files) });
+          check(merged.marked > 0, 'which merge into the listing as markers');
+          check(merged.text.includes('//## k.cu:'),
+            'naming the file the user actually wrote', parsed.files.join(' '));
+          check(merged.unattributed === 0,
+            'and every instruction carries a position',
+            `${merged.unattributed} unattributed of ${annotated.annotated}`);
+
+          // Generated listings stay plain ASCII, markers included.
+          check(!/[^\x00-\x7f]/.test(merged.text),
+            'the correlated listing is still plain ASCII');
+        }
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  section('7. Includes and imports, from a file compiled somewhere else');
+
+  {
+    // The case the include path exists for. An unsaved buffer is compiled from a copy in the
+    // scratch directory, so the header beside the *real* file - or the module it imports - is
+    // invisible from where the compiler is actually reading. Each half here is run twice:
+    // once as the extension runs it, and once without `home`, which is what the compiler can
+    // do on its own. The second is what says the include path is load-bearing rather than
+    // decorative.
+    const compile = require(path.join(__dirname, '..', 'src', 'compile.js'));
+    const compileview = require(path.join(__dirname, '..', 'src', 'compileview.js'));
+
+    const tools = await compileview.resolveTools();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvisa-include-'));
+    const home = path.join(dir, 'src');           // where the user's files live
+    const elsewhere = path.join(dir, 'scratch');  // where a dirty buffer is compiled from
+    fs.mkdirSync(home);
+    fs.mkdirSync(elsewhere);
+
+    /** Compile `text` from a copy in `elsewhere`, exactly as a dirty buffer is compiled. */
+    const fromCopy = async (name, text, options) => {
+      const copy = path.join(elsewhere, name);
+      fs.writeFileSync(copy, text);
+      const outDir = fs.mkdtempSync(path.join(dir, 'out-'));
+      try {
+        return {
+          outDir,
+          built: await compile.compile(tools, copy, {
+            arch: 'SM86',
+            outDir,
+            flags: compile.effectiveFlags(null, ''),
+            ...options
+          })
+        };
+      } catch (e) {
+        return { outDir, error: e };
+      }
+    };
+
+    /** The include directories the CUDA front end was actually given. */
+    const cudaIncludes = (built, outDir) => {
+      const step = built.steps.find(s => s.tool === 'nvrtc' || s.tool === 'nvcc');
+      if (!step) return [];
+      // NVRTC's options go in a request file rather than on the helper's command line - see
+      // `cudaToPtx`, which put them there precisely because an include path is the kind of
+      // argument that does not survive being quoted across Node, `py` and Windows.
+      const argv = step.tool === 'nvcc'
+        ? step.command.split(' ')
+        : JSON.parse(fs.readFileSync(path.join(outDir, 'nvrtc-request.json'), 'utf8')).options;
+      return argv.filter(a => a.startsWith('-I')).map(a => a.slice(2));
+    };
+
+    if (!tools.ptxas || !(tools.python || tools.nvcc)) {
+      skip('ptxas, or a CUDA front end, is not installed');
+    } else {
+      fs.writeFileSync(path.join(home, 'scale.h'),
+        '#pragma once\n' +
+        '__device__ inline float scaled(float x) { return x * 3.0f; }\n');
+      const cu =
+        '#include "scale.h"\n' +
+        'extern "C" __global__ void kern(const float* x, float* y, int n)\n' +
+        '{\n' +
+        '    int i = blockIdx.x * blockDim.x + threadIdx.x;\n' +
+        '    if (i < n) y[i] = scaled(x[i]);\n' +
+        '}\n';
+
+      const found = await fromCopy('k.cu', cu, { home });
+      check(!found.error, 'a .cu compiles against a header beside the file it came from',
+        found.error && found.error.message);
+      if (found.built) {
+        check(found.built.entries.length === 1 && found.built.entries[0].name === 'kern',
+          'and yields the kernel that used it');
+        const dirs = cudaIncludes(found.built, found.outDir);
+        check(dirs[0] === home,
+          'because the front end was told to look where the file really lives, first',
+          dirs.join(' '));
+      }
+
+      const lost = await fromCopy('k.cu', cu, {});
+      check(!!lost.error && /scale\.h/.test(lost.error.message),
+        'and without that directory the header is not found at all - NVRTC has no notion of ' +
+        'a source directory, so this is the include path doing the work',
+        lost.error ? lost.error.message.split('\n')[0] : 'it compiled');
+    }
+
+    if (!tools.slangc || !tools.ptxas || !(tools.python || tools.nvcc)) {
+      skip('slangc, ptxas or a CUDA front end is not installed');
+    } else {
+      fs.writeFileSync(path.join(home, 'helpers.slang'),
+        'module helpers;\n\n' +
+        'public float weigh(float x, float w) { return x * w + 1.0f; }\n');
+      const slang =
+        'import helpers;\n\n' +
+        'StructuredBuffer<float> src;\n' +
+        'RWStructuredBuffer<float> dst;\n\n' +
+        '[shader("compute")]\n' +
+        '[numthreads(64,1,1)]\n' +
+        'void csMain(uint3 tid : SV_DispatchThreadID)\n' +
+        '{\n' +
+        '    dst[tid.x] = weigh(src[tid.x], 2.0f);\n' +
+        '}\n';
+
+      const found = await fromCopy('k.slang', slang, { home });
+      check(!found.error, 'a .slang compiles against a module beside the file it came from',
+        found.error && found.error.message);
+      if (found.built) {
+        check(found.built.entries.length === 1 && found.built.entries[0].name === 'csMain',
+          'and yields the entry point that imported it');
+        const step = found.built.steps.find(s => s.tool === 'slangc');
+        check(step && step.command.includes(`-I${home}`),
+          'and slangc\'s recorded command line says where it was told to look',
+          step && step.command);
+      }
+
+      const lost = await fromCopy('k.slang', slang, {});
+      check(!!lost.error && /helpers/.test(lost.error.message),
+        'and without that directory the import cannot be resolved',
+        lost.error ? lost.error.message.split('\n')[0] : 'it compiled');
+    }
+
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 
   fs.rmSync(storage, { recursive: true, force: true });

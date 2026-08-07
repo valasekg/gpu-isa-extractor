@@ -188,7 +188,52 @@ async function diagnose(context) {
         : null);
   }
 
-  // 7. storage
+  // 7. the compile toolchain
+  //
+  // Reported as `warn` rather than `fail` when it is incomplete: reading a shader cache is
+  // what this extension is for, and it needs none of this. Only compiling a source file does.
+  {
+    const compileview = require('./compileview');
+    const tools = await compileview.resolveTools();
+    const detail = [];
+
+    detail.push(tools.slangc
+      ? `slangc: ${tools.slangc}`
+      : 'slangc: not found - needed only for .slang; it ships with the Vulkan SDK');
+    detail.push(tools.ptxas
+      ? `ptxas: ${tools.ptxas}`
+      : 'ptxas: NOT FOUND - needed to turn PTX into a cubin; it ships with the CUDA Toolkit');
+
+    // The CUDA front end. nvcc is the documented one and needs a host C++ compiler; NVRTC
+    // needs none, which is the whole reason the Python helper exists.
+    if (tools.python) {
+      const probe = await pipeline.run(tools.python, [tools.nvrtcHelper, '--probe']);
+      const loaded = /nvrtc \d+\.\d+/.exec(probe.stdout + probe.stderr);
+      detail.push(loaded
+        ? `NVRTC: ${loaded[0]} via ${tools.python}`
+        : `NVRTC: ${tools.python} found, but the nvrtc library did not load. ` +
+          'Set `nvIsaExtractor.compile.nvrtcPath` to an nvrtc64_*.dll, or CUDA_PATH.');
+    } else {
+      detail.push('NVRTC: no Python interpreter found, so the no-host-compiler backend is ' +
+        'unavailable. Set `nvIsaExtractor.compile.pythonPath`.');
+    }
+    detail.push(tools.nvcc
+      ? `nvcc: ${tools.nvcc} (needs a host C++ compiler; on Windows that means MSVC)`
+      : 'nvcc: not found');
+
+    const canCuda = tools.ptxas && (tools.python || tools.nvcc);
+    const level = canCuda ? (tools.slangc ? 'ok' : 'warn') : 'warn';
+    add(level,
+      canCuda
+        ? (tools.slangc ? 'compiling Slang and CUDA is available'
+          : 'compiling CUDA is available; Slang needs slangc')
+        : 'compiling source files is unavailable',
+      ...detail,
+      'Only compute entry points can be compiled to SASS. A graphics stage has no CUDA ' +
+      'lowering, and its real SASS comes from the driver - read it from a cache file.');
+  }
+
+  // 8. storage
   {
     const stats = await output.storageStats(context);
     const days = vscode.workspace.getConfiguration('nvIsaExtractor').get('output.retentionDays');

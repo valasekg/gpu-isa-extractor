@@ -63,6 +63,68 @@ function scratchDir(context) {
 }
 
 /**
+ * Where a listing's code came from, and how that origin describes itself.
+ *
+ * Two kinds of input now reach this file - a shader carved out of a driver cache, and a
+ * kernel compiled from source - and they have nothing in common to say about provenance. A
+ * cache object has a file and a byte offset; a compiled one has a source file and a
+ * toolchain, and "frame at offset 0" would be a provenance line that reads as fact and is
+ * not. Rather than growing an `if` per origin through the middle of the banner, each origin
+ * supplies its own lines and `banner` stays origin-blind. A third input - the `.ptx` and
+ * `.cubin` entry points `compile.js` already accepts, or a driver round-trip - is a new entry
+ * in these two tables and no edit anywhere else.
+ */
+const DEFAULT_ORIGIN = 'cache';
+
+function originOf(object) {
+  return object && PROVENANCE[object.origin] ? object.origin : DEFAULT_ORIGIN;
+}
+
+/**
+ * What "registers" means for each origin.
+ *
+ * The cache states a count that sits a little above what the code touches; ptxas states the
+ * number it actually allocated. Printing one as the other would merge two different claims
+ * under one label, which is exactly what the register-margin note warns against.
+ */
+const REGISTER_SOURCE = {
+  cache: 'declared',
+  compiled: 'allocated by ptxas'
+};
+
+const PROVENANCE = {
+  cache(result, sweepResult, field) {
+    const { object } = result;
+    return [
+      field('source') + `${object.source}`,
+      `// ${' '.repeat(FIELD_WIDTH)}  frame at offset ${object.offset}` +
+        (sweepResult
+          ? ` (${sweepResult.label}${sweepResult.scanned ? ', found by magic scan' : ''})`
+          : '')
+    ];
+  },
+
+  compiled(result, sweepResult, field) {
+    const { object, compile } = result;
+    const lines = [field('source') + `${object.source}`];
+    for (const note of compile.sources.slice(1)) {
+      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  via ${note}`);
+    }
+    lines.push(field('compiled') + `${compile.steps.map(s => s.tool).join(' -> ')}`);
+    for (const step of compile.steps) {
+      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${step.command}`);
+    }
+    if (compile.directive) {
+      lines.push(field('flags') + `${compile.directive} (from the file)`);
+    }
+    if (compile.configuredFlags) {
+      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${compile.configuredFlags} (from settings)`);
+    }
+    return lines;
+  }
+};
+
+/**
  * What the container states about a shader, as banner lines.
  *
  * These are the driver's own numbers, not anything derived from the disassembly - so they are
@@ -85,7 +147,7 @@ function metadataLines(object, text) {
   lines.push(field('stage') + stage);
 
   if (meta.registers !== null) {
-    lines.push(field('registers') + `${meta.registers} declared` +
+    lines.push(field('registers') + `${meta.registers} ${REGISTER_SOURCE[originOf(object)]}` +
       (meta.registerCap !== null ? `, cap ${meta.registerCap}` : ''));
   }
 
@@ -139,11 +201,10 @@ function banner(result, sweepResult) {
     for (const note of disagreements) lines.push(`//   - ${note}`);
   }
 
+  lines.push(THIN_RULE);
+  lines.push(...PROVENANCE[originOf(object)](result, sweepResult, field));
+
   lines.push(
-    THIN_RULE,
-    field('source') + `${object.source}`,
-    `// ${' '.repeat(FIELD_WIDTH)}  frame at offset ${object.offset}` +
-      (sweepResult ? ` (${sweepResult.label}${sweepResult.scanned ? ', found by magic scan' : ''})` : ''),
     field('microcode') + `${object.codeBytes} bytes, sha1 ${object.sha1}`,
     // The literal EF_CUDA_<arch> token is what this extension's own hovers read to decide
     // which architecture's instruction set to describe. Keep the spelling.
@@ -184,6 +245,34 @@ function banner(result, sweepResult) {
     }
   }
 
+  // The source map is what makes correlation survive the listing being saved and reopened:
+  // the markers in the body carry short labels, and this is where a label becomes a path.
+  if (result.correlation && result.correlation.files.length) {
+    lines.push(
+      '//',
+      '// Source correlation. Each `@<address>` below starts a run of instructions the',
+      '// compiler attributes to that source line, holding until the next entry. Attribution',
+      '// is not cost: the scheduler interleaves independent work, so one line\'s instructions',
+      '// are scattered and one instruction can serve several lines. Provenance, not a bill.');
+    for (const [file, label] of result.correlation.files) {
+      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${label} = ${file}`);
+    }
+    const c = result.correlation;
+    lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${c.marked} run(s) over ${c.lines} source line(s)` +
+      (c.unattributed ? `; ${c.unattributed} instruction(s) carry no source position` : ''));
+
+    // The map itself, keyed by instruction address. Each entry starts a run that holds until
+    // the next one, so this is one line per source construct rather than per instruction.
+    // It lives here rather than interleaved with the code because a line of prose every few
+    // instructions destroys the column alignment that makes a disassembly scannable.
+    for (const entry of c.map || []) {
+      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${entry}`);
+    }
+  }
+
+  for (const note of (result.compile && result.compile.notes) || []) {
+    lines.push(`// NOTE: ${note}`);
+  }
   for (const warning of object.warnings || []) lines.push(`// WARNING: ${warning}`);
   lines.push('');
   return lines.join('\n');
@@ -223,8 +312,19 @@ async function writeListing(context, result, sourceRecord) {
   await fs.promises.mkdir(dir, { recursive: true });
 
   const file = path.join(dir, listingName(result.object, result.arch));
-  // Collisions are content-identical by construction - the sha1 is in the name.
-  await fs.promises.writeFile(file, banner(result, sourceRecord) + result.text, 'utf8');
+  // Collisions are content-identical by construction - the sha1 is in the name. The compiled
+  // path is the exception and does not come through here twice for the same bytes; see
+  // `compileview.js`, which writes its own listings because their content depends on source
+  // paths and line numbers that the microcode's sha1 does not cover.
+  //
+  // `result.correlated` is the body with source markers merged in. The banner is deliberately
+  // built from `result.text`, which has none: `stats.analyze` scans the whole listing string
+  // for register operands rather than each instruction line, so a marker naming a path like
+  // `.../R8G8B8A8/pass.slang` would be counted as a use of R8 and the banner would report a
+  // register the code never touches - and then `crossCheck` would accuse the cache of
+  // disagreeing with the code over a directory name.
+  const body = result.correlated || result.text;
+  await fs.promises.writeFile(file, banner(result, sourceRecord) + body, 'utf8');
   return file;
 }
 

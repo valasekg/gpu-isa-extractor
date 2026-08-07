@@ -2,7 +2,7 @@
   "name": "nv-isa-extractor",
   "displayName": "NVIDIA ISA Extractor",
   "description": "Turn NVIDIA driver shader-cache blobs into readable SASS with decoded scheduling control codes, syntax highlighting and tooltips.",
-  "version": "0.5.1",
+  "version": "0.7.1",
   "publisher": "gvalasek",
   "license": "MIT",
   "engines": {
@@ -24,7 +24,10 @@
   ],
   "main": "./extension.js",
   "activationEvents": [
-    "onLanguage:nvidia-sass"
+    "onLanguage:nvidia-sass",
+    "onLanguage:slang",
+    "onLanguage:cuda-cpp",
+    "onLanguage:cpp"
   ],
   "contributes": {
     "viewsContainers": {
@@ -157,6 +160,18 @@
         "command": "nvIsaExtractor.clearOutput",
         "title": "Clear Generated Listings",
         "category": "NVIDIA ISA"
+      },
+      {
+        "command": "nvIsaExtractor.compileSource",
+        "title": "Compile and Disassemble",
+        "category": "NVIDIA ISA",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "nvIsaExtractor.revealSource",
+        "title": "Go to the Source Line for This Instruction",
+        "category": "NVIDIA ISA",
+        "icon": "$(go-to-file)"
       }
     ],
     "keybindings": [
@@ -179,6 +194,16 @@
         "command": "nvIsaExtractor.toggleReviewed",
         "key": "ctrl+alt+shift+m",
         "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
+      },
+      {
+        "command": "nvIsaExtractor.compileSource",
+        "key": "ctrl+alt+shift+b",
+        "when": "editorTextFocus && resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
+      },
+      {
+        "command": "nvIsaExtractor.revealSource",
+        "key": "ctrl+alt+shift+s",
+        "when": "editorTextFocus && editorLangId == nvidia-sass"
       }
     ],
     "menus": {
@@ -187,6 +212,11 @@
           "command": "nvIsaExtractor.disassemble",
           "group": "navigation@50",
           "when": "resourceExtname =~ /^\\.(bin|toc|nvph)$/i"
+        },
+        {
+          "command": "nvIsaExtractor.compileSource",
+          "group": "navigation@51",
+          "when": "resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
         }
       ],
       "editor/title": [
@@ -194,6 +224,11 @@
           "command": "nvIsaExtractor.disassemble",
           "group": "navigation@50",
           "when": "resourceExtname =~ /^\\.(bin|toc|nvph)$/i"
+        },
+        {
+          "command": "nvIsaExtractor.compileSource",
+          "group": "navigation@51",
+          "when": "resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
         }
       ],
       "view/title": [
@@ -339,6 +374,13 @@
         {
           "command": "nvIsaExtractor.filter",
           "when": "nvIsaExtractor.hasBlob"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "nvIsaExtractor.revealSource",
+          "group": "navigation@10",
+          "when": "editorLangId == nvidia-sass"
         }
       ]
     },
@@ -553,7 +595,7 @@
             "keyword.control.guard.sass"
           ],
           "sassLabel": [
-            "entity.name.label.sass"
+            "entity.name.function.label.sass"
           ]
         }
       }
@@ -758,6 +800,66 @@
           "markdownDescription": "Which architecture's instruction set to check opcodes against. `auto` reads the SM version from the file's `.headerflags` and falls back to `any`.",
           "scope": "window",
           "order": 40
+        },
+        "nvIsaExtractor.compile.flags": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Flags applied to every compile, before the file's own `// nv-isa-extractor` line, which wins. Bare flags go to the compiler for the language being compiled - `slangc` for Slang (`-O3`, `-fp-mode fast`), NVRTC or `nvcc` for CUDA (`-use_fast_math`). Use `-Xptxas <flag>` for the PTX assembler and `-Xnvrtc <flag>` to reach the CUDA front end from a Slang file. `-I<dir>` adds an include directory for `#include` and `import`; the compiled file's own directory is always searched first, and a relative directory resolves against the file being compiled."
+        },
+        "nvIsaExtractor.compile.backend": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "nvrtc",
+            "nvcc"
+          ],
+          "default": "auto",
+          "markdownDescription": "Which CUDA front end compiles to PTX. `nvrtc` needs no host C++ compiler and is driven through a small Python helper; `nvcc` needs MSVC on Windows and fails with `Cannot find compiler 'cl.exe' in PATH` without it. `auto` prefers NVRTC."
+        },
+        "nvIsaExtractor.compile.correlate": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Merge `//## <file>:<line>` markers into a compiled listing and light up the matching source line as the cursor moves. Attribution comes from the compiler's own line table; it is provenance, not a cost model."
+        },
+        "nvIsaExtractor.compile.slangcPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Explicit `slangc` path; empty auto-locates. Ships with the Vulkan SDK."
+        },
+        "nvIsaExtractor.compile.ptxasPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Explicit `ptxas` path; empty auto-locates via `PATH` and `%CUDA_PATH%\\bin`."
+        },
+        "nvIsaExtractor.compile.pythonPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Explicit Python interpreter for the NVRTC helper; empty tries `py`, then `python3`."
+        },
+        "nvIsaExtractor.compile.nvrtcPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Explicit `nvrtc64_*.dll`; empty searches `%CUDA_PATH%\\bind` and the loader path."
+        },
+        "nvIsaExtractor.compile.correlationStyle": {
+          "type": "string",
+          "enum": [
+            "banner",
+            "inline",
+            "off"
+          ],
+          "default": "banner",
+          "markdownDescription": "Where source correlation is recorded in a generated listing. `banner` keeps the instruction stream clean and puts an address map in the header. `inline` writes a `//## file:line` marker above each run, which survives being pasted as plain text but breaks the column alignment. `off` skips it."
+        },
+        "nvIsaExtractor.compile.clickToSass": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Ctrl+click (Go to Definition) on a source line jumps to the first instruction it produced, when a listing for that file is open beside it."
+        },
+        "nvIsaExtractor.compile.traceCorrelation": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Log why a source line highlighted nothing to the NVIDIA ISA Extractor output channel."
         }
       }
     }

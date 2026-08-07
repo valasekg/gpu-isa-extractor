@@ -130,12 +130,179 @@ Some things are deliberately not said:
 - **A backward branch is reported as a backward branch,** not as "has a loop" — if/else
   lowering produces them too. The self-branch trap every shader ends with is excluded.
 
+## Compiling a shader you are writing
+
+**NVIDIA ISA: Compile and Disassemble** (`Ctrl+Alt+Shift+B`) takes the `.slang` or `.cu` file in
+the editor, compiles it, and opens its SASS beside the source — with the same control-code
+column, hovers, scoreboard following and statistics a cache listing gets, plus **source
+correlation**:
+
+The instruction stream stays clean — the map lives in the banner, keyed by address, so nothing
+is interleaved with the code:
+
+```
+// correlation  : @0000 saxpy.cu:2
+//                @0010 saxpy.cu:4
+//                @0040 saxpy.cu:5
+...
+        /*0010*/ [B------:R-:W0:Y:S04]  S2R R6, SR_CTAID.X ;
+        /*0020*/ [B------:R-:W0:Y:S02]  S2R R3, SR_TID.X ;
+```
+
+Each entry starts a run that holds until the next. Set
+`nvIsaExtractor.compile.correlationStyle` to `inline` for the older
+`//## file:line` markers above each run, which survive being pasted as plain text.
+
+Put the cursor on an instruction and the line that produced it lights up in the source; put it
+on a source line and every instruction attributed to it lights up in the listing.
+
+**Select a range and it works on the whole range** — pick out a loop body, or a function, and
+every instruction it accounts for is highlighted at once, scattered through the listing as the
+scheduler left it. This is the useful way to read optimised code: one line rarely maps to one
+contiguous run, but a *block* usually maps to something you can see the shape of. It works in
+both directions and across a multi-cursor, so selecting a stretch of SASS answers "where did
+all of this come from" — including which parts came from inlined code rather than from
+anything you wrote.
+
+**Ctrl+click a source line** to jump straight to the first instruction it produced.
+`Ctrl+Alt+Shift+S` goes the other way, from an instruction to its source line. The map is
+written into the listing itself, so all of this still works on one saved and reopened later.
+
+If a selection highlights nothing and you expected it to, turn on
+`nvIsaExtractor.compile.traceCorrelation` — it says whether the listing has no map, names a
+different path, or simply attributes no instructions to those lines.
+
+The chain is `slangc -target cuda` → NVRTC → `ptxas` → cubin, and the listing is produced by
+running the extension's ordinary `nvdisasm --binary` path over the cubin's `.text` section —
+the same bytes, in the same shape, as microcode carved out of a cache.
+
+Two worked examples are in `samples/` — open either and press `Ctrl+Alt+Shift+B`:
+
+| | |
+|---|---|
+| [`tiled-matmul.cu`](samples/tiled-matmul.cu) | shared-memory staging, `BAR.SYNC`, paired scoreboard loads, an unrolled inner product, and a guard the compiler **predicates** rather than branches |
+| [`prefix-blur.slang`](samples/prefix-blur.slang) | three `BSSY`/`BSYNC` pairs, `MUFU.RSQ`, and markers naming both the `.slang` and Slang's inlined CUDA prelude |
+
+Each opens with a comment saying what to look for in its listing, and which flag to change to
+make the code move.
+
+### Compile flags
+
+Flags live with the code they change, on the first line of the file:
+
+```hlsl
+// nv-isa-extractor -O3 -fp-mode fast -Xptxas -maxrregcount=32
+```
+
+A bare flag goes to the compiler for that language — `slangc` for Slang (`-O3`, `-fp-mode`),
+NVRTC or `nvcc` for CUDA (`-use_fast_math`, `-ffp-contract`). Later stages are reached with
+`-Xptxas <flag>` and, from a Slang file, `-Xnvrtc <flag>`, following nvcc's own convention.
+`nvIsaExtractor.compile.flags` sets defaults; the file's own line wins.
+
+### Includes and imports
+
+**The file's own directory is always on the include path**, so a header or a module beside a
+shader is found without being asked for — `#include "common.h"` from a `.cu`, `import helpers;`
+from a `.slang`. That holds while the buffer is *unsaved*, which is when it is least obvious:
+the text is compiled from a copy in a scratch directory, where every sibling of the real file
+would otherwise be out of reach. NVRTC has no notion of a source directory at all, so for CUDA
+this is the only thing that makes a sibling header work.
+
+Anywhere else goes on the same first line, relative to the file:
+
+```hlsl
+// nv-isa-extractor -I../common -I"C:\Program Files\shaders\inc"
+```
+
+Relative means *relative to the shader*, not to whatever directory the editor was started in,
+so the line means the same thing for whoever opens the file. `-I<dir>`, `-I <dir>` and
+`--include-path=<dir>` are all accepted and normalised to the one spelling every tool takes.
+A bare `-I` goes to the compiler for the language, as every other bare flag does, and
+`-Xnvrtc -I<dir>` reaches the CUDA stage of a Slang compile. A directory that is not there is
+reported in the listing's banner, rather than surfacing further down as `cannot open source
+file` naming the header instead of the mistyped path.
+
+Correlation follows the code in: instructions generated from an included header or an imported
+module are attributed to *that* file, which is listed in the banner's source map, so
+`Ctrl+Alt+Shift+S` opens it at the line.
+
+### What it will not do
+
+- **Only compute entry points.** A vertex or fragment stage has no CUDA lowering — `slangc`
+  crashes rather than declining — and the SASS a graphics shader really runs comes from the
+  driver's *graphics* compiler, which is a different backend. Read that from a cache file.
+  Raytracing stages compile all the way to PTX and then stop: OptiX intrinsics are resolved
+  by the driver's pipeline linker, never by `ptxas`.
+- **Attribution is not cost.** A marker says which source construct an instruction was
+  generated for. Under optimisation the scheduler interleaves independent work, so one line's
+  instructions are scattered and one instruction can serve several lines. Instructions from
+  inlined code — Slang's CUDA prelude, for instance — are attributed to *that* file and are
+  labelled as such rather than being folded into the nearest line you wrote.
+
+### Requirements
+
+`ptxas` (CUDA Toolkit, beside `nvdisasm`), `slangc` for Slang (ships with the Vulkan SDK), and
+a CUDA front end. **NVRTC** is used by default and needs no host C++ compiler; because it is a
+DLL with no CLI, it is driven through a small Python helper, so this feature — and only this
+feature — wants Python 3 on `PATH`. Set `nvIsaExtractor.compile.backend` to `nvcc` instead if
+you have MSVC. **NVIDIA ISA: Doctor** reports which of these you have.
+
 ## Language support
 
 `.sass` and `.nvsass` files get highlighting, semantic tokens, hovers and an outline,
 covering `nvdisasm`, `cuobjdump -sass`, Nsight export and bare listing formats, plus both
 control-column conventions: the Maxwell/maxas leading `06:-:-:Y:d` form and the Volta+
 bracketed `[B------:R-:W0:Y:S04]` form this extension emits.
+
+The two bundled themes (**SASS Dark**, **SASS Light**) give each control-column field its own
+colour, but nothing requires you to use them: every scope the grammar emits is rooted at a
+prefix the common themes already style, so a listing keeps its structure under Dark+, Dark
+Modern, Solarized, Monokai and the rest. `verify.py` checks this against VS Code's own Dark+
+and fails on any scope that would fall through to plain foreground.
+
+### Tuning another theme
+
+Two things a listing wants that no general-purpose theme provides. Both go in `settings.json`,
+scoped to the theme by name so nothing else changes.
+
+**Dim the punctuation.** Only one of VS Code's nineteen built-in themes styles bare
+`punctuation`, so in the rest the commas and semicolons are drawn at the editor's full
+foreground — brighter than the opcodes they separate. In Monokai the opcode sits at 3.9:1
+against the background while the comma is 13.9:1. This is the single highest-value thing to
+paste:
+
+```jsonc
+"editor.tokenColorCustomizations": {
+  "[Monokai]": {                       // or whichever theme you use
+    "textMateRules": [{
+      "scope": ["punctuation.separator.operand.sass",
+                "punctuation.terminator.instruction.sass",
+                "punctuation.section.brackets.begin.sass",
+                "punctuation.section.brackets.end.sass",
+                "punctuation.accessor.sass"],
+      "settings": { "foreground": "#6B6B6B" }
+    }]
+  }
+}
+```
+
+**Recover destination-versus-source.** The semantic pass knows which registers an instruction
+writes and which it reads, but a foreign theme can only borrow colours it already defines, so
+the distinction is invisible outside the bundled themes. `enabled: true` is required — several
+themes never opt into semantic highlighting at all:
+
+```jsonc
+"editor.semanticTokenColorCustomizations": {
+  "[Monokai]": {
+    "enabled": true,
+    "rules": {
+      "sassVectorReg.dst": { "foreground": "#FFD08A", "bold": true },
+      "sassPredicate":     "#F07178",
+      "sassImmediate":     "#C3E88D"
+    }
+  }
+}
+```
 
 > `.sass` is also the extension of the indented CSS preprocessor. If VS Code guesses wrong,
 > pin it per folder:
@@ -164,6 +331,16 @@ id, grammar and themes.
 | `nvIsaExtractor.tree.pageSize` | `500` | Rows per level before a `Load more…` entry; `0` = all |
 | `nvIsaExtractor.tree.maxBlobs` | `8` | How many cache files stay listed at once |
 | `nvIsaExtractor.batch.confirmAboveBytes` | `256 MB` | Ask before a batch producing more than this |
+| `nvIsaExtractor.compile.flags` | `""` | Default compile flags; the file's own line wins |
+| `nvIsaExtractor.compile.backend` | `auto` | CUDA front end: `nvrtc` (no host compiler) or `nvcc` |
+| `nvIsaExtractor.compile.correlate` | `true` | Highlight the matching lines as the selection moves |
+| `nvIsaExtractor.compile.correlationStyle` | `banner` | Where the map is recorded: `banner`, `inline` or `off` |
+| `nvIsaExtractor.compile.clickToSass` | `true` | Ctrl+click a source line to jump to its first instruction |
+| `nvIsaExtractor.compile.traceCorrelation` | `false` | Log why a line highlighted nothing |
+| `nvIsaExtractor.compile.slangcPath` | `""` | Explicit `slangc`; empty = auto-locate |
+| `nvIsaExtractor.compile.ptxasPath` | `""` | Explicit `ptxas`; empty = auto-locate |
+| `nvIsaExtractor.compile.pythonPath` | `""` | Interpreter for the NVRTC helper; empty tries `py`, `python3` |
+| `nvIsaExtractor.compile.nvrtcPath` | `""` | Explicit `nvrtc64_*.dll`; empty searches `%CUDA_PATH%` |
 
 The `nvidiaSass.*` settings (semantic highlighting, hover detail, architecture) carry over
 from the highlighter unchanged, plus `nvidiaSass.semanticMaxLines` which skips the semantic

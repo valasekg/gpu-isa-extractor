@@ -18,6 +18,7 @@ Caveat worth remembering: VS Code runs TextMate grammars under Oniguruma, and st
 compiles them under Python's `re`. The two agree on the constructs used here, but this is
 an approximation, not a proof - the visual pass in the editor is what confirms it.
 """
+import glob
 import json
 import os
 import re
@@ -28,6 +29,7 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 failures = []
 warnings = []
+skipped = []
 passes = 0
 
 
@@ -51,6 +53,17 @@ def warn(msg, detail=""):
     if detail:
         for line in str(detail).splitlines():
             print("        %s" % line)
+
+
+def skip(msg):
+    """A check that could not run here. Not a pass and not a failure.
+
+    Counted separately so a machine that cannot run a check - no GPU, no cache, no VS Code
+    installation to read the stock themes out of - reports honestly rather than either
+    claiming the check passed or failing the build for something absent by design.
+    """
+    skipped.append(msg)
+    print("  skip  %s" % msg)
 
 
 def rel(*parts):
@@ -237,15 +250,26 @@ else:
 
 # The Volta+ column's five value captures must land on the control-code scopes, otherwise the
 # column renders as punctuation and the era distinction is invisible.
+#
+# The roots differ per field on purpose. A scope is only coloured by a theme that has a rule
+# matching one of its dot-prefixes, and `constant.other` is not such a rule in the default
+# theme family - dark_vs defines constant.language, constant.numeric, constant.regexp and
+# constant.character but nothing bare enough to catch constant.other. Scoping all five fields
+# under it left the control column at plain foreground in Dark+, Dark Modern, Light+ and both
+# high-contrast themes: 8 of the 19 built-in themes, and the most used ones. These roots are
+# styled by 18 or 19 of the 19, and give the column three distinct colours instead of none.
 VOLTA_FIELD_CAPTURES = {
-    15: ("wait-barrier", "B--2---"), 17: ("read-barrier", "R-"),
-    19: ("write-barrier", "W0"), 21: ("yield", "Y"), 23: ("stall", "S04"),
+    15: ("variable.other.control-code.wait-barrier", "B--2---"),
+    17: ("variable.other.control-code.read-barrier", "R-"),
+    19: ("variable.other.control-code.write-barrier", "W0"),
+    21: ("constant.language.control-code.yield", "Y"),
+    23: ("constant.numeric.control-code.stall", "S04"),
 }
 volta_match = instruction_re.match(PREFIX_FORMS[4][1])          # the bracketed-column sample
 wrong = []
-for group, (scope_leaf, text) in VOLTA_FIELD_CAPTURES.items():
+for group, (expected_scope, text) in VOLTA_FIELD_CAPTURES.items():
     scope = instruction_rule["beginCaptures"].get(str(group), {}).get("name", "")
-    if not scope.startswith("constant.other.control-code.%s" % scope_leaf):
+    if not scope.startswith(expected_scope):
         wrong.append("capture %d is scoped %r" % (group, scope))
     elif volta_match and volta_match.group(group) != text:
         wrong.append("capture %d matched %r, expected %r"
@@ -408,7 +432,8 @@ declared_settings = set(contributes.get("configuration", {}).get("properties", {
 JS_SOURCES = ("extension.js", "src/pipeline.js", "src/output.js", "src/doctor.js",
               "src/semantic.js", "src/hover.js", "src/blobstore.js", "src/tree.js",
               "src/browser.js", "src/review.js", "src/scoreboard.js", "src/highlight.js",
-              "src/symbols.js", "src/stats.js", "src/nvcache.js")
+              "src/symbols.js", "src/stats.js", "src/nvcache.js", "src/compile.js",
+              "src/compileview.js", "src/cubin.js", "src/correlate.js")
 JS_SOURCES = tuple(s for s in JS_SOURCES if os.path.exists(rel(*s.split("/"))))
 
 # A configuration section is reached either directly (`getConfiguration('x').get('y')`) or
@@ -600,6 +625,8 @@ if missing_fallbacks:
 else:
     ok("every emitted semantic modifier combination has a TextMate fallback")
 
+fallback_scopes = sorted({scope for scopes in scope_map.values() for scope in scopes})
+
 # ------------------------------------------------------------- 5. theme cover
 
 print("\n5. Theme coverage")
@@ -645,6 +672,81 @@ for theme_name in ("themes/sass-dark-color-theme.json", "themes/sass-light-color
         warn("%s has no colour for semantic types" % theme_name, " ".join(sorted(missing)))
     else:
         ok("%s colours every semantic token type" % theme_name)
+
+
+# Most people never switch to the bundled themes, so styling every scope in *those* proves
+# very little on its own. A scope is only coloured by a theme that has a rule matching one of
+# its dotted prefixes, so a scope rooted somewhere the common themes do not style renders as
+# plain foreground everywhere but here.
+#
+# This caught a real one: all five control-column fields were rooted at `constant.other`,
+# which the default theme family does not style - dark_vs defines constant.language,
+# constant.numeric, constant.regexp and constant.character and nothing bare enough to catch
+# it - so the column, which is the reason this extension exists, was colourless in Dark+,
+# Dark Modern, Light+ and both high-contrast themes.
+#
+# Punctuation is exempt: every theme leaves it at the foreground colour deliberately.
+def stock_dark_plus():
+    """VS Code's own Dark+ theme, with its include chain resolved, or None."""
+    roots = []
+    for exe in (os.environ.get("VSCODE_EXE"),
+                r"D:\Development\Programs\Microsoft VS Code\Code.exe",
+                os.path.expandvars(r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"),
+                r"C:\Program Files\Microsoft VS Code\Code.exe"):
+        if exe and os.path.exists(exe):
+            roots.append(os.path.dirname(exe))
+    found = []
+    for root in roots:
+        for depth in ("resources/app/extensions", "*/resources/app/extensions"):
+            found.extend(glob.glob(os.path.join(
+                root, depth, "theme-defaults", "themes", "dark_plus.json")))
+    if not found:
+        return None
+
+    def load(path, seen):
+        if path in seen or not os.path.exists(path):
+            return []
+        seen.add(path)
+        with open(path, encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+        base = load(os.path.join(os.path.dirname(path), data["include"]), seen) \
+            if data.get("include") else []
+        return base + (data.get("tokenColors") or [])
+
+    return load(found[0], set())
+
+
+stock_rules = stock_dark_plus()
+if stock_rules is None:
+    skip("VS Code's own themes were not found, so stock-theme coverage was not checked")
+else:
+    rules = set()
+    for rule in stock_rules:
+        if not (rule.get("settings") or {}).get("foreground"):
+            continue
+        scope = rule.get("scope") or []
+        for entry in ([scope] if isinstance(scope, str) else scope):
+            for part in str(entry).split(","):
+                part = part.strip().split()[-1] if part.strip().split() else ""
+                if part:
+                    rules.add(part)
+
+    # The semantic fallbacks are checked alongside the grammar's own scopes. They are what a
+    # foreign theme actually colours the semantic pass with, and they drift independently of
+    # the grammar - `sassLabel` went on naming `entity.name.label.sass` after the grammar had
+    # moved to `entity.name.function.label.sass`, and nothing compared the two.
+    checked = set(grammar_scopes) | set(fallback_scopes)
+    exempt = {s for s in checked if s.startswith("punctuation.")}
+    orphans = sorted(s for s in checked if s not in exempt and not covered_by(s, rules))
+    if orphans:
+        bad("scopes that VS Code's own Dark+ theme would leave at plain foreground",
+            "\n".join(orphans) +
+            "\n(root each at a prefix stock themes style: keyword.*, storage.modifier.*, "
+            "constant.numeric/language.*, variable.other/language.*, entity.name.function.*, "
+            "string.*, comment.*)")
+    else:
+        ok("every non-punctuation grammar scope and semantic fallback is coloured by "
+           "VS Code's stock Dark+ (%d checked)" % len(checked - exempt))
 
 # Keep SASS Light opcodes aligned with VS Code Light+'s C++ keyword palette.
 light_theme = docs["themes/sass-light-color-theme.json"]
@@ -693,7 +795,7 @@ if not cmd:
 else:
     for script in ("test_parse.js", "test_hover.js", "test_semantic.js", "test_explain.js",
                    "test_ctrl.js", "test_zstd.js", "test_scoreboard.js", "test_stats.js",
-                   "test_blobstore.js",
+                   "test_blobstore.js", "test_compile.js",
                    "test_browser.js", "test_endtoend.js"):
         proc = subprocess.run(cmd + [rel("tools", script)],
                               env=env, cwd=ROOT, capture_output=True, text=True)
@@ -708,8 +810,9 @@ else:
 # ------------------------------------------------------------------ summary
 
 print("\n" + "-" * 70)
-print("%s   %d passed, %d failed, %d warnings"
-      % ("PASS" if not failures else "FAIL", passes, len(failures), len(warnings)))
+print("%s   %d passed, %d failed, %d warnings%s"
+      % ("PASS" if not failures else "FAIL", passes, len(failures), len(warnings),
+         ", %d skipped" % len(skipped) if skipped else ""))
 if failures:
     for f in failures:
         print("  - %s" % f)

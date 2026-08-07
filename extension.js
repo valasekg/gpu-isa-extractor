@@ -11,6 +11,7 @@ const {
 
 const blobstore = require('./src/blobstore');
 const browser = require('./src/browser');
+const compileview = require('./src/compileview');
 const doctor = require('./src/doctor');
 const output = require('./src/output');
 const pipeline = require('./src/pipeline');
@@ -80,12 +81,17 @@ function activate(context) {
   });
 
   browser.init({ context, provider, view, log, showLog: () => channel.show(true) });
+  compileview.init({ context, log, showLog: () => channel.show(true) });
 
   context.subscriptions.push(
     channel,
     semantic,
     provider,
     view,
+
+    // Correlation lights up the other side of a source<->SASS pair from the selection, so it
+    // needs the same editor events the scoreboard highlighter does.
+    ...compileview.watch(),
 
     vscode.languages.registerDocumentSemanticTokensProvider(SELECTOR, semantic, legend),
     vscode.languages.registerHoverProvider(SELECTOR, new SassHoverProvider()),
@@ -112,6 +118,8 @@ function activate(context) {
     vscode.commands.registerCommand('nvIsaExtractor.previousObject', () => browser.walk(-1)),
     vscode.commands.registerCommand('nvIsaExtractor.nextUnreviewed', () => browser.walk(1, { unreviewedOnly: true })),
     vscode.commands.registerCommand('nvIsaExtractor.loadMore', node => browser.loadMore(node)),
+    vscode.commands.registerCommand('nvIsaExtractor.compileSource', uri => compileview.compileCommand(uri)),
+    vscode.commands.registerCommand('nvIsaExtractor.revealSource', () => compileview.revealSource()),
     vscode.commands.registerCommand('nvIsaExtractor.openSettings', () => browser.openSettings()),
     vscode.commands.registerCommand('nvIsaExtractor.doctor', () => doctorCommand(context)),
     vscode.commands.registerCommand('nvIsaExtractor.clearOutput', () => clearOutputCommand(context)),
@@ -121,6 +129,8 @@ function activate(context) {
       if (e.affectsConfiguration('nvidiaSass.semanticHighlighting') ||
           e.affectsConfiguration('nvidiaSass.semanticMaxLines')) semantic.refresh();
       if (e.affectsConfiguration('nvidiaSass.scoreboard.highlight')) highlighter.refresh();
+      // The compile toolchain is probed once and cached; a path setting changes the answer.
+      if (e.affectsConfiguration('nvIsaExtractor.compile')) compileview.resetToolCache();
       if (e.affectsConfiguration('nvIsaExtractor.arch')) {
         // Listings are named after the architecture, so which ones count as already-generated
         // changes with it.

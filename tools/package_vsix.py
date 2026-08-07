@@ -35,6 +35,9 @@ CONTENT_TYPES = """<?xml version="1.0" encoding="utf-8"?>
   <Default Extension="js" ContentType="application/javascript" />
   <Default Extension="md" ContentType="text/markdown" />
   <Default Extension="txt" ContentType="text/plain" />
+  <!-- src/nvrtc_compile.py: NVRTC is a DLL with no command-line front end, and the extension
+       host cannot call one, so the CUDA front end is reached through a Python helper. -->
+  <Default Extension="py" ContentType="text/plain" />
   <Default Extension="vsixmanifest" ContentType="text/xml" />
 </Types>
 """

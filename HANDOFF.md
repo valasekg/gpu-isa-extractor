@@ -176,6 +176,74 @@ described the interface as verified; `git log --all -S` shows it never existed o
   `verify.py` also asserts the language's `wordPattern` matches a lone digit, which is what
   ctrl+click and double-click need.
 
+### Compiling from source
+
+The chain is `slangc -target cuda` → NVRTC → `ptxas` → cubin → `cubin.entryPoints`, and the
+last step exists so the *existing* pipeline runs unchanged: a `.text.<entry>` section is a
+contiguous run of 128-bit instructions starting at address 0, which is exactly what
+`nvcache.carveAt` produces. Everything downstream — `nvdisasm --binary`, `ctrl.annotate`,
+`scoreboard.js`, `stats.js` — is reused rather than reimplemented. If that equivalence ever
+breaks, the compiled path is the thing to change, not the shared code.
+
+- **`nvcc` needs a host C++ compiler for every mode**, `-ptx` and `-E` included. Without MSVC
+  it fails at `Cannot find compiler 'cl.exe' in PATH` before doing anything, and `-ccbin`
+  pointed at MinGW fails deeper with `Host compiler targets unsupported OS`. **NVRTC needs
+  none** — hence `src/nvrtc_compile.py`, ~80 lines of `ctypes` against `nvrtc64_*.dll`,
+  because NVRTC ships as a DLL with no CLI and the extension host cannot call one without
+  npm or native modules. That makes Python a runtime dependency *of this feature only*.
+- **Pass NVRTC the absolute source path as the program name.** It is written verbatim into
+  the PTX `.file` record, and a bare basename is later resolved against whatever directory
+  the editor is running in — producing a source map that points at a file which does not
+  exist. This was a real bug; the banner said `nv-isa-extractor/s.cu`.
+- **`-lineinfo` is codegen-neutral** — the `.text` bytes are identical with and without it,
+  measured — so listings are what would have been produced anyway. `-G` is not, and is never
+  passed implicitly.
+- **The SM number is bits [8,16) of `e_flags`, not the low byte.** `0x09005604` is sm_86;
+  the low byte is 4 on every cubin seen here and means something else. Reading it wrong makes
+  `nvdisasm --binary` decode to the wrong architecture, which yields plausible wrong
+  instructions rather than an error.
+- **Only compute entry points.** `slangc -stage fragment -target cuda` **crashes** (exit
+  0xC0000005, no diagnostic, no output file), so the stage gate in `compile.chooseSlangEntry`
+  must run *before* slangc, not on its exit code. Raytracing stages get all the way through
+  slangc and NVRTC and then die at `ptxas` with `Call to '_optix_trace_typed_32' requires
+  call prototype` — OptiX intrinsics are resolved by the driver's pipeline linker, so there
+  is no cubin at the end of that road however far it is followed.
+- **A file mixing compute and graphics entry points must name its compute entry**, or
+  slangc's own discovery finds the graphics one and crashes. But do *not* pass `-entry`
+  otherwise: a compute-only file compiles fine without it, and passing `-entry` with no name
+  makes slangc look for `main` and fail on a file that never claimed to have one.
+- **The entry-point scan cannot be one regex.** The attributes between `[shader("compute")]`
+  and the function are themselves calls — `[numthreads(64,1,1)]` — so any pattern of the form
+  "identifier followed by (" names the entry point `numthreads`. `functionAfter()` skips
+  bracket groups and takes the last identifier before the parameter list.
+- **Never merge source markers into the text the banner analyses.** `stats.analyze` runs
+  `OPERAND_RE` over the whole listing string rather than per instruction line (a measured
+  perf decision, `src/stats.js:28-38`), so a marker naming a path like `.../R8G8B8A8/pass.slang`
+  is counted as a use of R8 — the banner then reports registers the code never touches and
+  `crossCheck` accuses the cache of disagreeing with the code over a directory name.
+  `result.text` is the pre-merge listing and is what the banner reads; `result.correlated` is
+  the body that gets written. `test_compile.js` section 8 pins this.
+- **A compiled listing is not identified by its microcode sha1.** `output.listingName` is
+  built on "identical bytes make an identical listing", which is true for a carve and false
+  here: adding a comment to a kernel leaves `.text` byte-identical and moves every line
+  number, and two files in different directories collide outright. `compileview.writeCompiledListing`
+  names on the source path instead and always rewrites, deliberately bypassing
+  `browser.openObject`'s `hasListing` shortcut.
+- **Slang's `precise` qualifier does not survive the CUDA target.** slangc accepts it and
+  emits it verbatim into the generated CUDA, where it is not a keyword, so NVRTC stops at
+  `identifier "precise" is undefined`. It is the language-level control over FMA contraction,
+  so on this path there is no way to forbid contraction from the shader source; the only
+  working control is NVRTC's own `--fmad=false`, reachable as `-Xnvrtc --fmad=false`.
+  Do not reach for `-fp-mode` for this - contraction is a separate axis from floating-point
+  mode, slangc has no contraction flag, and `-fp-mode precise` leaves the SASS byte-identical.
+- **`-g` and `-gi` disagree about which line an instruction belongs to** — measured at 4 of
+  24 instructions on a 3-deep inline chain, where `-g` names the innermost callee and `-gi`
+  the call site. `-gi` also emits *depth+1* consecutive markers, not two, and re-emits a
+  marker when the inline context changes but the line does not. Only `-g` is used, and any
+  parser that carries `(file, line)` forward until it changes is correct under `-g` and
+  silently wrong under `-gi`. Adding `-gi` means writing a frame-stack parser and deciding,
+  in public, which frame is authoritative.
+
 ### The browser
 
 - **A binary file has no `TextDocument`.** Opening a `.bin` gives you a placeholder editor,
@@ -227,6 +295,47 @@ described the interface as verified; `git log --all -S` shows it never existed o
   `#instruction` or they win and the opcode is never reached.
 - **`src/data.js` loads `../data/*.json` at require time.** Moving `src/` without `data/`
   breaks module load.
+- **A scope is only coloured by a theme that styles one of its dotted prefixes**, and the
+  default theme family styles far less than it looks. `dark_vs` - which Dark+, Dark Modern,
+  Light+, Light Modern and both high-contrast themes inherit - defines `constant.language`,
+  `constant.numeric`, `constant.regexp` and `constant.character`, but nothing bare enough to
+  catch `constant.other`. All five control-column fields were rooted there, so the column that
+  is the whole point of this extension rendered at plain foreground in 8 of the 19 built-in
+  themes, including every one most people use. It looked right only in the bundled themes,
+  which style the full scope string. The fields are now rooted at `variable.other`
+  (the three barriers, matching how barrier *operands* are scoped so a scoreboard looks the
+  same everywhere), `constant.numeric` (stall) and `constant.language` (yield): three distinct
+  colours in stock Dark+ where there were none. `verify.py` section 5 now checks every
+  non-punctuation scope against VS Code's own Dark+ and fails on any that would fall through;
+  it skips when VS Code cannot be located. Punctuation is exempt - every theme leaves it at
+  the foreground colour on purpose.
+  Measured coverage across the 19 built-in themes: control-code fields 18-19/19 (only Abyss
+  misses the barriers, and it leaves 38 of our scopes unstyled anyway); `entity.name.label`
+  was the worst scope in the grammar at 9/19 and is now `entity.name.function.label` at 17/19.
+- **The flash has a second direction, and it was live.** The grammar dims the registers that
+  are really constants - `RZ`, `URZ`, `PT`, `UPT`, `SRZ` - on sight. The semantic pass then
+  repainted them at full register brightness wherever they sat in a *source* slot, because
+  `parse.js` only assigns `role: 'discard'` to a zero register in a destination. Measured in
+  the bundled dark theme: `RZ` 4.32:1 arriving as 8.24:1, `PT` 3.39:1 arriving as 6.21:1, on
+  36 tokens across the 200-instruction sample. `semantic.js` now skips those tokens entirely
+  rather than giving them a dimmer semantic colour: emitting nothing leaves VS Code with
+  nothing to override the grammar with, so the dim colour holds by construction instead of by
+  every theme agreeing to define a matching rule. Destination discards keep their token - a
+  zero *destination* is a real statement that `hover.js` explains, and reusing the `discard`
+  role for sources would make that hover say "discards RZ" about a register merely read.
+- **Punctuation is the brightest ink on the line in 18 of the 19 built-in themes.** Only
+  quietlight styles bare `punctuation`; everywhere else the commas and semicolons render at
+  full editor foreground while the opcode is a mid-tone - in Monokai, 13.9:1 against 3.9:1.
+  Do *not* re-root the operand punctuation to work around it: those scopes are correct and a
+  custom rule written against them would then miss. The README documents a
+  `editor.tokenColorCustomizations` snippet instead. The control column's `[`, `:` and `]` are
+  the one exception and were moved to `variable.other.control-code.separator.sass`: they are
+  internal structure of a single encoded field, not general syntax, and at full brightness
+  they framed the column's own digits like a cage.
+- **An address delimiter must carry the address's scope.** Captures 10 and 12 of the
+  instruction rule - the `/*` and `*/` - were `punctuation.definition.comment.address.sass`
+  while the digits between them were `comment.block.address.sass`, so in 15 of the 19 built-in
+  themes the delimiters were brighter than the thing they delimit.
 - **Opcode colour stability is load-bearing** (inherited). Every opcode is emitted as the
   bare `sassOpcode` type with no modifier bits. An earlier version added classification
   modifiers; stock themes did not understand the combinations and opcodes flashed blue to
@@ -269,6 +378,14 @@ Deliberately out of scope for the first version, roughly in value order:
   derivable from the disassembly.
 - `BSSY`/`BSYNC` pairing and folding; a stats panel; a stall-count heatmap as a semantic
   token modifier (read the opcode-colour trap first).
+- Compiled kernels do not appear in the Shader Objects view. The model there is
+  "blob → objects" and a source file is a third kind of root; the compile command opens its
+  listing directly instead. Walking, review marks and batch disassembly are therefore
+  cache-only. Recompiling on save, and diffing two listings of the same kernel built with
+  different flags, are the obvious things that view would make possible.
+- Correlation is one-way per gesture and has no CodeLens showing how many instructions a
+  line is attributed. That number is easy to compute and easy to misread as a cost, so it
+  wants a wording decision before it is shown, not after.
 - Range and delta semantic token providers, which would retire `semanticMaxLines`.
 - Linux cache discovery. Both cache roots are `%LOCALAPPDATA%`-based; the reference reader
   has the same limitation.
