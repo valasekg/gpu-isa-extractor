@@ -1,16 +1,22 @@
 'use strict';
 
 /**
- * Compile a source file to a cubin, so a shader can be read as SASS without going near a
- * driver cache.
+ * Compile a source file, so a shader can be read as SASS without going near a driver cache.
  *
- *     .slang --slangc--> .cu --nvrtc--> .ptx --ptxas--> .cubin --cubin.js--> microcode
- *     .cu ------------------nvrtc--> .ptx --ptxas--> .cubin --cubin.js--> microcode
+ * A `.slang` file takes one of two roads, decided by the stage of the entry point being
+ * compiled:
  *
- * The last step is the point of the whole arrangement: `cubin.entryPoints` yields the same
- * shape `nvcache.carveAt` yields, so a compiled kernel travels the *existing* pipeline -
- * `nvdisasm --binary`, the control-code column, the scoreboard scan, the statistics - rather
- * than a parallel one that would drift out of step with it.
+ *     compute            .slang --slangc--> .cu --nvrtc--> .ptx --ptxas--> .cubin --> microcode
+ *     .cu                       ------------nvrtc--> .ptx --ptxas--> .cubin --> microcode
+ *
+ *     vertex             .slang --slangc--> .spv --the display driver--> its shader cache
+ *     fragment                                                       --nvcache.js--> microcode
+ *     geometry
+ *
+ * Both end in the same shape - `cubin.entryPoints` and `nvcache.enumerateObjects` yield the
+ * same thing - so a compiled shader travels the *existing* path, `nvdisasm --binary`, the
+ * control-code column, the scoreboard scan, the statistics, rather than a parallel one that
+ * would drift out of step with it. That is the point of the whole arrangement.
  *
  * ## Why nvrtc and not nvcc
  *
@@ -27,21 +33,22 @@
  *
  * ## Stages
  *
- * Only compute entry points are supported, and the gate is deliberately before slangc rather
- * than after it:
+ * The road is chosen before slangc runs, and that ordering is not incidental:
+ * `slangc -stage fragment -target cuda` **crashes** (exit 0xC0000005, no diagnostic, no output
+ * file), so a decision made after it would report a segfault instead of a route.
  *
- *   - `slangc -stage fragment -target cuda` **crashes** (exit 0xC0000005, no diagnostic, no
- *     output). A gate afterwards would report a segfault instead of "graphics stages do not
- *     have a CUDA lowering".
- *   - Raytracing stages compile through slangc and through nvrtc, then die at `ptxas` with
- *     `Call to '_optix_trace_typed_32' requires call prototype`. OptiX device intrinsics are
- *     resolved by the OptiX pipeline linker inside the driver and never by ptxas, so there is
- *     no cubin at the end of that road however far it is followed.
+ * Compute goes through CUDA because it is the only stage with a CUDA lowering, and because
+ * that road ends in a cubin whose line table gives source correlation. Vertex, fragment and
+ * geometry go to the driver, whose graphics compiler is a *different backend* from the CUDA
+ * one - which is the point rather than a compromise: it is the compiler that runs when the
+ * shader is part of a frame. What that road cannot give is correlation, because the driver
+ * keeps no line table; see `graphicsCompile`.
  *
- * A graphics shader's SASS comes from the driver's graphics compiler, which is a different
- * backend from the CUDA one - so even where a lowering exists the answer would not be the
- * code the GPU runs when drawing. Reading it out of a cache, which this extension already
- * does, remains the only honest route for those.
+ * Hull, domain, mesh and amplification are unimplemented: each needs a longer chain of stages
+ * synthesised around it. Raytracing needs a different creation call entirely
+ * (`vkCreateRayTracingPipelinesKHR`) - it is a dead end only on the CUDA road, where OptiX
+ * intrinsics reach `ptxas` and stop at `Call to '_optix_trace_typed_32' requires call
+ * prototype`, because they are resolved by the driver's pipeline linker and never by ptxas.
  */
 
 const fs = require('fs');
