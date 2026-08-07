@@ -41,7 +41,13 @@ TypeScript, no `vsce`. Plain CommonJS that the extension host runs directly.
   `ELECTRON_RUN_AS_NODE=1` against `Code.exe`. `find_node()` in `verify.py` locates it and
   reports a skip rather than a pass if it cannot.
 - VS Code CLI: `D:\Development\Programs\Microsoft VS Code\bin\code.cmd`.
-- CUDA is at `D:\Development\Programs\CUDA`; `nvdisasm` works, `nvcc` does not (no MSVC).
+- CUDA is at `D:\Development\Programs\CUDA`; `nvdisasm` and `ptxas` work. MSVC 14.44 is now
+  installed at `D:\Development\VisualStudio2022`, so `nvcc` and `tools/vk_abi_freeze.py` can
+  run - but nothing in the shipped extension needs a C compiler, and that must stay true.
+- The Vulkan SDK is at `%VULKAN_SDK%` (1.3.296.0) and supplies `slangc`. The *loader* the
+  graphics road actually uses ships with the display driver; the SDK is a dev-time convenience
+  for `spirv-reflect` and the validation layers.
+- The GPU is an RTX A4500 (SM86). The graphics road needs it present; the compute road does not.
 
 Do not introduce an npm-only workflow without first making the offline packaging story
 explicit. The current one has no network dependency at all.
@@ -55,8 +61,12 @@ py tools\oracle_compare.py --full     # release gate; minutes
 ```
 
 `verify.py` is the single entry point: JSON shape, every grammar regex, manifest wiring
-(commands, menus, settings, packaged modules), theme coverage, and the seven JavaScript
-suites. Expect `PASS 59 passed, 0 failed, 0 warnings`.
+(commands, menus, settings, packaged modules), theme coverage, and the JavaScript suites.
+Expect `PASS 73 passed, 0 failed, 0 warnings`.
+
+`test_gfx.js` is the one suite that can legitimately report skips: its second half needs an
+NVIDIA GPU, a working Vulkan driver and `slangc`, and skips rather than fails without them.
+Its first half - the struct ABI and the SPIR-V reflector - needs only Python and runs anywhere.
 
 **Python `re` only approximates Oniguruma**, which is what VS Code actually runs grammars
 under. A regex change involving lookbehind or heavy nesting needs a live check:
@@ -80,6 +90,51 @@ identical text. It reports SKIP, not PASS, on a machine without the reference or
 **The reference has no `--ctrl` feature.** An earlier planning document claimed it did and
 described the interface as verified; `git log --all -S` shows it never existed on any branch.
 `src/ctrl.js` is original work. Do not go looking for the Python version of it.
+
+## The two compile roads
+
+A `.slang` file takes one of two roads, decided by stage before slangc is invoked:
+
+```
+compute            slangc -target cuda  → NVRTC → ptxas → cubin  → carve with cubin.js
+vertex, fragment   slangc -target spirv → vk_compile.py → isolated GLCache → carve with nvcache.js
+```
+
+Both end in microcode of the same shape, so everything downstream is shared.
+
+**Why the decision is before slangc and not after.** `slangc -stage fragment -target cuda`
+crashes - exit `0xC0000005`, no diagnostic, no output file. A gate placed afterwards would
+report a segfault instead of a route. Verified on Slang 2024.13.
+
+**Why the driver at all.** There is no API that hands back a graphics shader's machine code.
+Creating a pipeline makes the driver compile, and it writes the result to its shader disk cache
+on the way past. `__GL_SHADER_DISK_CACHE_PATH` redirects that to a scratch directory, so what
+lands there is attributable to this run. Nothing is drawn.
+
+**Why the teardown matters.** The driver flushes to that cache as the *device is destroyed*, so
+a path that returns without destroying it produces nothing to carve - and the failure looks
+like "the shader has no instructions" rather than "the run was abandoned". `vk_compile.py`
+destroys on every path, not just the successful one.
+
+**What was measured, and must not be re-litigated from first principles:**
+
+| claim | evidence |
+|---|---|
+| render state does not move the SASS | 24 cells (6 colour formats × 1/4 samples × none/D32) → one distinct pixel microcode, one vertex. Repeated with a `discard` shader over 12 cells incl. D24S8 |
+| the descriptor layout **does** | `UNIFORM_BUFFER_DYNAMIC` for `UNIFORM_BUFFER`: 48 → 40 instructions. Four unused bindings added: different sha1 at the *same* 48 |
+| the consumer narrows the producer | a fragment shader reading two fewer varyings deleted the `AST.96`/`AST.64` attribute stores: 48 → 40 |
+| the producer does **not** narrow the consumer | three producers - exact, over-provisioned, mismatched - all gave byte-identical fragment code |
+| but a mismatched pair is still invalid | `VUID-RuntimeSpirv-OpEntryPoint-08743` and `-maintenance4-06817`. The driver compiles it anyway and exits 0; only the validation layer objects, which is why `vk_compile.py` checks the interface itself |
+| no correlation is recoverable | no debug section across 3,340 cache objects; `slangc -g` SPIR-V with `OpLine`, `OpSource` and embedded source produced a byte-identical object of identical size |
+
+**Reproducing the measurements.** `tools/test_gfx.js` pins the digests. The fixtures under
+`tools/fixtures/gfx/` are the exact modules those numbers came from; regenerate the frozen
+struct ABI with `py tools/vk_abi_freeze.py` (needs MSVC and the SDK) if a struct changes.
+
+**Why ctypes and not a binary.** Same reason as `nvrtc_compile.py`: the extension host cannot
+call native code, and a VSIX carrying per-platform binaries would end the no-build-step
+packaging story. The port is pinned against a C++ harness byte for byte, and `tools/vk_abi.json`
+holds what a C compiler computes for all 24 structs.
 
 ## Traps
 

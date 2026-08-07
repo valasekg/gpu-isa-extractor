@@ -172,9 +172,15 @@ If a selection highlights nothing and you expected it to, turn on
 `nvIsaExtractor.compile.traceCorrelation` — it says whether the listing has no map, names a
 different path, or simply attributes no instructions to those lines.
 
-The chain is `slangc -target cuda` → NVRTC → `ptxas` → cubin, and the listing is produced by
-running the extension's ordinary `nvdisasm --binary` path over the cubin's `.text` section —
-the same bytes, in the same shape, as microcode carved out of a cache.
+A shader takes one of two roads, chosen by its stage:
+
+```
+compute            slangc -target cuda  → NVRTC → ptxas → cubin
+vertex, fragment   slangc -target spirv → the display driver → its shader cache
+```
+
+Both end in the same place — microcode, in the same shape as bytes carved out of a cache — so
+the listing is produced by the extension's ordinary `nvdisasm --binary` path either way.
 
 Two worked examples are in `samples/` — open either and press `Ctrl+Alt+Shift+B`:
 
@@ -198,6 +204,39 @@ A bare flag goes to the compiler for that language — `slangc` for Slang (`-O3`
 NVRTC or `nvcc` for CUDA (`-use_fast_math`, `-ffp-contract`). Later stages are reached with
 `-Xptxas <flag>` and, from a Slang file, `-Xnvrtc <flag>`, following nvcc's own convention.
 `nvIsaExtractor.compile.flags` sets defaults; the file's own line wins.
+
+### Vertex and fragment shaders
+
+A graphics shader has no CUDA lowering, so it is compiled by asking the **display driver** to
+build one pipeline and then reading what it wrote into an isolated copy of its own shader
+cache. Nothing is drawn: no swapchain, no images, no render pass, no draw call.
+
+That means a vertex or fragment shader has no SASS of its own — only SASS **for a pipeline** —
+and a pipeline carries two things the source file never states. Both were measured to change
+the generated code *without changing anything a reader could see*, so both are decided
+explicitly and then printed in the banner:
+
+| | default | why it matters |
+|---|---|---|
+| descriptor layout | reflected out of the SPIR-V | substituting `UNIFORM_BUFFER_DYNAMIC` for `UNIFORM_BUFFER` took one shader from 48 instructions to 40; adding four bindings it never touches changed the code at the **same** instruction count |
+| the producer | the file's own vertex shader, else one generated to match | a mismatched pair makes the pipeline undefined — and the driver compiles it anyway, exits zero, and returns byte-identical code. Only the validation layer objects |
+
+Render state — colour format, sample count, depth — is *not* in that table: 24 measured cells
+across six formats, two sample counts and three depth configurations produced one distinct
+pixel microcode and one distinct vertex microcode. It is recorded, not weighed.
+
+Where you know better than reflection can — because you know how your engine binds the shader
+— say so on the line that already carries the compile flags:
+
+```hlsl
+// nv-isa-extractor -Xvk bind=0:0:8:1 -Xvk samples=4
+// nv-isa-extractor -Xvk producer=fullscreen.slang:vsMain
+```
+
+`bind=<set>:<binding>:<type>[:<count>]` (type is `VkDescriptorType`'s own numbering),
+`push=<bytes>`, `producer=<file>[:<entry>]`, `format=`, `depth=`, `samples=`. Saying nothing is
+deliberately not the same as saying "no descriptors": with no `bind` the layout is reflected,
+because an empty one would drop every binding the shader declares.
 
 ### Includes and imports
 
@@ -228,11 +267,18 @@ module are attributed to *that* file, which is listed in the banner's source map
 
 ### What it will not do
 
-- **Only compute entry points.** A vertex or fragment stage has no CUDA lowering — `slangc`
-  crashes rather than declining — and the SASS a graphics shader really runs comes from the
-  driver's *graphics* compiler, which is a different backend. Read that from a cache file.
-  Raytracing stages compile all the way to PTX and then stop: OptiX intrinsics are resolved
-  by the driver's pipeline linker, never by `ptxas`.
+- **Compute, vertex and fragment only.** Geometry, tessellation, mesh and amplification stages
+  have no CUDA lowering and no single-stage pipeline to stand them up in. Raytracing compiles
+  all the way to PTX and then stops: OptiX intrinsics are resolved by the driver's pipeline
+  linker, never by `ptxas`. Read those from a cache file.
+- **No source correlation for graphics shaders.** The compute road gets it from the cubin's
+  line table; a driver-compiled shader has no cubin and the container carries no debug section
+  — checked across 3,340 cache objects. SPIR-V built with `slangc -g`, source text and all,
+  produces a byte-identical object of exactly the same size. The driver strips it.
+- **Graphics needs the GPU present.** `ptxas` cross-compiles for any architecture from a
+  machine with no NVIDIA card at all; asking the driver to compile does not. It also fails
+  where the driver itself is fine but Vulkan is not — a Remote Desktop session, or a
+  datacenter driver that registers no ICD. The doctor names each of those specifically.
 - **Attribution is not cost.** A marker says which source construct an instruction was
   generated for. Under optimisation the scheduler interleaves independent work, so one line's
   instructions are scattered and one instruction can serve several lines. Instructions from
@@ -241,11 +287,19 @@ module are attributed to *that* file, which is listed in the banner's source map
 
 ### Requirements
 
-`ptxas` (CUDA Toolkit, beside `nvdisasm`), `slangc` for Slang (ships with the Vulkan SDK), and
-a CUDA front end. **NVRTC** is used by default and needs no host C++ compiler; because it is a
-DLL with no CLI, it is driven through a small Python helper, so this feature — and only this
-feature — wants Python 3 on `PATH`. Set `nvIsaExtractor.compile.backend` to `nvcc` instead if
-you have MSVC. **NVIDIA ISA: Doctor** reports which of these you have.
+`slangc` for Slang (ships with the Vulkan SDK) and Python 3 on `PATH` are common to both roads.
+
+**Compute** additionally wants `ptxas` (CUDA Toolkit, beside `nvdisasm`) and a CUDA front end.
+NVRTC is the default and needs no host C++ compiler; because it is a DLL with no CLI it is
+driven through a small Python helper. Set `nvIsaExtractor.compile.backend` to `nvcc` instead if
+you have MSVC. No GPU is needed at all — `ptxas` will target `SM90` from a laptop.
+
+**Vertex and fragment** need neither `ptxas` nor NVRTC, but do need an NVIDIA GPU present with
+a working Vulkan driver, because the driver is the compiler. The Vulkan loader ships with the
+display driver; the SDK is not required.
+
+**NVIDIA ISA: Doctor** reports which of these you have, and names the specific reason when
+Vulkan is unusable on a machine where everything else works.
 
 ## Language support
 
@@ -332,7 +386,7 @@ id, grammar and themes.
 | `nvIsaExtractor.tree.maxBlobs` | `8` | How many cache files stay listed at once |
 | `nvIsaExtractor.batch.confirmAboveBytes` | `256 MB` | Ask before a batch producing more than this |
 | `nvIsaExtractor.compile.flags` | `""` | Default compile flags; the file's own line wins |
-| `nvIsaExtractor.compile.backend` | `auto` | CUDA front end: `nvrtc` (no host compiler) or `nvcc` |
+| `nvIsaExtractor.compile.backend` | `auto` | CUDA front end: `nvrtc` (no host compiler) or `nvcc`. Compute only — the graphics road uses neither |
 | `nvIsaExtractor.compile.correlate` | `true` | Highlight the matching lines as the selection moves |
 | `nvIsaExtractor.compile.correlationStyle` | `banner` | Where the map is recorded: `banner`, `inline` or `off` |
 | `nvIsaExtractor.compile.clickToSass` | `true` | Ctrl+click a source line to jump to its first instruction |

@@ -804,7 +804,7 @@
         "nvIsaExtractor.compile.flags": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Flags applied to every compile, before the file's own `// nv-isa-extractor` line, which wins. Bare flags go to the compiler for the language being compiled - `slangc` for Slang (`-O3`, `-fp-mode fast`), NVRTC or `nvcc` for CUDA (`-use_fast_math`). Use `-Xptxas <flag>` for the PTX assembler and `-Xnvrtc <flag>` to reach the CUDA front end from a Slang file. `-I<dir>` adds an include directory for `#include` and `import`; the compiled file's own directory is always searched first, and a relative directory resolves against the file being compiled."
+          "markdownDescription": "Flags applied to every compile, before the file's own `// nv-isa-extractor` line, which wins. Bare flags go to the compiler for the language being compiled - `slangc` for Slang (`-O3`, `-fp-mode fast`), NVRTC or `nvcc` for CUDA (`-use_fast_math`). Use `-Xptxas <flag>` for the PTX assembler and `-Xnvrtc <flag>` to reach the CUDA front end from a Slang file. `-I<dir>` adds an include directory for `#include` and `import`; the compiled file's own directory is always searched first, and a relative directory resolves against the file being compiled. `-Xvk <control>` describes the pipeline a vertex or fragment shader is compiled into - `bind=set:binding:type[:count]`, `push=bytes`, `producer=file[:entry]`, `format=`, `depth=`, `samples=` - which is only needed where reflection cannot know how your engine binds the shader."
         },
         "nvIsaExtractor.compile.backend": {
           "type": "string",

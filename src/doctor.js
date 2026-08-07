@@ -221,16 +221,51 @@ async function diagnose(context) {
       ? `nvcc: ${tools.nvcc} (needs a host C++ compiler; on Windows that means MSVC)`
       : 'nvcc: not found');
 
+    // The graphics road, which shares nothing with the CUDA one but slangc: no ptxas, no
+    // NVRTC, and a hard requirement the CUDA road does not have - an NVIDIA GPU that is
+    // actually here. ptxas cross-compiles for any architecture from a machine with no GPU at
+    // all; this asks the local driver to compile, so it fails on machines where everything
+    // else keeps working. Those failures get named, because otherwise they read as a
+    // regression in the extension rather than as a property of the session.
+    let canGraphics = false;
+    if (tools.python) {
+      const probe = await pipeline.run(tools.python, [tools.vkHelper, '--probe']);
+      const output_ = `${probe.stdout || ''}${probe.stderr || ''}`;
+      // The NVIDIA line specifically, not whichever device enumerates first: a laptop with an
+      // integrated Intel GPU lists that too, and it has no SASS to give.
+      const device = /^device\s+(.+\(vendor 0x10DE[^)]*\))\s*$/m.exec(output_);
+      canGraphics = !probe.error && !!device;
+      if (canGraphics) {
+        detail.push(`Vulkan: ${device[1].trim()}`);
+      } else if (/INCOMPATIBLE_DRIVER|VkResult -9/.test(output_)) {
+        detail.push('Vulkan: no driver is registered (VK_ERROR_INCOMPATIBLE_DRIVER). A ' +
+          'datacenter or headless driver installs no Vulkan ICD, and under WSL2 the loader ' +
+          'lives separately under /usr/lib/wsl. Compute compiles are unaffected.');
+      } else if (/no NVIDIA device/.test(output_)) {
+        detail.push('Vulkan: loads, but enumerates no NVIDIA device. Over Remote Desktop the ' +
+          'NVIDIA ICD historically enumerates none in a non-console session - log in at the ' +
+          'machine and try again. SASS is NVIDIA machine code, so another vendor\'s driver ' +
+          'has nothing to disassemble.');
+      } else {
+        detail.push('Vulkan: the loader could not be used, so vertex and fragment shaders ' +
+          `cannot be compiled. ${(output_.trim().split('\n')[0] || '').slice(0, 120)}`);
+      }
+    } else {
+      detail.push('Vulkan: no Python interpreter, so vertex and fragment shaders cannot be ' +
+        'compiled. Set `nvIsaExtractor.compile.pythonPath`.');
+    }
+
     const canCuda = tools.ptxas && (tools.python || tools.nvcc);
-    const level = canCuda ? (tools.slangc ? 'ok' : 'warn') : 'warn';
+    const level = canCuda && canGraphics ? (tools.slangc ? 'ok' : 'warn') : 'warn';
+    const can = [canCuda && 'compute', canGraphics && tools.slangc && 'vertex and fragment']
+      .filter(Boolean).join(', ');
     add(level,
-      canCuda
-        ? (tools.slangc ? 'compiling Slang and CUDA is available'
-          : 'compiling CUDA is available; Slang needs slangc')
-        : 'compiling source files is unavailable',
+      can ? `compiling ${can} shaders is available` : 'compiling source files is unavailable',
       ...detail,
-      'Only compute entry points can be compiled to SASS. A graphics stage has no CUDA ' +
-      'lowering, and its real SASS comes from the driver - read it from a cache file.');
+      'Compute goes through CUDA and carries source correlation. Vertex and fragment are ' +
+      'compiled by the local driver, which needs an NVIDIA GPU present and yields no ' +
+      'correlation - the driver keeps no line table. Geometry, tessellation, mesh and ' +
+      'raytracing stages have no route at all; read those from a cache file.');
   }
 
   // 8. storage
