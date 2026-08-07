@@ -243,7 +243,11 @@ async function run(target, progress, token) {
   }
   requireTools(tools, needed);
 
-  const archInfo = await pipeline.resolveArch();
+  // The graphics lineage compiles on THIS machine's driver, so its bytes are this device's
+  // architecture by construction and the `arch` setting must not speak for them. That setting
+  // is for reading a cache written by a GPU that is not present - a use it still has for
+  // every other path.
+  const archInfo = await pipeline.resolveArch({ probed: chosen.lineage === 'graphics' });
   // One directory per source file. Every intermediate is named after the source's
   // basename, so a single shared directory means a/kernel.cu and b/kernel.cu overwrite
   // each other's .ptx and .cubin - and the banner's recorded command lines then point at
@@ -344,10 +348,19 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
 
   // Correlation comes from a second pass over the cubin, because line info lives in the ELF
   // and `--binary` has no ELF to read it from.
+  //
+  // The graphics lineage has no cubin and no line table to read one out of, and this is
+  // measured rather than assumed: across 3,340 cache objects the container carries no debug
+  // section at all, and SPIR-V built with `slangc -g` - `OpLine`, `OpSource`, the whole source
+  // text embedded - produced a byte-identical object of exactly the same size. The driver
+  // strips it. So the block is skipped outright rather than allowed to fail into its catch,
+  // which would log "source correlation unavailable" on every graphics compile and read as a
+  // fault rather than as a property of the route.
+  const graphics = built.lineage === 'graphics';
   let correlation = null;
   let body = plain;
   const style = config().get('compile.correlationStyle') || 'banner';
-  if (style !== 'off') {
+  if (style !== 'off' && !graphics) {
     try {
       const g = await runTool(nvdisasm, ['-c', '-g', built.cubinPath], token);
       // An unsaved buffer was compiled from a copy; the line table names the copy, and
@@ -403,9 +416,15 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
     codeBytes: entry.codeBytes,
     microcode: entry.microcode,
     sha1: sha1(entry.microcode),
-    origin: 'compiled',
+    origin: graphics ? 'driver' : 'compiled',
     warnings: [],
-    metadata: {
+    // The CUDA road has to state these, because a cubin records almost none of them and
+    // `stage: 'compute'` is true there by construction. The graphics road does not have to
+    // state anything: its bytes came out of a real cache container, so the driver's own
+    // account of the shader travels with them - the stage as a code rather than an assumption,
+    // and `killsPixels`, which is meaningful for a fragment shader and meaningless for a
+    // kernel. Hardcoding `compute` here would have quietly labelled every pixel shader wrong.
+    metadata: graphics ? entry.metadata : {
       stage: 'compute',
       stageCode: null,
       // ptxas's own account of the kernel, which the banner then cross-checks against what
@@ -434,7 +453,9 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
       sources: built.sources,
       notes: built.notes,
       directive: directive ? directive.raw : null,
-      configuredFlags: configured || null
+      configuredFlags: configured || null,
+      device: built.device || null,
+      pipeline: built.pipeline || null
     }
   };
 

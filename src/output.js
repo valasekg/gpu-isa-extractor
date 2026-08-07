@@ -89,7 +89,11 @@ function originOf(object) {
  */
 const REGISTER_SOURCE = {
   cache: 'declared',
-  compiled: 'allocated by ptxas'
+  compiled: 'allocated by ptxas',
+  // Same field, same container, same meaning as the cache path - because it IS the cache
+  // path's field. ptxas never runs on this road, so "allocated by ptxas" would name a tool
+  // that was not involved.
+  driver: 'declared'
 };
 
 const PROVENANCE = {
@@ -113,6 +117,45 @@ const PROVENANCE = {
     lines.push(field('compiled') + `${compile.steps.map(s => s.tool).join(' -> ')}`);
     for (const step of compile.steps) {
       lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${step.command}`);
+    }
+    if (compile.directive) {
+      lines.push(field('flags') + `${compile.directive} (from the file)`);
+    }
+    if (compile.configuredFlags) {
+      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${compile.configuredFlags} (from settings)`);
+    }
+    return lines;
+  },
+
+  /**
+   * A graphics shader the local driver compiled, for one pipeline this extension described.
+   *
+   * The extra lines are not decoration. A vertex or fragment shader has no SASS of its own -
+   * only SASS for a pipeline - and two parts of that pipeline are things the source file never
+   * said and this tool had to decide. Both were measured to change the generated code without
+   * changing anything a reader could see: substituting UNIFORM_BUFFER_DYNAMIC for
+   * UNIFORM_BUFFER took a shader from 48 instructions to 40, and adding four bindings it never
+   * touches changed the code at the same instruction count. So the layout and the producer are
+   * stated on the face of the listing. A listing that did not say which pipeline it describes
+   * would be claiming more than it knows.
+   */
+  driver(result, sweepResult, field) {
+    const { object, compile } = result;
+    const lines = [field('source') + `${object.source}`];
+    for (const note of compile.sources.slice(1)) {
+      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  with ${note}`);
+    }
+    lines.push(field('compiled') + `${compile.steps.map(s => s.tool).join(' -> ')}`);
+    for (const step of compile.steps) {
+      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${step.command}`);
+    }
+    if (compile.device) {
+      // Which GPU, because this road needs the hardware present and the answer is that
+      // device's - unlike ptxas, which cross-compiles for any architecture from anywhere.
+      lines.push(field('driver') + `${compile.device}`);
+    }
+    if (compile.pipeline) {
+      lines.push(field('pipeline') + `${compile.pipeline}`);
     }
     if (compile.directive) {
       lines.push(field('flags') + `${compile.directive} (from the file)`);

@@ -820,13 +820,30 @@ async function graphicsCompile(tools, file, options) {
   });
   steps.push({ tool: 'driver', command: quote(step.argv), log: step.log });
 
-  const entries = await carveCache(cacheDir, stage);
+  const entries = await carveCache(cacheDir, stage, chosen.entry);
   if (!entries.length) {
     throw new CompileError(
       'the driver created the pipeline but wrote nothing this can read back. The shader disk ' +
       'cache may be disabled - set NVIDIA Control Panel > Shader Cache Size to Unlimited - or ' +
       'the run may have been interrupted before the driver flushed it.');
   }
+
+  // What the listing has to say about itself. The layout and the producer are the two things
+  // the shader could not state and this had to choose, so they are reported rather than
+  // assumed - and where they came from is part of the claim, not a footnote.
+  const bindings = (layout.bindings || []).length;
+  const describe = [
+    `${stage} stage`,
+    bindings
+      ? `${bindings} binding(s) ${controls.layout ? 'from the file' : 'by reflection'}`
+      : 'no descriptors',
+    stage === 'fragment'
+      ? (controls.producer ? 'producer named by the file'
+        : chosen.producer ? `producer ${chosen.producer.name} from this file`
+          : 'producer generated to match')
+      : 'no consumer (rasterizer discard)',
+    describeState(controls.state || {})
+  ].filter(Boolean).join(', ');
 
   return {
     entries,
@@ -835,6 +852,8 @@ async function graphicsCompile(tools, file, options) {
     arch: options.arch ? `SM${String(options.arch).replace(/^sm_?/i, '')}` : null,
     lineage: 'graphics',
     stage,
+    pipeline: describe,
+    device: deviceOf(step.log),
     steps,
     ptxasLog: '',
     // ptxas never runs here, so there is no second opinion on the register count to
@@ -845,6 +864,25 @@ async function graphicsCompile(tools, file, options) {
     sources,
     notes
   };
+}
+
+/** The render state, named the way the file would have to name it to get this one back. */
+function describeState(state) {
+  const format = state.format || 'r8g8b8a8_unorm';
+  const samples = state.samples || 1;
+  const depth = state.depth || 'none';
+  const parts = [format];
+  if (samples !== 1) parts.push(`${samples}x MSAA`);
+  if (depth !== 'none') parts.push(depth);
+  // 24 measured cells say none of this moves the generated code, so it is recorded as what
+  // the pipeline was rather than as something the reader has to weigh.
+  return `into ${parts.join(' + ')}`;
+}
+
+/** The GPU the driver compiled on, out of the helper's own report. */
+function deviceOf(log) {
+  const m = /^device\s+(.+)$/m.exec(log || '');
+  return m ? m[1].trim() : null;
 }
 
 /** Generate a vertex shader that matches a fragment shader's inputs, and compile it. */
@@ -881,7 +919,7 @@ async function reflectLayout(tools, modules) {
  * A graphics pipeline deposits several objects - at least the producer and the consumer - so
  * they are told apart by the stage code the container records, not by position.
  */
-async function carveCache(cacheDir, stage) {
+async function carveCache(cacheDir, stage, entryName) {
   const nvcache = require('./nvcache');
   const bins = [];
   const walk = async dir => {
@@ -904,7 +942,12 @@ async function carveCache(cacheDir, stage) {
     for (const o of objects) {
       if (o.metadata && o.metadata.stage !== wanted) continue;
       out.push({
-        name: o.name || `${wanted}Main`,
+        // The entry point the user asked for, not the name the driver wrote into the
+        // container - which is the Slang name with a suffix the linker chose (`fsMain_2`).
+        // The listing is named after this, and a file named after someone else's mangling is
+        // a file you cannot find again.
+        name: entryName || o.name || `${wanted}Main`,
+        driverName: o.name || null,
         microcode: o.microcode,
         codeBytes: o.codeBytes,
         instructions: o.microcode.length / 16,

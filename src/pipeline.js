@@ -101,9 +101,16 @@ async function nvdisasmVersion(exe) {
  * Cache objects are already compiled for this machine's GPU, so its compute capability is
  * the right answer - but a machine may have no GPU, or more than one, hence the override.
  */
-async function resolveArch() {
+/**
+ * @param {object} [options]
+ * @param {boolean} [options.probed]  ignore the `arch` setting and ask the hardware.
+ *   For bytes this machine's own driver just produced, the setting is not an override but a
+ *   mistake waiting to happen: it exists so a listing can be read for a GPU that is not
+ *   present, and honouring it here would decode SM86 bytes as whatever the user pinned.
+ */
+async function resolveArch({ probed = false } = {}) {
   const configured = (config().get('arch') || 'auto').trim();
-  if (configured && configured.toLowerCase() !== 'auto') {
+  if (!probed && configured && configured.toLowerCase() !== 'auto') {
     return { arch: configured, from: 'the arch setting' };
   }
   if (cachedArch) return cachedArch;
