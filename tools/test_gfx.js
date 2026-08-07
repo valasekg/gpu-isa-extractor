@@ -261,6 +261,80 @@ function findBin(dir) {
       mismatched.error || `it was accepted: ${JSON.stringify(mismatched)}`);
   }
 
+  // ------------------------------------------------------------------ geometry
+
+  section('4. The geometry stage');
+
+  const gs = path.join(FIXTURES, 'gsMain.spv');
+  if (!PY) {
+    skip('no Python interpreter');
+  } else if (!fs.existsSync(gs)) {
+    skip('no geometry fixture');
+  } else {
+    // The topology is not a free choice: a geometry shader declares the primitive it consumes
+    // and the input assembler has to be set to feed it that one. Read from the module, never
+    // defaulted - a triangle-input shader behind a point list is a pipeline the driver rejects.
+    const r = run(PY, [REFLECT, gs, '--json']);
+    if (check(r.code === 0, 'a geometry module reflects', r.stderr)) {
+      const m = JSON.parse(r.stdout).modules[0];
+      check(m.primitive && m.primitive.topology === 'triangle_list',
+        'its declared input primitive gives the topology that must feed it',
+        JSON.stringify(m.primitive));
+      // Every non-builtin input of a geometry shader is an array indexed by vertex. A producer
+      // has to emit the ELEMENT once, so the array dimension comes off before matching.
+      check(m.inputs.some(v => v.type.includes('[')),
+        'its raw inputs are per-vertex arrays', JSON.stringify(m.inputs));
+      check((m.perVertexInputs || []).every(v => !v.type.includes('[')),
+        'and the per-vertex view strips the array a producer could not declare',
+        JSON.stringify(m.perVertexInputs));
+    }
+
+    if (!probe || probe.code !== 0) {
+      skip('no usable Vulkan device for the geometry round-trip');
+    } else {
+      // Stage code 4. Established by construction rather than inferred: a pipeline holding
+      // exactly one vertex and one geometry module deposits exactly two objects, and one of
+      // them is the already-known code 1.
+      const paired = await pipeline('geometry', {
+        vs: path.join(FIXTURES, 'gsProducer.spv'), gs, fs: null,
+        layout: { bindings: [] }, state: { topology: 'triangle_list' }
+      });
+      if (check(!paired.error, 'a vertex + geometry pipeline is created', paired.error)) {
+        check(paired.geometry === 'ce4a65b17741',
+          'the geometry microcode is what was recorded',
+          `got ${paired.geometry}, want ce4a65b17741`);
+        check(!!paired.vertex, 'and the vertex stage is carved beside it, told apart by code',
+          JSON.stringify(paired));
+      }
+
+      // A geometry shader needs a producer but does not depend on it, exactly as a fragment
+      // shader does not depend on its own. Measured, not assumed: the same shader behind a
+      // generated producer must be byte-identical to one behind a hand-written one.
+      const generated = path.join(FIXTURES, 'gsGenerated.spv');
+      if (fs.existsSync(generated)) {
+        const synth = await pipeline('geometry-generated', {
+          vs: generated, gs, fs: null,
+          layout: { bindings: [] }, state: { topology: 'triangle_list' }
+        });
+        check(!synth.error && synth.geometry === paired.geometry,
+          'and a generated producer yields the same geometry microcode as the real one',
+          synth.error || `generated ${synth.geometry}, real ${paired.geometry}`);
+      }
+
+      // The wrong topology is the failure this stage makes possible, and the driver does NOT
+      // object to it - measured: it creates the pipeline, exits zero, and returns the same
+      // microcode. The same shape of silence as a mismatched varying interface, so it is
+      // refused here for the same reason.
+      const wrong = await pipeline('geometry-wrong-topology', {
+        vs: path.join(FIXTURES, 'gsProducer.spv'), gs, fs: null,
+        layout: { bindings: [] }, state: { topology: 'point_list' }
+      });
+      check(!!wrong.error && wrong.code === 1,
+        'a topology the geometry shader does not consume is refused before the driver sees it',
+        wrong.error || `it was accepted: ${JSON.stringify(wrong)}`);
+    }
+  }
+
   console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures, ` +
     `${skipped} skipped`);
   process.exit(failures ? 1 : 0);

@@ -291,6 +291,13 @@ section('5. Entry points and the stage gate');
     'struct O { float4 p : SV_Position; };\n[shader("vertex")] O vsMain(uint i : SV_VertexID) { }');
   equal(vert.lineage, 'graphics', 'a vertex shader routes the same way');
 
+  // Geometry is a pipeline stage like the other two, and it needs a producer like fragment
+  // does - it has nothing to read without a stage in front of it.
+  const geom = compile.chooseSlangEntry(
+    '[shader("geometry")][maxvertexcount(3)] void gsMain(triangle float4 i[3]) { }');
+  equal(geom.lineage, 'graphics', 'a geometry shader routes to the driver too');
+  equal(geom.stage, 'geometry', 'carrying its stage');
+
   const compute = compile.chooseSlangEntry('[shader("compute")] void only() { }');
   equal(compute.lineage, 'cuda', 'compute still goes through CUDA');
   equal(compute.entry, undefined,
@@ -299,7 +306,8 @@ section('5. Entry points and the stage gate');
 
 {
   // The stages with no road at all. Their refusal is the one that has to keep working.
-  for (const stage of ['raygeneration', 'geometry', 'hull', 'domain']) {
+  // Geometry is deliberately NOT in this list any more - it has a pipeline now.
+  for (const stage of ['raygeneration', 'hull', 'domain', 'mesh']) {
     const src = `[shader("${stage}")] void f() { }`;
     let threw = null;
     try { compile.chooseSlangEntry(src); } catch (e) { threw = e; }

@@ -417,8 +417,21 @@ const COMPUTE_STAGE = 'compute';
 const LINEAGE = {
   compute: 'cuda',
   vertex: 'graphics',
+  geometry: 'graphics',
   fragment: 'graphics'
 };
+
+/**
+ * Stages that cannot be the only stage in their pipeline.
+ *
+ * A fragment shader has no fragment-only pipeline, and a geometry shader sits between two
+ * others - both need something upstream before the driver will compile them. A vertex shader
+ * needs nothing: rasterizer discard with no downstream stage was measured to produce
+ * byte-identical code to a full consumer, because the driver narrows a stage's outputs only
+ * when the *next* stage's inputs are narrower, and with no next stage there is nothing to
+ * narrow against.
+ */
+const NEEDS_PRODUCER = new Set(['fragment', 'geometry']);
 
 /**
  * The entry points a Slang file declares, read from the source rather than from slangc.
@@ -499,7 +512,7 @@ function chooseSlangEntry(text, wanted) {
     entry: chosen.name,
     stage: chosen.stage,
     lineage: LINEAGE[chosen.stage],
-    producer: chosen.stage === 'fragment'
+    producer: NEEDS_PRODUCER.has(chosen.stage)
       ? (found.find(e => e.stage === 'vertex') || null)
       : null,
     note: null
@@ -529,7 +542,13 @@ function chooseSlangEntry(text, wanted) {
 
   // A mixed file has to name one, because the two roads cannot be walked at once - and
   // because slangc discovering a graphics entry on the CUDA target is the crash above.
-  const chosen = compute[0] || supported.find(e => e.stage === 'fragment') || supported[0];
+  // Compute first, so a file that used to compile still compiles the same thing. Then the
+  // consuming stages, because they are the more interesting listing and they pick the vertex
+  // shader up as their producer rather than leaving it uncompiled.
+  const chosen = compute[0] ||
+    supported.find(e => e.stage === 'fragment') ||
+    supported.find(e => e.stage === 'geometry') ||
+    supported[0];
   const skipped = found.filter(e => e !== chosen);
   const result = withProducer(chosen);
   // The producer is not "skipped" - it is being compiled *into* this pipeline.
@@ -548,13 +567,13 @@ function chooseSlangEntry(text, wanted) {
 }
 
 function stageRefusal() {
-  return 'Compute, vertex and fragment entry points can be compiled to SASS: compute through ' +
-    'CUDA, and the other two by asking the display driver to compile a pipeline. The stages ' +
-    'that remain have no route at all. Geometry, hull, domain, mesh and amplification have no ' +
-    'CUDA lowering and no single-stage pipeline to stand them up in. Raytracing stages reach ' +
-    'ptxas and stop there: OptiX intrinsics are resolved by the driver\'s pipeline linker, ' +
-    'never by ptxas. For those, open the driver\'s cache file instead - the SASS in it is what ' +
-    'the GPU really ran.';
+  return 'Compute, vertex, fragment and geometry entry points can be compiled to SASS: ' +
+    'compute through CUDA, the rest by asking the display driver to build a pipeline. Hull, ' +
+    'domain, mesh and amplification are not implemented - each needs a longer chain of stages ' +
+    'synthesised around it, which is work rather than an obstacle. Raytracing needs a ' +
+    'different creation call entirely (vkCreateRayTracingPipelinesKHR); it is a dead end only ' +
+    'on the CUDA road, where OptiX intrinsics reach ptxas and stop. For any of those, open ' +
+    'the driver\'s cache file instead - the SASS in it is what the GPU really ran.';
 }
 
 // --------------------------------------------------------------------------- running
@@ -638,11 +657,17 @@ async function slangToSpirv(tools, source, outDir, { flags = [], entry, stage, n
  * routinely has implicit layers hooking pipeline creation, and any of them can perturb or
  * hang a compile whose result would then be blamed on the shader.
  */
-async function spirvToCache(tools, outDir, { vs, fs: fragment, layout, state, cacheDir, token }) {
+async function spirvToCache(tools, outDir,
+  { vs, fs: fragment, gs, layout, state, cacheDir, token }) {
   const request = path.join(outDir, 'vk-request.json');
   await fs.promises.mkdir(cacheDir, { recursive: true });
   await fs.promises.writeFile(request, JSON.stringify({
-    vs, fs: fragment || null, layout, state, checkInterface: true
+    vs, fs: fragment || null, gs: gs || null, layout, state,
+    // The interface check compares a vertex shader against a fragment one. With a geometry
+    // stage between them the two ends do not meet directly, so the check would compare the
+    // wrong pair - it is left to the driver there rather than made to answer a question it
+    // was not built for.
+    checkInterface: !gs
   }, null, 1), 'utf8');
 
   const result = await run(tools.python, [tools.vkHelper, request], {
@@ -776,14 +801,31 @@ async function graphicsCompile(tools, file, options) {
   });
   steps.push({ tool: 'slangc', command: quote(consumer.argv), log: consumer.log });
 
-  // A vertex shader needs no consumer: rasterizer discard with no fragment stage was measured
-  // to produce byte-identical code to a full consumer, because the driver only narrows a
-  // stage's outputs when the *next* stage's inputs are narrower. A fragment shader is the
-  // opposite - it cannot exist in a pipeline without a producer.
+  // A vertex shader needs no consumer, for the reason NEEDS_PRODUCER records. The other two
+  // cannot stand alone: a fragment shader has no fragment-only pipeline, and a geometry shader
+  // has nothing to read without a stage in front of it.
   let vs = consumer.file;
   let fragment = null;
-  if (stage === 'fragment') {
+  let geometry = null;
+  const state = { ...(controls.state || {}) };
+
+  if (stage === 'geometry') {
+    geometry = consumer.file;
+    // The topology is not a choice. A geometry shader declares the primitive it consumes, and
+    // the input assembler has to be told to hand it that one - a triangle-input shader behind
+    // a point list is a pipeline the driver rejects. Read from the module unless the file
+    // overrode it.
+    const reflected = await reflectModule(tools, geometry);
+    if (reflected.primitive && !state.topology) {
+      state.topology = reflected.primitive.topology;
+      notes.push(`this geometry shader consumes ${reflected.primitive.name}, so the pipeline ` +
+        `feeds it a ${reflected.primitive.topology}`);
+    }
+  } else if (stage === 'fragment') {
     fragment = consumer.file;
+  }
+
+  if (NEEDS_PRODUCER.has(stage)) {
     const named = controls.producer;
     if (named) {
       const step = await slangToSpirv(tools, named.file, outDir, {
@@ -799,7 +841,7 @@ async function graphicsCompile(tools, file, options) {
       steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
       vs = step.file;
     } else {
-      const generated = await generateProducer(tools, fragment, outDir);
+      const generated = await generateProducer(tools, consumer.file, outDir);
       steps.push(generated.step);
       notes.push('no vertex shader was named, so one was generated to match this shader\'s ' +
         'inputs exactly; the varyings it supplies are runtime values, not the ones your ' +
@@ -809,14 +851,15 @@ async function graphicsCompile(tools, file, options) {
     }
   }
 
-  const layout = controls.layout || await reflectLayout(tools, [vs, fragment].filter(Boolean));
+  const layout = controls.layout ||
+    await reflectLayout(tools, [vs, geometry, fragment].filter(Boolean));
   if (controls.layout) {
     notes.push('the descriptor layout was taken from this file rather than reflected');
   }
 
   const cacheDir = path.join(outDir, 'cache');
   const step = await spirvToCache(tools, outDir, {
-    vs, fs: fragment, layout, state: controls.state || {}, cacheDir, token
+    vs, fs: fragment, gs: geometry, layout, state, cacheDir, token
   });
   steps.push({ tool: 'driver', command: quote(step.argv), log: step.log });
 
@@ -837,12 +880,13 @@ async function graphicsCompile(tools, file, options) {
     bindings
       ? `${bindings} binding(s) ${controls.layout ? 'from the file' : 'by reflection'}`
       : 'no descriptors',
-    stage === 'fragment'
+    NEEDS_PRODUCER.has(stage)
       ? (controls.producer ? 'producer named by the file'
         : chosen.producer ? `producer ${chosen.producer.name} from this file`
           : 'producer generated to match')
       : 'no consumer (rasterizer discard)',
-    describeState(controls.state || {})
+    state.topology && state.topology !== 'triangle_list' ? `${state.topology} in` : null,
+    describeState(state)
   ].filter(Boolean).join(', ');
 
   return {
@@ -901,6 +945,17 @@ async function generateProducer(tools, fragmentSpv, outDir) {
   };
 }
 
+/** Everything the reflector can say about one module. */
+async function reflectModule(tools, module) {
+  const result = await run(tools.python, [tools.reflectHelper, module, '--json']);
+  if (result.failed) fail('reflection', result);
+  try {
+    return JSON.parse(result.stdout).modules[0];
+  } catch (e) {
+    throw new CompileError(`${path.basename(module)} could not be reflected: ${e.message}`);
+  }
+}
+
 /** The descriptor layout every stage of this pipeline declares between them. */
 async function reflectLayout(tools, modules) {
   const result = await run(tools.python, [tools.reflectHelper, ...modules, '--json']);
@@ -931,6 +986,9 @@ async function carveCache(cacheDir, stage, entryName) {
   };
   try { await walk(cacheDir); } catch (e) { return []; }
 
+  // The container names the pixel stage `pixel` where Slang calls it `fragment`; everything
+  // else agrees. Geometry is stage code 4, established by building a pipeline that had only
+  // one of them in it.
   const wanted = stage === 'fragment' ? 'pixel' : stage;
   const out = [];
   for (const bin of bins) {

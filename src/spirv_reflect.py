@@ -32,6 +32,7 @@ MAGIC = 0x07230203
 
 OP_NAME = 5
 OP_ENTRY_POINT = 15
+OP_EXECUTION_MODE = 16
 OP_TYPE_VOID = 19
 OP_TYPE_BOOL = 20
 OP_TYPE_INT = 21
@@ -91,6 +92,17 @@ DESCRIPTOR_NAMES = {
 EXEC_MODEL = {0: "vertex", 1: "tessellation_control", 2: "tessellation_evaluation",
               3: "geometry", 4: "fragment", 5: "compute"}
 
+# What a geometry shader declares it consumes, and the input-assembly topology that feeds it.
+# A triangle-input geometry shader behind a point-list topology is not a pipeline, so this is
+# read out of the module rather than assumed.
+INPUT_PRIMITIVE = {
+    19: ("points", "point_list", 1),
+    20: ("lines", "line_list", 2),
+    21: ("lines_adjacency", "line_list_with_adjacency", 4),
+    22: ("triangles", "triangle_list", 3),
+    23: ("triangles_adjacency", "triangle_list_with_adjacency", 6),
+}
+
 
 class ReflectError(Exception):
     """Something in the module could not be mapped exactly. Never swallowed."""
@@ -133,6 +145,7 @@ class Module(object):
         self.decorations = {}                    # id -> {decoration: [operands]}
         self.variables = []                      # (result_type_id, result_id, storage_class)
         self.entry_points = []                   # (stage, name)
+        self.execution_modes = []                # mode numbers, in declaration order
         self._collect()
 
     def _collect(self):
@@ -142,6 +155,8 @@ class Module(object):
             elif op == OP_ENTRY_POINT and len(w) >= 2:
                 self.entry_points.append(
                     (EXEC_MODEL.get(w[0], "model%d" % w[0]), decode_string(w[2:])))
+            elif op == OP_EXECUTION_MODE and len(w) >= 2:
+                self.execution_modes.append(w[1])
             elif op == OP_DECORATE and len(w) >= 2:
                 self.decorations.setdefault(w[0], {})[w[1]] = list(w[2:])
             elif op == OP_CONSTANT and len(w) >= 3:
@@ -299,6 +314,38 @@ class Module(object):
                 "name": self.names.get(result_id, ""),
             })
         out.sort(key=lambda v: v["location"])
+        return out
+
+    def input_primitive(self):
+        """What a geometry shader consumes: (name, topology, vertices per primitive).
+
+        Refused rather than defaulted when absent. Guessing `triangles` for a shader that
+        declares `lines` builds a pipeline the driver rejects, and guessing it for one that
+        declares nothing at all means the module is not a geometry shader to begin with.
+        """
+        for mode in self.execution_modes:
+            if mode in INPUT_PRIMITIVE:
+                return INPUT_PRIMITIVE[mode]
+        raise ReflectError(
+            "this module declares no input primitive, so the topology that feeds it is not "
+            "knowable; a geometry shader always declares one")
+
+    def per_vertex_inputs(self):
+        """A geometry shader's inputs with the per-vertex array dimension stripped.
+
+        Every non-builtin input of a geometry shader is an array indexed by vertex - three
+        elements for `triangle`, two for `line`. What the producer has to emit is the ELEMENT
+        type, once, so the array is unwrapped here rather than being reported as a varying no
+        vertex shader could possibly declare.
+        """
+        out = []
+        for v in self.interface(SC_INPUT):
+            spelling = v["type"]
+            if "[" not in spelling:
+                raise ReflectError(
+                    "location %d is %s, which is not an array; a geometry shader's inputs are "
+                    "indexed by vertex" % (v["location"], spelling))
+            out.append({**v, "type": spelling[:spelling.index("[")]})
         return out
 
     def slang_type(self, type_id, who):
@@ -461,13 +508,18 @@ def interfaces_match(producer_outputs, consumer_inputs):
 def reflect(path):
     with open(path, "rb") as handle:
         module = Module(handle.read())
-    return {
+    out = {
         "entryPoints": [{"stage": s, "name": n} for s, n in module.entry_points],
         "descriptors": module.descriptors(),
         "inputs": module.interface(SC_INPUT),
         "outputs": module.interface(SC_OUTPUT),
         "pushConstants": module.push_constant_blocks(),
     }
+    if any(s == "geometry" for s, _ in module.entry_points):
+        name, topology, vertices = module.input_primitive()
+        out["primitive"] = {"name": name, "topology": topology, "vertices": vertices}
+        out["perVertexInputs"] = module.per_vertex_inputs()
+    return out
 
 
 def merge_descriptors(reflections):
@@ -516,7 +568,12 @@ def main(argv):
             return 2
         try:
             with open(paths[0], "rb") as handle:
-                inputs = Module(handle.read()).interface(SC_INPUT)
+                module = Module(handle.read())
+            stage = module.entry_points[0][0] if module.entry_points else "fragment"
+            # A geometry shader reads its inputs as per-vertex arrays; the producer emits one
+            # element of each, so the array dimension comes off before matching.
+            inputs = (module.per_vertex_inputs() if stage == "geometry"
+                      else module.interface(SC_INPUT))
             source = producer(inputs, extra=int(os.environ.get("NVISA_PRODUCER_EXTRA", 0) or 0),
                               mistype="--mistype" in argv)
         except ReflectError as e:

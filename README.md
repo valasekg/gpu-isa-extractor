@@ -175,8 +175,8 @@ different path, or simply attributes no instructions to those lines.
 A shader takes one of two roads, chosen by its stage:
 
 ```
-compute            slangc -target cuda  → NVRTC → ptxas → cubin
-vertex, fragment   slangc -target spirv → the display driver → its shader cache
+compute                      slangc -target cuda  → NVRTC → ptxas → cubin
+vertex, fragment, geometry   slangc -target spirv → the display driver → its shader cache
 ```
 
 Both end in the same place — microcode, in the same shape as bytes carved out of a cache — so
@@ -206,7 +206,7 @@ NVRTC or `nvcc` for CUDA (`-use_fast_math`, `-ffp-contract`). Later stages are r
 `-Xptxas <flag>` and, from a Slang file, `-Xnvrtc <flag>`, following nvcc's own convention.
 `nvIsaExtractor.compile.flags` sets defaults; the file's own line wins.
 
-### Vertex and fragment shaders
+### Vertex, fragment and geometry shaders
 
 A graphics shader has no CUDA lowering, so it is compiled by asking the **display driver** to
 build one pipeline and then reading what it wrote into an isolated copy of its own shader
@@ -268,10 +268,10 @@ module are attributed to *that* file, which is listed in the banner's source map
 
 ### What it will not do
 
-- **Compute, vertex and fragment only.** Geometry, tessellation, mesh and amplification stages
-  have no CUDA lowering and no single-stage pipeline to stand them up in. Raytracing compiles
-  all the way to PTX and then stops: OptiX intrinsics are resolved by the driver's pipeline
-  linker, never by `ptxas`. Read those from a cache file.
+- **Compute, vertex, fragment and geometry only.** Tessellation, mesh and amplification need a
+  longer chain of stages synthesised around them; raytracing needs a different creation call
+  (`vkCreateRayTracingPipelinesKHR`). None of them is impossible — all are unimplemented. Read
+  those from a cache file for now.
 - **No source correlation for graphics shaders.** The compute road gets it from the cubin's
   line table; a driver-compiled shader has no cubin and the container carries no debug section
   — checked across 3,340 cache objects. SPIR-V built with `slangc -g`, source text and all,
@@ -295,7 +295,7 @@ NVRTC is the default and needs no host C++ compiler; because it is a DLL with no
 driven through a small Python helper. Set `nvIsaExtractor.compile.backend` to `nvcc` instead if
 you have MSVC. No GPU is needed at all — `ptxas` will target `SM90` from a laptop.
 
-**Vertex and fragment** need neither `ptxas` nor NVRTC, but do need an NVIDIA GPU present with
+**Vertex, fragment and geometry** need neither `ptxas` nor NVRTC, but do need an NVIDIA GPU with
 a working Vulkan driver, because the driver is the compiler. The Vulkan loader ships with the
 display driver; the SDK is not required.
 

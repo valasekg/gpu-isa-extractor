@@ -228,12 +228,17 @@ const SECTION_LOCAL_MEM = 0x15;
 const SECTION_SHARED_MEM = 0x3c;
 const SECTION_PROGRAM_HEADER = 0x2d;
 
+// Code 4 is geometry, established by construction rather than by inference: a pipeline built
+// from exactly one vertex and one geometry module deposits exactly two objects, one of them
+// the already-known code 1, and the other named `gsMain`. Code 3 remains unaccounted for and
+// is deliberately not guessed at - an unknown stage reads as `null` and the banner says
+// "unrecognised stage code 3", which is true, where a wrong name would not be.
 const STAGE_NAMES = {
-  1: 'vertex', 2: 'pixel', 5: 'compute', 6: 'hull', 7: 'domain'
+  1: 'vertex', 2: 'pixel', 4: 'geometry', 5: 'compute', 6: 'hull', 7: 'domain'
 };
 
 const STAGE_LABELS = {
-  vertex: 'VS', pixel: 'PS', compute: 'CS', hull: 'HS', domain: 'DS'
+  vertex: 'VS', pixel: 'PS', geometry: 'GS', compute: 'CS', hull: 'HS', domain: 'DS'
 };
 
 function readMetadata(payload, anchor, sections) {

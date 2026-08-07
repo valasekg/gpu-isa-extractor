@@ -107,6 +107,40 @@ class VkDeviceQueueCreateInfo(C.Structure):
                 ("pQueuePriorities", C.POINTER(f32))]
 
 
+# All 55 of them, in order, because `pEnabledFeatures` is a pointer to the whole struct and
+# the driver reads every field: declaring a prefix would have it read whatever follows in
+# memory as the features nobody set. Only two are ever turned on here.
+class VkPhysicalDeviceFeatures(C.Structure):
+    _fields_ = [(n, VkBool32) for n in (
+        "robustBufferAccess", "fullDrawIndexUint32", "imageCubeArray", "independentBlend",
+        "geometryShader", "tessellationShader", "sampleRateShading", "dualSrcBlend", "logicOp",
+        "multiDrawIndirect", "drawIndirectFirstInstance", "depthClamp", "depthBiasClamp",
+        "fillModeNonSolid", "depthBounds", "wideLines", "largePoints", "alphaToOne",
+        "multiViewport", "samplerAnisotropy", "textureCompressionETC2",
+        "textureCompressionASTC_LDR", "textureCompressionBC", "occlusionQueryPrecise",
+        "pipelineStatisticsQuery", "vertexPipelineStoresAndAtomics", "fragmentStoresAndAtomics",
+        "shaderTessellationAndGeometryPointSize", "shaderImageGatherExtended",
+        "shaderStorageImageExtendedFormats", "shaderStorageImageMultisample",
+        "shaderStorageImageReadWithoutFormat", "shaderStorageImageWriteWithoutFormat",
+        "shaderUniformBufferArrayDynamicIndexing", "shaderSampledImageArrayDynamicIndexing",
+        "shaderStorageBufferArrayDynamicIndexing", "shaderStorageImageArrayDynamicIndexing",
+        "shaderClipDistance", "shaderCullDistance", "shaderFloat64", "shaderInt64",
+        "shaderInt16", "shaderResourceResidency", "shaderResourceMinLod", "sparseBinding",
+        "sparseResidencyBuffer", "sparseResidencyImage2D", "sparseResidencyImage3D",
+        "sparseResidency2Samples", "sparseResidency4Samples", "sparseResidency8Samples",
+        "sparseResidency16Samples", "sparseResidencyAliased", "variableMultisampleRate",
+        "inheritedQueries")]
+
+
+# The core features are requested through Features2 chained into pNext, with the 1.3 features
+# chained off THAT, rather than through `pEnabledFeatures` alongside it. Both spellings look
+# legal, and the second one silently loses `dynamicRendering` here - the validation layer
+# catches it as VUID-VkGraphicsPipelineCreateInfo-dynamicRendering-06576 while the driver
+# creates the pipeline anyway. One chain, one answer.
+class VkPhysicalDeviceFeatures2(C.Structure):
+    _fields_ = [("sType", VkEnum), ("pNext", VOID), ("features", VkPhysicalDeviceFeatures)]
+
+
 class VkPhysicalDeviceVulkan13Features(C.Structure):
     _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
         (n, VkBool32) for n in (
@@ -252,7 +286,8 @@ class VkGraphicsPipelineCreateInfo(C.Structure):
 
 LAYOUT_STRUCTS = [
     VkApplicationInfo, VkInstanceCreateInfo, VkQueueFamilyProperties,
-    VkDeviceQueueCreateInfo, VkPhysicalDeviceVulkan13Features, VkDeviceCreateInfo,
+    VkDeviceQueueCreateInfo, VkPhysicalDeviceFeatures, VkPhysicalDeviceFeatures2,
+    VkPhysicalDeviceVulkan13Features, VkDeviceCreateInfo,
     VkShaderModuleCreateInfo, VkDescriptorSetLayoutBinding, VkDescriptorSetLayoutCreateInfo,
     VkPushConstantRange, VkPipelineLayoutCreateInfo, VkPipelineShaderStageCreateInfo,
     VkPipelineVertexInputStateCreateInfo, VkPipelineInputAssemblyStateCreateInfo,
@@ -286,7 +321,14 @@ ST = dict(
     PIPELINE_COLOR_BLEND_STATE_CREATE_INFO=26, PIPELINE_DYNAMIC_STATE_CREATE_INFO=27,
     GRAPHICS_PIPELINE_CREATE_INFO=28, DESCRIPTOR_SET_LAYOUT_CREATE_INFO=32,
     PIPELINE_LAYOUT_CREATE_INFO=30,
-    PHYSICAL_DEVICE_VULKAN_1_3_FEATURES=49, PIPELINE_RENDERING_CREATE_INFO=1000044002,
+    # 53, not 49. 49 is PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, and a struct chained under it is
+    # read as a 1.1 feature block - where `dynamicRendering` does not exist, so it is silently
+    # never enabled. Nothing caught that: the microcode still matched a C++ harness byte for
+    # byte, because this driver permits `renderPass = VK_NULL_HANDLE` regardless. Only the
+    # validation layer objected. The ABI check cannot find a fault like this - it compares
+    # struct layouts, and these are values - so `--validate` exists to make the layer's opinion
+    # part of the suite.
+    PHYSICAL_DEVICE_FEATURES_2=1000059000, PHYSICAL_DEVICE_VULKAN_1_3_FEATURES=53, PIPELINE_RENDERING_CREATE_INFO=1000044002,
 )
 
 COLOUR = {"r8g8b8a8_unorm": 37, "b8g8r8a8_unorm": 44, "r8g8b8a8_srgb": 43,
@@ -295,6 +337,7 @@ COLOUR = {"r8g8b8a8_unorm": 37, "b8g8r8a8_unorm": 44, "r8g8b8a8_srgb": 43,
 DEPTH = {"none": 0, "d16": 124, "d32": 126, "d24s8": 129, "d32s8": 130}
 
 VK_SHADER_STAGE_VERTEX_BIT = 0x1
+VK_SHADER_STAGE_GEOMETRY_BIT = 0x8
 VK_SHADER_STAGE_FRAGMENT_BIT = 0x10
 VK_SHADER_STAGE_ALL_GRAPHICS = 0x1F
 VK_QUEUE_GRAPHICS_BIT = 0x1
@@ -302,6 +345,13 @@ VK_POLYGON_MODE_FILL = 0
 VK_CULL_MODE_NONE = 0
 VK_FRONT_FACE_COUNTER_CLOCKWISE = 0
 VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST = 3
+
+# A geometry shader declares what primitive it consumes, and the input assembler has to be
+# told to hand it that - a triangle-input GS behind a point-list topology is not a pipeline.
+TOPOLOGY = {
+    "point_list": 0, "line_list": 1, "triangle_list": 3,
+    "line_list_with_adjacency": 6, "triangle_list_with_adjacency": 7,
+}
 VK_COMPARE_OP_LESS = 1
 VK_COLOR_COMPONENT_RGBA = 0xF
 VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR = 0, 1
@@ -461,13 +511,18 @@ class Poke(object):
                 depth_name, ", ".join(sorted(DEPTH)))
         colour, depth = COLOUR[fmt_name], DEPTH[depth_name]
 
-        vs_path, fs_path = request.get("vs"), request.get("fs")
+        vs_path, fs_path, gs_path = request.get("vs"), request.get("fs"), request.get("gs")
         if not vs_path:
             return EXIT_UNUSABLE, "the request names no vertex shader"
         no_fs = not fs_path
+        topology_name = state.get("topology", "triangle_list")
+        if topology_name not in TOPOLOGY:
+            return EXIT_UNUSABLE, "unknown topology %r (have %s)" % (
+                topology_name, ", ".join(sorted(TOPOLOGY)))
         try:
             vs_code = read_spirv(vs_path)
             fs_code = None if no_fs else read_spirv(fs_path)
+            gs_code = read_spirv(gs_path) if gs_path else None
         except (OSError, ValueError) as e:
             return EXIT_UNUSABLE, str(e)
 
@@ -529,8 +584,14 @@ class Poke(object):
                                       pQueuePriorities=self.ptr(priority))
         f13 = VkPhysicalDeviceVulkan13Features(
             sType=ST["PHYSICAL_DEVICE_VULKAN_1_3_FEATURES"], dynamicRendering=VK_TRUE)
+        # A geometry stage is a device feature, not just another entry in the stage array: a
+        # pipeline naming one on a device where it was not enabled is rejected outright.
+        f2 = VkPhysicalDeviceFeatures2(
+            sType=ST["PHYSICAL_DEVICE_FEATURES_2"], pNext=C.cast(self.ptr(f13), VOID),
+            features=VkPhysicalDeviceFeatures(
+                geometryShader=VK_TRUE if gs_code else VK_FALSE))
         dci = VkDeviceCreateInfo(sType=ST["DEVICE_CREATE_INFO"],
-                                 pNext=C.cast(self.ptr(f13), VOID),
+                                 pNext=C.cast(self.ptr(f2), VOID),
                                  queueCreateInfoCount=1, pQueueCreateInfos=self.ptr(qci))
         device = Handle()
         r = vk["vkCreateDevice"](gpu, C.byref(dci), None, C.byref(device))
@@ -557,6 +618,11 @@ class Poke(object):
         fs = VK_NULL_HANDLE
         if not no_fs:
             fs, err = module(fs_code, "fragment")
+            if err:
+                return EXIT_REFUSED, err
+        gs = VK_NULL_HANDLE
+        if gs_code:
+            gs, err = module(gs_code, "geometry")
             if err:
                 return EXIT_REFUSED, err
 
@@ -614,22 +680,24 @@ class Poke(object):
                   % (len(by_set), sum(len(v) for v in by_set.values()), push_bytes))
 
         # -- pipeline ----------------------------------------------------
-        stages = (VkPipelineShaderStageCreateInfo * 2)()
-        stages[0].sType = ST["PIPELINE_SHADER_STAGE_CREATE_INFO"]
-        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT
-        stages[0].module = vs
-        stages[0].pName = b"main"
-        stages[1].sType = ST["PIPELINE_SHADER_STAGE_CREATE_INFO"]
-        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT
-        stages[1].module = fs
-        stages[1].pName = b"main"
+        wanted = [(VK_SHADER_STAGE_VERTEX_BIT, vs)]
+        if gs:
+            wanted.append((VK_SHADER_STAGE_GEOMETRY_BIT, gs))
+        if not no_fs:
+            wanted.append((VK_SHADER_STAGE_FRAGMENT_BIT, fs))
+        stages = (VkPipelineShaderStageCreateInfo * len(wanted))()
+        for k, (bit, handle) in enumerate(wanted):
+            stages[k].sType = ST["PIPELINE_SHADER_STAGE_CREATE_INFO"]
+            stages[k].stage = bit
+            stages[k].module = handle
+            stages[k].pName = b"main"
         self.keep.append(stages)
 
         vi = VkPipelineVertexInputStateCreateInfo(
             sType=ST["PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO"])
         ia = VkPipelineInputAssemblyStateCreateInfo(
             sType=ST["PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO"],
-            topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+            topology=TOPOLOGY[topology_name])
         vp = VkPipelineViewportStateCreateInfo(sType=ST["PIPELINE_VIEWPORT_STATE_CREATE_INFO"],
                                                viewportCount=1, scissorCount=1)
         rs = VkPipelineRasterizationStateCreateInfo(
@@ -669,7 +737,7 @@ class Poke(object):
         gpci = VkGraphicsPipelineCreateInfo(
             sType=ST["GRAPHICS_PIPELINE_CREATE_INFO"],
             pNext=C.cast(self.ptr(rendering), VOID),
-            stageCount=1 if no_fs else 2,
+            stageCount=len(wanted),
             pStages=C.cast(stages, C.POINTER(VkPipelineShaderStageCreateInfo)),
             pVertexInputState=self.ptr(vi), pInputAssemblyState=self.ptr(ia),
             pViewportState=self.ptr(vp), pRasterizationState=self.ptr(rs),
@@ -690,6 +758,10 @@ class Poke(object):
         self.note("colour format     %s (%d)" % (fmt_name, colour))
         self.note("depth format      %s (%d)" % (depth_name, depth))
         self.note("samples           %u" % samples)
+        self.note("topology          %s" % topology_name)
+        self.note("stages            %s" % " + ".join(
+            n for n, present in (("vertex", True), ("geometry", bool(gs)),
+                                 ("fragment", not no_fs)) if present))
         return EXIT_OK, None
 
 
@@ -718,6 +790,36 @@ def check_interface(request, note):
         note("the stage interface could not be read (%s); it was NOT checked" % e)
         return None
     return spirv_reflect.interfaces_match(produced, consumed)
+
+
+def check_topology(request, note):
+    """Refuse a topology the geometry shader does not consume.
+
+    The spec requires the input assembly topology to be compatible with the geometry shader's
+    declared input primitive. Measured here: it is not enforced. A triangle-input shader behind
+    a point list creates a pipeline, exits zero, and yields the same microcode - the same shape
+    of silence as a mismatched varying interface. So the check is done here, where it can be a
+    refusal, rather than left to a driver that will not object.
+    """
+    gs_path = request.get("gs")
+    if not gs_path or not request.get("checkTopology", True):
+        return None
+    try:
+        import spirv_reflect
+        with open(gs_path, "rb") as h:
+            name, wanted, _vertices = spirv_reflect.Module(h.read()).input_primitive()
+    except ImportError:
+        note("spirv_reflect is not importable; the topology was NOT checked")
+        return None
+    except spirv_reflect.ReflectError as e:
+        note("the input primitive could not be read (%s); the topology was NOT checked" % e)
+        return None
+
+    given = (request.get("state") or {}).get("topology", "triangle_list")
+    if given != wanted:
+        return ("this geometry shader consumes %s, which needs a %s, but the pipeline was "
+                "asked for a %s" % (name, wanted, given))
+    return None
 
 
 def probe(loader):
@@ -792,6 +894,13 @@ def main(argv):
             "the producer and the fragment shader do not agree on their interface: %s.\n"
             "A pipeline built from them is undefined, and the driver would compile it anyway.\n"
             % mismatch)
+        return EXIT_REFUSED
+
+    wrong_topology = check_topology(request, note)
+    if wrong_topology:
+        sys.stderr.write(
+            "%s.\nA pipeline built that way is invalid, and the driver would compile it "
+            "anyway and return the same code.\n" % wrong_topology)
         return EXIT_REFUSED
 
     lib, which, tried = load_loader(request.get("loader") or os.environ.get("VK_LOADER"))
