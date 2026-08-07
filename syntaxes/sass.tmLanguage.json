@@ -16,15 +16,28 @@
   "repository": {
 
     "source-correlation": {
-      "comment": "nvdisasm -g / -gi source line annotations",
-      "match": "^\\s*(//##?.*?)(?:(\")([^\"]*)(\"))?(.*)$",
-      "captures": {
-        "1": { "name": "comment.line.double-slash.source-correlation.sass" },
-        "2": { "name": "punctuation.definition.string.begin.sass" },
-        "3": { "name": "string.quoted.double.filename.sass" },
-        "4": { "name": "punctuation.definition.string.end.sass" },
-        "5": { "name": "comment.line.double-slash.source-correlation.sass" }
-      }
+      "patterns": [
+        {
+          "comment": "The compact marker this extension writes into a compiled listing: `//## file.slang:11`. It has to be scoped before the nvdisasm form below, and its file and line carry their own scopes rather than being swallowed by the comment - a marker is a signpost the reader is meant to follow, and under a theme with dim comments an all-comment marker is nearly invisible.",
+          "match": "^\\s*(//##)\\s+([^\\s:\"]+):(\\d+)\\s*$",
+          "captures": {
+            "1": { "name": "comment.line.double-slash.source-correlation.sass" },
+            "2": { "name": "string.unquoted.filename.sass" },
+            "3": { "name": "constant.numeric.line-number.sass" }
+          }
+        },
+        {
+          "comment": "nvdisasm -g / -gi source line annotations",
+          "match": "^\\s*(//##?.*?)(?:(\")([^\"]*)(\"))?(.*)$",
+          "captures": {
+            "1": { "name": "comment.line.double-slash.source-correlation.sass" },
+            "2": { "name": "punctuation.definition.string.begin.sass" },
+            "3": { "name": "string.quoted.double.filename.sass" },
+            "4": { "name": "punctuation.definition.string.end.sass" },
+            "5": { "name": "comment.line.double-slash.source-correlation.sass" }
+          }
+        }
+      ]
     },
 
     "function-header": {
@@ -83,7 +96,7 @@
       "comment": "branch target label at the head of a line: .L_x_0:",
       "match": "^\\s*(\\.?[A-Za-z_][\\w.$]*)\\s*(:)\\s*$",
       "captures": {
-        "1": { "name": "entity.name.label.sass" },
+        "1": { "name": "entity.name.function.label.sass" },
         "2": { "name": "punctuation.separator.label.sass" }
       }
     },
@@ -95,32 +108,32 @@
           "comment": "Maxwell-style leading column, colon-separated: 06:-:-:Y:d",
           "match": "^\\s*([-0-9a-f]{1,2})(:)([-0-7])(:)([-0-7])(:)([-Yy])(:)([-0-9a-f]{1,2})(?=\\s)",
           "captures": {
-            "1": { "name": "constant.other.control-code.wait-barrier.sass" },
-            "2": { "name": "punctuation.separator.control-code.sass" },
-            "3": { "name": "constant.other.control-code.read-barrier.sass" },
-            "4": { "name": "punctuation.separator.control-code.sass" },
-            "5": { "name": "constant.other.control-code.write-barrier.sass" },
-            "6": { "name": "punctuation.separator.control-code.sass" },
-            "7": { "name": "constant.other.control-code.yield.sass" },
-            "8": { "name": "punctuation.separator.control-code.sass" },
-            "9": { "name": "constant.other.control-code.stall.sass" }
+            "1": { "name": "variable.other.control-code.wait-barrier.sass" },
+            "2": { "name": "variable.other.control-code.separator.sass" },
+            "3": { "name": "variable.other.control-code.read-barrier.sass" },
+            "4": { "name": "variable.other.control-code.separator.sass" },
+            "5": { "name": "variable.other.control-code.write-barrier.sass" },
+            "6": { "name": "variable.other.control-code.separator.sass" },
+            "7": { "name": "constant.language.control-code.yield.sass" },
+            "8": { "name": "variable.other.control-code.separator.sass" },
+            "9": { "name": "constant.numeric.control-code.stall.sass" }
           }
         },
         {
           "comment": "Volta+ bracketed column, tagged per field: [B--2---:R-:W0:Y:S04]",
           "match": "(\\[)(B[0-5-]{6})(:)(R[0-5-])(:)(W[0-5-])(:)([Y-])(:)(S[0-9]{2})(\\])",
           "captures": {
-            "1": { "name": "punctuation.separator.control-code.sass" },
-            "2": { "name": "constant.other.control-code.wait-barrier.sass" },
-            "3": { "name": "punctuation.separator.control-code.sass" },
-            "4": { "name": "constant.other.control-code.read-barrier.sass" },
-            "5": { "name": "punctuation.separator.control-code.sass" },
-            "6": { "name": "constant.other.control-code.write-barrier.sass" },
-            "7": { "name": "punctuation.separator.control-code.sass" },
-            "8": { "name": "constant.other.control-code.yield.sass" },
-            "9": { "name": "punctuation.separator.control-code.sass" },
-            "10": { "name": "constant.other.control-code.stall.sass" },
-            "11": { "name": "punctuation.separator.control-code.sass" }
+            "1": { "name": "variable.other.control-code.separator.sass" },
+            "2": { "name": "variable.other.control-code.wait-barrier.sass" },
+            "3": { "name": "variable.other.control-code.separator.sass" },
+            "4": { "name": "variable.other.control-code.read-barrier.sass" },
+            "5": { "name": "variable.other.control-code.separator.sass" },
+            "6": { "name": "variable.other.control-code.write-barrier.sass" },
+            "7": { "name": "variable.other.control-code.separator.sass" },
+            "8": { "name": "constant.language.control-code.yield.sass" },
+            "9": { "name": "variable.other.control-code.separator.sass" },
+            "10": { "name": "constant.numeric.control-code.stall.sass" },
+            "11": { "name": "variable.other.control-code.separator.sass" }
           }
         }
       ]
@@ -130,30 +143,30 @@
       "comment": "One instruction. The begin regex takes an optional Maxwell control column, address prefix, Volta+ bracketed control column, guard predicate, opcode, and up to three individually-scoped postfix tiers; everything up to the ';' or end of line is operands. A control column and its instruction start at the same place, so this rule has to consume the column itself - the standalone column rules are line-anchored too and would otherwise win and hide the opcode.",
       "begin": "(?x)^\\s*\n(?: ([-0-9a-f]{1,2})(:)([-0-7])(:)([-0-7])(:)([-Yy])(:)([-0-9a-f]{1,2}) \\s+ )? # Maxwell control column\n(?: (/\\*) \\s* ([0-9a-fA-F]+) \\s* (\\*/) \\s* )?          # nvdisasm  /*0010*/\n(?: (0x[0-9a-fA-F]{8,}) \\s+ )?                           # Nsight export address\n(?: (\\[) (B[0-5-]{6}) (:) (R[0-5-]) (:) (W[0-5-]) (:) ([Y-]) (:) (S[0-9]{2}) (\\]) \\s* )? # Volta+ control column\n(?: (@) (!)? ([A-Za-z_]\\w*) \\s* )?                       # guard predicate @!P0\n\\b ([A-Z][A-Z0-9_]*)                                     # opcode\n(\\.[A-Za-z0-9_]+)? (\\.[A-Za-z0-9_]+)? ((?:\\.[A-Za-z0-9_]+)*) # postfix tiers 1, 2, 3+\n(?=[\\s;]|$)",
       "beginCaptures": {
-        "1": { "name": "constant.other.control-code.wait-barrier.sass" },
-        "2": { "name": "punctuation.separator.control-code.sass" },
-        "3": { "name": "constant.other.control-code.read-barrier.sass" },
-        "4": { "name": "punctuation.separator.control-code.sass" },
-        "5": { "name": "constant.other.control-code.write-barrier.sass" },
-        "6": { "name": "punctuation.separator.control-code.sass" },
-        "7": { "name": "constant.other.control-code.yield.sass" },
-        "8": { "name": "punctuation.separator.control-code.sass" },
-        "9": { "name": "constant.other.control-code.stall.sass" },
-        "10": { "name": "punctuation.definition.comment.address.sass" },
+        "1": { "name": "variable.other.control-code.wait-barrier.sass" },
+        "2": { "name": "variable.other.control-code.separator.sass" },
+        "3": { "name": "variable.other.control-code.read-barrier.sass" },
+        "4": { "name": "variable.other.control-code.separator.sass" },
+        "5": { "name": "variable.other.control-code.write-barrier.sass" },
+        "6": { "name": "variable.other.control-code.separator.sass" },
+        "7": { "name": "constant.language.control-code.yield.sass" },
+        "8": { "name": "variable.other.control-code.separator.sass" },
+        "9": { "name": "constant.numeric.control-code.stall.sass" },
+        "10": { "name": "comment.block.address.sass" },
         "11": { "name": "comment.block.address.sass" },
-        "12": { "name": "punctuation.definition.comment.address.sass" },
+        "12": { "name": "comment.block.address.sass" },
         "13": { "name": "comment.block.address.sass" },
-        "14": { "name": "punctuation.separator.control-code.sass" },
-        "15": { "name": "constant.other.control-code.wait-barrier.sass" },
-        "16": { "name": "punctuation.separator.control-code.sass" },
-        "17": { "name": "constant.other.control-code.read-barrier.sass" },
-        "18": { "name": "punctuation.separator.control-code.sass" },
-        "19": { "name": "constant.other.control-code.write-barrier.sass" },
-        "20": { "name": "punctuation.separator.control-code.sass" },
-        "21": { "name": "constant.other.control-code.yield.sass" },
-        "22": { "name": "punctuation.separator.control-code.sass" },
-        "23": { "name": "constant.other.control-code.stall.sass" },
-        "24": { "name": "punctuation.separator.control-code.sass" },
+        "14": { "name": "variable.other.control-code.separator.sass" },
+        "15": { "name": "variable.other.control-code.wait-barrier.sass" },
+        "16": { "name": "variable.other.control-code.separator.sass" },
+        "17": { "name": "variable.other.control-code.read-barrier.sass" },
+        "18": { "name": "variable.other.control-code.separator.sass" },
+        "19": { "name": "variable.other.control-code.write-barrier.sass" },
+        "20": { "name": "variable.other.control-code.separator.sass" },
+        "21": { "name": "constant.language.control-code.yield.sass" },
+        "22": { "name": "variable.other.control-code.separator.sass" },
+        "23": { "name": "constant.numeric.control-code.stall.sass" },
+        "24": { "name": "variable.other.control-code.separator.sass" },
         "25": { "name": "keyword.control.guard.sass" },
         "26": { "name": "keyword.operator.logical.not.guard.sass" },
         "27": { "name": "keyword.control.guard.predicate.sass" },
@@ -351,7 +364,7 @@
 
     "label-reference": {
       "match": "\\.L_[\\w$]+|\\.L\\d+\\b",
-      "name": "entity.name.label.reference.sass"
+      "name": "entity.name.function.label.reference.sass"
     },
 
     "operand-postfix": {

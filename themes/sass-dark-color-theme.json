@@ -2,7 +2,6 @@
   "name": "SASS Dark",
   "type": "dark",
   "semanticHighlighting": true,
-
   "colors": {
     "editor.background": "#15181E",
     "editor.foreground": "#C5CDD9",
@@ -20,7 +19,6 @@
     "editorBracketMatch.background": "#2C3644",
     "editorBracketMatch.border": "#4FC1D9"
   },
-
   "tokenColors": [
     {
       "name": "Comments",
@@ -30,60 +28,102 @@
         "comment.block.sass",
         "punctuation.definition.comment.sass"
       ],
-      "settings": { "foreground": "#5A6472", "fontStyle": "italic" }
+      "settings": {
+        "foreground": "#5A6472",
+        "fontStyle": "italic"
+      }
     },
     {
       "name": "Instruction address column - present on every line, so it must recede",
-      "scope": ["comment.block.address.sass", "punctuation.definition.comment.address.sass"],
-      "settings": { "foreground": "#465061", "fontStyle": "" }
+      "scope": [
+        "comment.block.address.sass",
+        "punctuation.definition.comment.address.sass"
+      ],
+      "settings": {
+        "foreground": "#465061",
+        "fontStyle": ""
+      }
     },
     {
       "name": "Raw encoding / control word from cuobjdump -sass",
       "scope": "comment.block.control-word.sass",
-      "settings": { "foreground": "#3D4553" }
+      "settings": {
+        "foreground": "#3D4553"
+      }
     },
     {
       "name": "Reuse-cache hint - a scheduling note, never semantics",
       "scope": "comment.other.reuse-hint.sass",
-      "settings": { "foreground": "#5F7355", "fontStyle": "italic" }
+      "settings": {
+        "foreground": "#5F7355",
+        "fontStyle": "italic"
+      }
     },
     {
       "name": "Section banner",
       "scope": "comment.line.banner.sass",
-      "settings": { "foreground": "#4E5867" }
+      "settings": {
+        "foreground": "#4E5867"
+      }
     },
     {
       "name": "Source correlation from nvdisasm -g",
       "scope": "comment.line.double-slash.source-correlation.sass",
-      "settings": { "foreground": "#6E7F8F", "fontStyle": "italic" }
+      "settings": {
+        "foreground": "#6E7F8F",
+        "fontStyle": "italic"
+      }
     },
-
+    {
+      "name": "Compact source-correlation marker: the file it points at",
+      "scope": "string.unquoted.filename.sass",
+      "settings": {
+        "foreground": "#A8C6A0"
+      }
+    },
+    {
+      "name": "Compact source-correlation marker: the line it points at",
+      "scope": "constant.numeric.line-number.sass",
+      "settings": {
+        "foreground": "#E8A33D"
+      }
+    },
     {
       "name": "OPCODE - the thing you scan for",
       "scope": "keyword.other.opcode.sass",
-      "settings": { "foreground": "#DCE7FF", "fontStyle": "bold" }
+      "settings": {
+        "foreground": "#DCE7FF",
+        "fontStyle": "bold"
+      }
     },
     {
       "name": "Postfix tier 1 - shades off the opcode hue",
       "scope": "storage.modifier.postfix.tier1.sass",
-      "settings": { "foreground": "#9DB0D8" }
+      "settings": {
+        "foreground": "#9DB0D8"
+      }
     },
     {
       "name": "Postfix tier 2",
       "scope": "storage.modifier.postfix.tier2.sass",
-      "settings": { "foreground": "#7386AE" }
+      "settings": {
+        "foreground": "#7386AE"
+      }
     },
     {
       "name": "Postfix tier 3 and beyond",
       "scope": "storage.modifier.postfix.tier3.sass",
-      "settings": { "foreground": "#5A6A8C" }
+      "settings": {
+        "foreground": "#5A6A8C"
+      }
     },
     {
       "name": "Postfix hanging off an operand, e.g. R12.U32",
       "scope": "storage.modifier.operand.sass",
-      "settings": { "foreground": "#7386AE" }
+      "settings": {
+        "foreground": "#7386AE"
+      }
     },
-
     {
       "name": "Guard predicate - divergence without a branch",
       "scope": [
@@ -91,18 +131,24 @@
         "keyword.control.guard.predicate.sass",
         "keyword.operator.logical.not.guard.sass"
       ],
-      "settings": { "foreground": "#FF8A93", "fontStyle": "bold" }
+      "settings": {
+        "foreground": "#FF8A93",
+        "fontStyle": "bold"
+      }
     },
-
     {
       "name": "WARM: vector register - per-thread, divergent",
       "scope": "variable.other.register.vector.sass",
-      "settings": { "foreground": "#E8A33D" }
+      "settings": {
+        "foreground": "#E8A33D"
+      }
     },
     {
       "name": "RZ - reads zero, discards writes",
       "scope": "variable.other.register.vector.zero.sass",
-      "settings": { "foreground": "#96793F" }
+      "settings": {
+        "foreground": "#96793F"
+      }
     },
     {
       "name": "WARM: predicate register",
@@ -110,69 +156,90 @@
         "variable.other.register.predicate.sass",
         "variable.language.register.predicate-file.sass"
       ],
-      "settings": { "foreground": "#F07178" }
+      "settings": {
+        "foreground": "#F07178"
+      }
     },
     {
       "name": "PT - the always-true predicate",
       "scope": "variable.other.register.predicate.true.sass",
-      "settings": { "foreground": "#9E585C" }
+      "settings": {
+        "foreground": "#9E585C"
+      }
     },
-
     {
       "name": "COOL: uniform register - one value for the whole warp",
       "scope": "variable.other.register.uniform.sass",
-      "settings": { "foreground": "#4FC1D9" }
+      "settings": {
+        "foreground": "#4FC1D9"
+      }
     },
     {
       "name": "URZ",
       "scope": "variable.other.register.uniform.zero.sass",
-      "settings": { "foreground": "#3E8695" }
+      "settings": {
+        "foreground": "#3E8695"
+      }
     },
     {
       "name": "COOL: uniform predicate",
       "scope": "variable.other.register.uniform-predicate.sass",
-      "settings": { "foreground": "#B48EEA" }
+      "settings": {
+        "foreground": "#B48EEA"
+      }
     },
     {
       "name": "UPT",
       "scope": "variable.other.register.uniform-predicate.true.sass",
-      "settings": { "foreground": "#77609C" }
+      "settings": {
+        "foreground": "#77609C"
+      }
     },
-
     {
       "name": "Special / system registers",
       "scope": "variable.language.register.special.sass",
-      "settings": { "foreground": "#57C7A8" }
+      "settings": {
+        "foreground": "#57C7A8"
+      }
     },
     {
       "name": "SRZ",
       "scope": "variable.language.register.special.zero.sass",
-      "settings": { "foreground": "#3E8875" }
+      "settings": {
+        "foreground": "#3E8875"
+      }
     },
-
     {
       "name": "Convergence barrier",
       "scope": "variable.other.register.barrier.sass",
-      "settings": { "foreground": "#CC8B65" }
+      "settings": {
+        "foreground": "#CC8B65"
+      }
     },
     {
       "name": "Scoreboard barrier",
       "scope": "variable.other.register.scoreboard.sass",
-      "settings": { "foreground": "#B57C5C" }
+      "settings": {
+        "foreground": "#B57C5C"
+      }
     },
-
     {
       "name": "COOL: constant memory - broadcast, warp-uniform",
       "scope": [
         "variable.other.constant-bank.sass",
         "variable.other.descriptor.sass"
       ],
-      "settings": { "foreground": "#6A9BF4" }
+      "settings": {
+        "foreground": "#6A9BF4"
+      }
     },
     {
       "name": "Indexed constant bank cx[URn][...]",
       "scope": "variable.other.constant-bank.indexed.sass",
-      "settings": { "foreground": "#6A9BF4", "fontStyle": "bold" }
+      "settings": {
+        "foreground": "#6A9BF4",
+        "fontStyle": "bold"
+      }
     },
     {
       "name": "Constant bank / offset operands",
@@ -180,19 +247,24 @@
         "variable.other.constant-bank.bank.sass",
         "variable.other.constant-bank.offset.sass"
       ],
-      "settings": { "foreground": "#8FB4F7" }
+      "settings": {
+        "foreground": "#8FB4F7"
+      }
     },
     {
       "name": "COOL: attribute space - rasterizer interpolants",
       "scope": "variable.other.attribute-space.sass",
-      "settings": { "foreground": "#5EC8C0" }
+      "settings": {
+        "foreground": "#5EC8C0"
+      }
     },
     {
       "name": "Attribute offset",
       "scope": "variable.other.attribute-space.offset.sass",
-      "settings": { "foreground": "#8ADAD4" }
+      "settings": {
+        "foreground": "#8ADAD4"
+      }
     },
-
     {
       "name": "Immediates",
       "scope": [
@@ -200,23 +272,32 @@
         "constant.numeric.float.sass",
         "constant.numeric.integer.sass"
       ],
-      "settings": { "foreground": "#C3E88D" }
+      "settings": {
+        "foreground": "#C3E88D"
+      }
     },
     {
       "name": "INF / NaN immediates",
       "scope": "constant.numeric.special.sass",
-      "settings": { "foreground": "#C3E88D", "fontStyle": "bold" }
+      "settings": {
+        "foreground": "#C3E88D",
+        "fontStyle": "bold"
+      }
     },
-
     {
       "name": "Labels",
-      "scope": "entity.name.label.sass",
-      "settings": { "foreground": "#FFCB6B", "fontStyle": "bold" }
+      "scope": "entity.name.function.label.sass",
+      "settings": {
+        "foreground": "#FFCB6B",
+        "fontStyle": "bold"
+      }
     },
     {
       "name": "Label references (branch targets)",
-      "scope": "entity.name.label.reference.sass",
-      "settings": { "foreground": "#FFCB6B" }
+      "scope": "entity.name.function.label.reference.sass",
+      "settings": {
+        "foreground": "#FFCB6B"
+      }
     },
     {
       "name": "Function names",
@@ -224,14 +305,18 @@
         "entity.name.function.sass",
         "entity.name.function.section.sass"
       ],
-      "settings": { "foreground": "#82D2CE", "fontStyle": "bold" }
+      "settings": {
+        "foreground": "#82D2CE",
+        "fontStyle": "bold"
+      }
     },
     {
       "name": "Function references",
       "scope": "entity.name.function.reference.sass",
-      "settings": { "foreground": "#82D2CE" }
+      "settings": {
+        "foreground": "#82D2CE"
+      }
     },
-
     {
       "name": "Directives",
       "scope": [
@@ -239,12 +324,17 @@
         "keyword.other.function-header.sass",
         "keyword.operator.directive-value.sass"
       ],
-      "settings": { "foreground": "#8892A8", "fontStyle": "bold" }
+      "settings": {
+        "foreground": "#8892A8",
+        "fontStyle": "bold"
+      }
     },
     {
       "name": "Directive operands",
       "scope": "entity.name.tag.directive-operand.sass",
-      "settings": { "foreground": "#7E8AA0" }
+      "settings": {
+        "foreground": "#7E8AA0"
+      }
     },
     {
       "name": "ELF flags and relocations",
@@ -252,12 +342,17 @@
         "constant.language.elf-flag.sass",
         "keyword.other.relocation.sass"
       ],
-      "settings": { "foreground": "#9C8CBF" }
+      "settings": {
+        "foreground": "#9C8CBF"
+      }
     },
     {
       "name": "SM architecture",
       "scope": "constant.language.arch.sass",
-      "settings": { "foreground": "#B48EEA", "fontStyle": "bold" }
+      "settings": {
+        "foreground": "#B48EEA",
+        "fontStyle": "bold"
+      }
     },
     {
       "name": "Strings",
@@ -267,9 +362,10 @@
         "punctuation.definition.string.begin.sass",
         "punctuation.definition.string.end.sass"
       ],
-      "settings": { "foreground": "#A8C6A0" }
+      "settings": {
+        "foreground": "#A8C6A0"
+      }
     },
-
     {
       "name": "Free operand decorations - negate, absolute value, logical not",
       "scope": [
@@ -278,14 +374,18 @@
         "keyword.operator.logical.not.sass",
         "keyword.operator.bitwise.not.sass"
       ],
-      "settings": { "foreground": "#D8E1EC", "fontStyle": "bold" }
+      "settings": {
+        "foreground": "#D8E1EC",
+        "fontStyle": "bold"
+      }
     },
     {
       "name": "Address arithmetic",
       "scope": "keyword.operator.arithmetic.sass",
-      "settings": { "foreground": "#77839A" }
+      "settings": {
+        "foreground": "#77839A"
+      }
     },
-
     {
       "name": "Punctuation",
       "scope": [
@@ -298,89 +398,170 @@
         "punctuation.separator.sass",
         "punctuation.separator.label.sass"
       ],
-      "settings": { "foreground": "#69748A" }
+      "settings": {
+        "foreground": "#69748A"
+      }
     },
     {
       "name": "Statement terminator",
       "scope": "punctuation.terminator.instruction.sass",
-      "settings": { "foreground": "#4E5867" }
+      "settings": {
+        "foreground": "#4E5867"
+      }
     },
     {
       "name": "Operand accessor dot",
       "scope": "punctuation.accessor.sass",
-      "settings": { "foreground": "#5A6A8C" }
+      "settings": {
+        "foreground": "#5A6A8C"
+      }
     },
-
     {
       "name": "Control code: stall count - the number worth reading",
-      "scope": "constant.other.control-code.stall.sass",
-      "settings": { "foreground": "#E8A33D", "fontStyle": "bold" }
+      "scope": "constant.numeric.control-code.stall.sass",
+      "settings": {
+        "foreground": "#E8A33D",
+        "fontStyle": "bold"
+      }
     },
     {
       "name": "Control code: yield hint",
-      "scope": "constant.other.control-code.yield.sass",
-      "settings": { "foreground": "#A0C878" }
+      "scope": "constant.language.control-code.yield.sass",
+      "settings": {
+        "foreground": "#A0C878"
+      }
     },
     {
       "name": "Control code: write barrier",
-      "scope": "constant.other.control-code.write-barrier.sass",
-      "settings": { "foreground": "#F07178" }
+      "scope": "variable.other.control-code.write-barrier.sass",
+      "settings": {
+        "foreground": "#F07178"
+      }
     },
     {
       "name": "Control code: read barrier",
-      "scope": "constant.other.control-code.read-barrier.sass",
-      "settings": { "foreground": "#4FC1D9" }
+      "scope": "variable.other.control-code.read-barrier.sass",
+      "settings": {
+        "foreground": "#4FC1D9"
+      }
     },
     {
       "name": "Control code: wait barrier mask",
-      "scope": "constant.other.control-code.wait-barrier.sass",
-      "settings": { "foreground": "#B48EEA" }
+      "scope": "variable.other.control-code.wait-barrier.sass",
+      "settings": {
+        "foreground": "#B48EEA"
+      }
     },
     {
       "name": "Control code separators",
-      "scope": "punctuation.separator.control-code.sass",
-      "settings": { "foreground": "#4E5867" }
+      "scope": "variable.other.control-code.separator.sass",
+      "settings": {
+        "foreground": "#4E5867"
+      }
     }
   ],
-
   "semanticTokenColors": {
-    "sassOpcode": { "foreground": "#DCE7FF", "bold": true },
-
-    "sassModifier.tier1": { "foreground": "#9DB0D8" },
-    "sassModifier.tier2": { "foreground": "#7386AE" },
-    "sassModifier.tier3": { "foreground": "#5A6A8C" },
-
-    "sassVectorReg": { "foreground": "#E8A33D" },
-    "sassVectorReg.src": { "foreground": "#E8A33D" },
-    "sassVectorReg.dst": { "foreground": "#FFD08A", "bold": true },
-    "sassVectorReg.discard": { "foreground": "#8A7145", "italic": true },
-
-    "sassUniformReg": { "foreground": "#4FC1D9" },
-    "sassUniformReg.src": { "foreground": "#4FC1D9" },
-    "sassUniformReg.dst": { "foreground": "#9BE7F5", "bold": true },
-    "sassUniformReg.discard": { "foreground": "#427E8B", "italic": true },
-
-    "sassPredicate": { "foreground": "#F07178" },
-    "sassPredicate.src": { "foreground": "#F07178" },
-    "sassPredicate.dst": { "foreground": "#FFB0B5", "bold": true },
-    "sassPredicate.discard": { "foreground": "#96585C", "italic": true },
-
-    "sassUniformPredicate": { "foreground": "#B48EEA" },
-    "sassUniformPredicate.src": { "foreground": "#B48EEA" },
-    "sassUniformPredicate.dst": { "foreground": "#D7C2FF", "bold": true },
-    "sassUniformPredicate.discard": { "foreground": "#77609C", "italic": true },
-
-    "sassSpecialReg": { "foreground": "#57C7A8" },
-    "sassSpecialReg.src": { "foreground": "#57C7A8" },
-
-    "sassBarrier": { "foreground": "#CC8B65" },
-    "sassBarrier.src": { "foreground": "#CC8B65" },
-    "sassBarrier.dst": { "foreground": "#F0B48E", "bold": true },
-
-    "sassConstBank": { "foreground": "#6A9BF4" },
-    "sassAttribute": { "foreground": "#5EC8C0" },
-    "sassImmediate": { "foreground": "#C3E88D" },
-    "sassGuard": { "foreground": "#FF8A93", "bold": true },
-    "sassLabel": { "foreground": "#FFCB6B", "bold": true }
+    "sassOpcode": {
+      "foreground": "#DCE7FF",
+      "bold": true
+    },
+    "sassModifier.tier1": {
+      "foreground": "#9DB0D8"
+    },
+    "sassModifier.tier2": {
+      "foreground": "#7386AE"
+    },
+    "sassModifier.tier3": {
+      "foreground": "#5A6A8C"
+    },
+    "sassVectorReg": {
+      "foreground": "#E8A33D"
+    },
+    "sassVectorReg.src": {
+      "foreground": "#E8A33D"
+    },
+    "sassVectorReg.dst": {
+      "foreground": "#FFD08A",
+      "bold": true
+    },
+    "sassVectorReg.discard": {
+      "foreground": "#8A7145",
+      "italic": true
+    },
+    "sassUniformReg": {
+      "foreground": "#4FC1D9"
+    },
+    "sassUniformReg.src": {
+      "foreground": "#4FC1D9"
+    },
+    "sassUniformReg.dst": {
+      "foreground": "#9BE7F5",
+      "bold": true
+    },
+    "sassUniformReg.discard": {
+      "foreground": "#427E8B",
+      "italic": true
+    },
+    "sassPredicate": {
+      "foreground": "#F07178"
+    },
+    "sassPredicate.src": {
+      "foreground": "#F07178"
+    },
+    "sassPredicate.dst": {
+      "foreground": "#FFB0B5",
+      "bold": true
+    },
+    "sassPredicate.discard": {
+      "foreground": "#96585C",
+      "italic": true
+    },
+    "sassUniformPredicate": {
+      "foreground": "#B48EEA"
+    },
+    "sassUniformPredicate.src": {
+      "foreground": "#B48EEA"
+    },
+    "sassUniformPredicate.dst": {
+      "foreground": "#D7C2FF",
+      "bold": true
+    },
+    "sassUniformPredicate.discard": {
+      "foreground": "#77609C",
+      "italic": true
+    },
+    "sassSpecialReg": {
+      "foreground": "#57C7A8"
+    },
+    "sassSpecialReg.src": {
+      "foreground": "#57C7A8"
+    },
+    "sassBarrier": {
+      "foreground": "#CC8B65"
+    },
+    "sassBarrier.src": {
+      "foreground": "#CC8B65"
+    },
+    "sassBarrier.dst": {
+      "foreground": "#F0B48E",
+      "bold": true
+    },
+    "sassConstBank": {
+      "foreground": "#6A9BF4"
+    },
+    "sassAttribute": {
+      "foreground": "#5EC8C0"
+    },
+    "sassImmediate": {
+      "foreground": "#C3E88D"
+    },
+    "sassGuard": {
+      "foreground": "#FF8A93",
+      "bold": true
+    },
+    "sassLabel": {
+      "foreground": "#FFCB6B",
+      "bold": true
+    }
   }
 }
