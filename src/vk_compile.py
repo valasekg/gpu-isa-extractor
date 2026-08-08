@@ -832,6 +832,22 @@ class Poke(object):
         self.keep.append(obj)
         return C.pointer(obj)
 
+    def chain(self, cls, stype, head=None, **fields):
+        """Link one feature struct onto a pNext chain and return the new head.
+
+        Seven of these were written out by hand, each four lines whose only load-bearing
+        differences were the class and the sType - and the two must agree. That pairing is
+        exactly what went wrong once before: `VkPhysicalDeviceVulkan13Features` was chained
+        carrying the sType of the 1.1 struct, so `dynamicRendering` was never enabled and every
+        pipeline was built invalidly on a driver that did not object. One argument list now
+        holds both, where before they sat on separate lines.
+
+        The pointee stays alive through `ptr`, which is why the return value can be dropped.
+        """
+        return self.ptr(cls(sType=ST[stype],
+                            pNext=C.cast(head, VOID) if head is not None else None,
+                            **fields))
+
     def build(self, request):
         vk = self.vk
         state = request.get("state") or {}
@@ -989,12 +1005,11 @@ class Poke(object):
         qci = VkDeviceQueueCreateInfo(sType=ST["DEVICE_QUEUE_CREATE_INFO"],
                                       queueFamilyIndex=graphics, queueCount=1,
                                       pQueuePriorities=self.ptr(priority))
-        f13 = VkPhysicalDeviceVulkan13Features(
-            sType=ST["PHYSICAL_DEVICE_VULKAN_1_3_FEATURES"], dynamicRendering=VK_TRUE)
-        f11 = VkPhysicalDeviceVulkan11Features(
-            sType=ST["PHYSICAL_DEVICE_VULKAN_1_1_FEATURES"],
-            pNext=C.cast(self.ptr(f13), VOID), shaderDrawParameters=VK_TRUE)
-        head = self.ptr(f11)
+        head = self.chain(VkPhysicalDeviceVulkan13Features,
+                          "PHYSICAL_DEVICE_VULKAN_1_3_FEATURES", dynamicRendering=VK_TRUE)
+        head = self.chain(VkPhysicalDeviceVulkan11Features,
+                          "PHYSICAL_DEVICE_VULKAN_1_1_FEATURES", head,
+                          shaderDrawParameters=VK_TRUE)
         device_extensions = []
 
         # Ray query needs no pipeline of its own - it lives inside an ordinary shader - so it
@@ -1003,49 +1018,45 @@ class Poke(object):
         if CAP_RAY_QUERY in caps or CAP_RAY_TRACING in caps:
             device_extensions += [b"VK_KHR_acceleration_structure",
                                   b"VK_KHR_deferred_host_operations"]
-            faddr = VkPhysicalDeviceBufferDeviceAddressFeatures(
-                sType=ST["PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES"],
-                pNext=C.cast(head, VOID), bufferDeviceAddress=VK_TRUE)
-            faccel = VkPhysicalDeviceAccelerationStructureFeaturesKHR(
-                sType=ST["PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR"],
-                pNext=C.cast(self.ptr(faddr), VOID), accelerationStructure=VK_TRUE)
-            head = self.ptr(faccel)
+            head = self.chain(VkPhysicalDeviceBufferDeviceAddressFeatures,
+                              "PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES", head,
+                              bufferDeviceAddress=VK_TRUE)
+            head = self.chain(VkPhysicalDeviceAccelerationStructureFeaturesKHR,
+                              "PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR", head,
+                              accelerationStructure=VK_TRUE)
             if CAP_RAY_QUERY in caps:
                 device_extensions.append(b"VK_KHR_ray_query")
-                fquery = VkPhysicalDeviceRayQueryFeaturesKHR(
-                    sType=ST["PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR"],
-                    pNext=C.cast(head, VOID), rayQuery=VK_TRUE)
-                head = self.ptr(fquery)
+                head = self.chain(VkPhysicalDeviceRayQueryFeaturesKHR,
+                                  "PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR", head,
+                                  rayQuery=VK_TRUE)
             if CAP_RAY_TRACING in caps:
                 # Slang declares RayTracingKHR even for inline ray tracing, so this follows the
                 # module rather than the feature being used.
                 device_extensions.append(b"VK_KHR_ray_tracing_pipeline")
-                fpipe = VkPhysicalDeviceRayTracingPipelineFeaturesKHR(
-                    sType=ST["PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR"],
-                    pNext=C.cast(head, VOID), rayTracingPipeline=VK_TRUE)
-                head = self.ptr(fpipe)
+                head = self.chain(VkPhysicalDeviceRayTracingPipelineFeaturesKHR,
+                                  "PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR", head,
+                                  rayTracingPipeline=VK_TRUE)
             self.note("ray tracing       enabled from the modules' declared capabilities")
         if mesh_pipeline:
             # Mesh shading is an extension: the feature struct alone is not enough, the device
             # extension has to be enabled too or the stage bits are not even recognised.
             device_extensions.append(MESH_EXTENSION)
-            fmesh = VkPhysicalDeviceMeshShaderFeaturesEXT(
-                sType=ST["PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT"],
-                pNext=C.cast(head, VOID),
-                meshShader=VK_TRUE, taskShader=VK_TRUE if "ts" in code else VK_FALSE)
-            head = self.ptr(fmesh)
+            head = self.chain(VkPhysicalDeviceMeshShaderFeaturesEXT,
+                              "PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT", head,
+                              meshShader=VK_TRUE,
+                              taskShader=VK_TRUE if "ts" in code else VK_FALSE)
         # A geometry or tessellation stage is a device feature, not just another entry in the
         # stage array: a pipeline naming one on a device where it was not enabled is rejected.
-        f2 = VkPhysicalDeviceFeatures2(
-            sType=ST["PHYSICAL_DEVICE_FEATURES_2"], pNext=C.cast(head, VOID),
-            features=VkPhysicalDeviceFeatures(
-                geometryShader=VK_TRUE if "gs" in code else VK_FALSE,
-                tessellationShader=VK_TRUE if ("hs" in code or "ds" in code) else VK_FALSE))
+        f2 = self.chain(VkPhysicalDeviceFeatures2, "PHYSICAL_DEVICE_FEATURES_2", head,
+                        features=VkPhysicalDeviceFeatures(
+                            geometryShader=VK_TRUE if "gs" in code else VK_FALSE,
+                            tessellationShader=(VK_TRUE if ("hs" in code or "ds" in code)
+                                                else VK_FALSE)))
         dext_array = ((C.c_char_p * len(device_extensions))(*device_extensions)
                       if device_extensions else None)
         self.keep.append(dext_array)
         dci = VkDeviceCreateInfo(
-            sType=ST["DEVICE_CREATE_INFO"], pNext=C.cast(self.ptr(f2), VOID),
+            sType=ST["DEVICE_CREATE_INFO"], pNext=C.cast(f2, VOID),
             queueCreateInfoCount=1, pQueueCreateInfos=self.ptr(qci),
             enabledExtensionCount=len(device_extensions),
             ppEnabledExtensionNames=C.cast(dext_array, VOID) if device_extensions else None)

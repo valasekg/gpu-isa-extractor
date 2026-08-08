@@ -109,22 +109,7 @@ const PROVENANCE = {
   },
 
   compiled(result, sweepResult, field) {
-    const { object, compile } = result;
-    const lines = [field('source') + `${object.source}`];
-    for (const note of compile.sources.slice(1)) {
-      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  via ${note}`);
-    }
-    lines.push(field('compiled') + `${compile.steps.map(s => s.tool).join(' -> ')}`);
-    for (const step of compile.steps) {
-      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${step.command}`);
-    }
-    if (compile.directive) {
-      lines.push(field('flags') + `${compile.directive} (from the file)`);
-    }
-    if (compile.configuredFlags) {
-      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${compile.configuredFlags} (from settings)`);
-    }
-    return lines;
+    return [...toolchainLines(result, field, 'via'), ...flagLines(result, field)];
   },
 
   /**
@@ -140,15 +125,8 @@ const PROVENANCE = {
    * would be claiming more than it knows.
    */
   driver(result, sweepResult, field) {
-    const { object, compile } = result;
-    const lines = [field('source') + `${object.source}`];
-    for (const note of compile.sources.slice(1)) {
-      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  with ${note}`);
-    }
-    lines.push(field('compiled') + `${compile.steps.map(s => s.tool).join(' -> ')}`);
-    for (const step of compile.steps) {
-      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${step.command}`);
-    }
+    const { compile } = result;
+    const lines = toolchainLines(result, field, 'with');
     if (compile.device) {
       // Which GPU, because this road needs the hardware present and the answer is that
       // device's - unlike ptxas, which cross-compiles for any architecture from anywhere.
@@ -157,15 +135,42 @@ const PROVENANCE = {
     if (compile.pipeline) {
       lines.push(field('pipeline') + `${compile.pipeline}`);
     }
-    if (compile.directive) {
-      lines.push(field('flags') + `${compile.directive} (from the file)`);
-    }
-    if (compile.configuredFlags) {
-      lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${compile.configuredFlags} (from settings)`);
-    }
-    return lines;
+    return [...lines, ...flagLines(result, field)];
   }
 };
+
+/**
+ * The source and the toolchain that ran over it - shared by both compiled origins.
+ *
+ * Two roads record the same thing about themselves and differ only in what they add. Written
+ * out twice, the copies had already drifted apart in wording ('via' against 'with') without
+ * anyone deciding they should, so the difference that IS deliberate is a parameter now.
+ */
+function toolchainLines(result, field, joiner) {
+  const { object, compile } = result;
+  const lines = [field('source') + `${object.source}`];
+  for (const note of compile.sources.slice(1)) {
+    lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${joiner} ${note}`);
+  }
+  lines.push(field('compiled') + `${compile.steps.map(s => s.tool).join(' -> ')}`);
+  for (const step of compile.steps) {
+    lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${step.command}`);
+  }
+  return lines;
+}
+
+/** Which flags were in force, and where each came from. Last, on both roads. */
+function flagLines(result, field) {
+  const { compile } = result;
+  const lines = [];
+  if (compile.directive) {
+    lines.push(field('flags') + `${compile.directive} (from the file)`);
+  }
+  if (compile.configuredFlags) {
+    lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${compile.configuredFlags} (from settings)`);
+  }
+  return lines;
+}
 
 /**
  * What the container states about a shader, as banner lines.

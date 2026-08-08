@@ -354,5 +354,6 @@ module.exports = {
   sweep,
   collapse,
   disassemble,
+  runNvdisasm,
   run
 };

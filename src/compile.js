@@ -447,7 +447,10 @@ const COMPUTE_STAGE = 'compute';
  *   pair      a stage that belongs alongside it - required unless `pairOptional`, which
  *             means "use it if the file has one". Vulkan rejects a hull shader without
  *             a domain shader and the reverse, and an amplification shader with no mesh shader
- *             to dispatch. Where the file holds only one, the other is generated.
+ *             to dispatch. Where the file holds only one, the other is GENERATED for a
+ *             tessellation pair and REFUSED for a mesh one - what a mesh shader and its
+ *             amplification shader share is a payload struct, and a struct type cannot be
+ *             reproduced out of SPIR-V.
  *   group     it belongs to a pipeline built from a SET of entry points rather than a
  *             chain - every stage in the group that the file declares is compiled together.
  *   patch     it works on patches, so the pipeline needs a patch size and a patch topology.
@@ -1003,10 +1006,28 @@ async function graphicsCompile(tools, file, options) {
   for (const error of controls.errors || []) notes.push(error);
 
   const stage = chosen.stage;
-  const consumer = await slangToSpirv(tools, file, outDir, {
-    flags: flags.slang, entry: chosen.entry, stage, name: chosen.entry || stage
-  });
-  steps.push({ tool: 'slangc', command: quote(consumer.argv), log: consumer.log });
+
+  /**
+   * Compile entry points to SPIR-V and record each as a step.
+   *
+   * Together rather than one after another: the invocations are independent - one source, one
+   * entry point each, one output file each - so the only thing serialising them bought was
+   * wall-clock. Steps are recorded in the order ASKED FOR, not the order they finish, because
+   * the banner lists them and a banner that reorders itself between runs is not a record.
+   */
+  const compileStages = async wanted => {
+    const done = await Promise.all(wanted.map(w => slangToSpirv(tools, w.source || file, outDir, {
+      flags: flags.slang, entry: w.entry, stage: w.stage, name: w.name
+    })));
+    for (const step of done) {
+      steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
+    }
+    return done;
+  };
+  const compileStage = async (entry, forStage, name, source) =>
+    (await compileStages([{ entry, stage: forStage, name, source }]))[0];
+
+  const consumer = await compileStage(chosen.entry, stage, chosen.entry || stage);
 
   // Every module this pipeline will hold, keyed by the slot `vk_compile.py` takes it in. A map
   // rather than a local per stage: the stage table already says which slot each one occupies,
@@ -1034,6 +1055,8 @@ async function graphicsCompile(tools, file, options) {
     // thing people write - a primary miss shader and a shadow miss shader is the ordinary
     // raytracing arrangement. Assigning both to `modules.miss` dropped the first silently
     // while the note below went on claiming it had been compiled, so it is refused by name.
+    // Checked before anything is compiled, so a file that cannot make a pipeline says so
+    // immediately rather than after five slangc runs.
     const claimed = new Map([[spec.slot, chosen.entry]]);
     for (const member of members) {
       const slot = STAGES[member.stage].slot;
@@ -1046,13 +1069,11 @@ async function graphicsCompile(tools, file, options) {
           'separate files, or delete one.');
       }
       claimed.set(slot, member.name);
-
-      const step = await slangToSpirv(tools, file, outDir, {
-        flags: flags.slang, entry: member.name, stage: member.stage, name: member.name
-      });
-      steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
-      modules[slot] = step.file;
     }
+
+    const built = await compileStages(
+      members.map(m => ({ entry: m.name, stage: m.stage, name: m.name })));
+    built.forEach((step, i) => { modules[STAGES[members[i].stage].slot] = step.file; });
     if (members.length) {
       notes.push(`compiled as one pipeline with ${members.map(e => `${e.name} (${e.stage})`)
         .join(', ')} - a raytracing pipeline holds them together and its shaders are ` +
@@ -1082,10 +1103,7 @@ async function graphicsCompile(tools, file, options) {
     const wanted = spec.pair;
     let other;
     if (chosen.counterpart) {
-      const step = await slangToSpirv(tools, file, outDir, {
-        flags: flags.slang, entry: chosen.counterpart.name, stage: wanted, name: wanted
-      });
-      steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
+      const step = await compileStage(chosen.counterpart.name, wanted, wanted);
       other = step.file;
       notes.push(`${chosen.counterpart.name} is compiled with it as the ${wanted} half` +
         (spec.pairOptional
@@ -1093,12 +1111,18 @@ async function graphicsCompile(tools, file, options) {
           // the answer - the payload a task shader supplies is data the mesh shader reads.
           ? ', because this file pairs them and the payload it supplies is part of the answer'
           : ', because neither stage exists in a pipeline without the other'));
-    } else if (wanted === 'mesh') {
+    } else if (wanted !== 'hull' && wanted !== 'domain') {
+      // Named the other way round on purpose. `generateCounterpart` knows tessellation and
+      // nothing else - it asks the reflector for a tessellation counterpart and compiles it as
+      // `hsMain`/`dsMain` - so the test is which stages it CAN generate, not which one stage it
+      // cannot. Listing the exception instead meant any future paired stage would fall through
+      // into tessellation synthesis and fail with a message about a generated file.
       throw new CompileError(
-        `${chosen.entry} is an amplification shader, which exists only to dispatch a mesh ` +
-        'shader - there is no pipeline without one. Put the mesh shader in this file and it ' +
-        'will be compiled alongside. One is not generated: the payload they share is a struct, ' +
-        'and reproducing a struct type out of SPIR-V is exactly the guess this refuses to make.');
+        `${chosen.entry} is a ${stage} shader, and a pipeline holding one needs the ` +
+        `${wanted} shader that goes with it - there is no pipeline without it. Put the ` +
+        `${wanted} shader in this file and it will be compiled alongside. One is not ` +
+        'generated: what the two share is a struct, and reproducing a struct type out of ' +
+        'SPIR-V is exactly the guess this refuses to make.');
     } else {
       const generated = await generateCounterpart(tools, consumer.file, wanted, outDir);
       steps.push(generated.step);
@@ -1131,17 +1155,11 @@ async function graphicsCompile(tools, file, options) {
   if (spec.producer) {
     const named = controls.producer;
     if (named) {
-      const step = await slangToSpirv(tools, named.file, outDir, {
-        flags: flags.slang, entry: named.entry, stage: 'vertex', name: 'producer'
-      });
-      steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
+      const step = await compileStage(named.entry, 'vertex', 'producer', named.file);
       sources.push(named.file);
       modules.vs = step.file;
     } else if (chosen.producer) {
-      const step = await slangToSpirv(tools, file, outDir, {
-        flags: flags.slang, entry: chosen.producer.name, stage: 'vertex', name: 'producer'
-      });
-      steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
+      const step = await compileStage(chosen.producer.name, 'vertex', 'producer');
       modules.vs = step.file;
     } else {
       const generated = await generateProducer(tools, consumer.file, outDir);
@@ -1192,20 +1210,23 @@ async function graphicsCompile(tools, file, options) {
   // the shader could not state and this had to choose, so they are reported rather than
   // assumed - and where they came from is part of the claim, not a footnote.
   const bindings = (layout.bindings || []).length;
-  const raytracing = spec.group === 'raytracing';
-  const describe = raytracing ? [
+  // The stage and its layout are true of every pipeline kind; what follows them is not. The
+  // two arms used to repeat this head verbatim, so rephrasing the bindings line meant editing
+  // it twice and a listing could describe the same decision in two different ways.
+  const head = [
     `${stage} stage`,
     bindings
       ? `${bindings} binding(s) ${stated ? 'from the file' : 'by reflection'}`
-      : 'no descriptors',
+      : 'no descriptors'
+  ];
+  const raytracing = spec.group === 'raytracing';
+  const describe = raytracing ? [
+    ...head,
     // No render state at all - a raytracing pipeline has none, and printing a colour format
     // for one would describe something that is not there.
     'raytracing pipeline, recursion depth 1'
   ].join(', ') : [
-    `${stage} stage`,
-    bindings
-      ? `${bindings} binding(s) ${stated ? 'from the file' : 'by reflection'}`
-      : 'no descriptors',
+    ...head,
     STAGES[stage].producer
       ? (controls.producer ? 'producer named by the file'
         : chosen.producer ? `producer ${chosen.producer.name} from this file`
@@ -1287,12 +1308,25 @@ function splitSuffix(name) {
 
 /** Everything the reflector can say about one module. */
 async function reflectModule(tools, module) {
-  const result = await run(tools.python, [tools.reflectHelper, module, '--json']);
+  return (await reflect(tools, [module])).modules[0];
+}
+
+/**
+ * Run the reflector over some modules and return what it said.
+ *
+ * The spawn, the failure handling and the JSON parse were written twice, once per caller, and
+ * the two had already drifted - one reported a reflection failure through `fail`, the other
+ * through a message naming the file. One of each now; the callers differ only in which part of
+ * the answer they read.
+ */
+async function reflect(tools, modules) {
+  const result = await run(tools.python, [tools.reflectHelper, ...modules, '--json']);
   if (result.failed) fail('reflection', result);
   try {
-    return JSON.parse(result.stdout).modules[0];
+    return JSON.parse(result.stdout);
   } catch (e) {
-    throw new CompileError(`${path.basename(module)} could not be reflected: ${e.message}`);
+    const which = modules.length === 1 ? path.basename(modules[0]) : 'the pipeline modules';
+    throw new CompileError(`${which} could not be reflected: ${e.message}`);
   }
 }
 
@@ -1328,17 +1362,11 @@ async function generateCounterpart(tools, module, wanted, outDir) {
  * refuses rather than guessing where it cannot.
  */
 async function reflectLayout(tools, modules) {
-  const result = await run(tools.python, [tools.reflectHelper, ...modules, '--json']);
-  if (result.failed) fail('reflection', result);
-  try {
-    const read = JSON.parse(result.stdout);
-    return {
-      bindings: read.layout.map(d => [d.set, d.binding, d.type, d.count]),
-      pushBytes: read.pushBytes || 0
-    };
-  } catch (e) {
-    throw new CompileError(`the descriptor layout could not be read: ${e.message}`);
-  }
+  const read = await reflect(tools, modules);
+  return {
+    bindings: read.layout.map(d => [d.set, d.binding, d.type, d.count]),
+    pushBytes: read.pushBytes || 0
+  };
 }
 
 /**
@@ -1397,6 +1425,10 @@ async function carveCache(cacheDir, stage, entryName, group) {
         microcode: o.microcode,
         codeBytes: o.codeBytes,
         instructions: o.microcode.length / 16,
+        // Forwarded rather than dropped: `nvcache` computed this, and the compile path was
+        // re-deriving the same digest downstream. Two modules computing object identity
+        // independently is two chances for them to stop agreeing.
+        sha1: o.sha1,
         registers: o.metadata ? o.metadata.registers : null,
         metadata: o.metadata,
         // Stamped so the banner cannot mistake this for a shader carved out of the user's own

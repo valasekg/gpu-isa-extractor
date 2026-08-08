@@ -388,7 +388,12 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
   const rawPath = path.join(outDir, `${entry.name}.raw`);
   await fs.promises.writeFile(rawPath, entry.microcode);
 
-  const sass = await runTool(nvdisasm, ['--binary', built.arch, '--no-dataflow', rawPath], token);
+  // The same call the browse path makes, rather than a second spelling of it. It returns the
+  // command it really ran, quoted by `spawn.quote` - the hand-built string this used to carry
+  // left the executable bare, so a banner from the ordinary Windows CUDA install (under
+  // `C:\Program Files\...`) could not be pasted back into a shell.
+  const disassembled = await pipeline.runNvdisasm(nvdisasm, built.arch, rawPath, token);
+  const sass = disassembled.text;
   const annotation = config().get('decodeControlCodes') !== false
     ? ctrl.annotate(sass, entry.microcode)
     : null;
@@ -463,7 +468,9 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
     offset: 0,
     codeBytes: entry.codeBytes,
     microcode: entry.microcode,
-    sha1: sha1(entry.microcode),
+    // The carve already knows what this is; only the CUDA road, whose entries come out of a
+    // cubin rather than a cache container, has no identity to forward.
+    sha1: entry.sha1 || sha1(entry.microcode),
     origin: graphics ? 'driver' : 'compiled',
     warnings: [],
     // The CUDA road has to state these, because a cubin records almost none of them and
@@ -493,7 +500,7 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
     archFrom: archInfo.from,
     nvdisasm,
     nvdisasmVersion: await pipeline.nvdisasmVersion(nvdisasm),
-    command: `${nvdisasm} --binary ${built.arch} --no-dataflow "${rawPath}"`,
+    command: disassembled.command,
     annotation,
     correlation,
     compile: {

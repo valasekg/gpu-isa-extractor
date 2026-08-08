@@ -80,6 +80,30 @@ function findPython() {
 
 const PY = findPython();
 
+// Filled in once the async body starts; read by `unready` below.
+let probe = null;
+
+/**
+ * Why a section cannot run, or null.
+ *
+ * Seven sections spelled the same prerequisites out by hand - Python, then the fixtures, then
+ * sometimes a usable device - and they had already drifted: some checked the probe and some
+ * did not, so a machine without a GPU failed one section and skipped another. Adding a
+ * prerequisite meant seven edits, and missing one meant a FAIL where a skip was meant.
+ */
+function unready(what, fixtures, { gpu = false } = {}) {
+  if (!PY) return 'no Python interpreter';
+  const missing = (fixtures || []).filter(f => !fs.existsSync(f));
+  if (missing.length) {
+    return `no ${what} fixture(s): ${missing.map(f => path.basename(f)).join(', ')}`;
+  }
+  if (gpu && (!probe || probe.code !== 0)) {
+    const said = ((probe && (probe.stderr || probe.stdout)) || '').trim().split('\n')[0];
+    return `no usable Vulkan device for the ${what} round-trip${said ? `: ${said}` : ''}`;
+  }
+  return null;
+}
+
 // --------------------------------------------------------------------------- ABI
 
 section('1. The Vulkan struct ABI');
@@ -303,7 +327,7 @@ function findBin(dir) {
 }
 
 (async () => {
-  const probe = PY ? run(PY, [VK_COMPILE, '--probe']) : null;
+  probe = PY ? run(PY, [VK_COMPILE, '--probe']) : null;
 
   if (!PY) {
     skip('no Python interpreter');
@@ -366,10 +390,9 @@ function findBin(dir) {
   section('4. The geometry stage');
 
   const gs = path.join(FIXTURES, 'gsMain.spv');
-  if (!PY) {
-    skip('no Python interpreter');
-  } else if (!fs.existsSync(gs)) {
-    skip('no geometry fixture');
+  const whyGeometry = unready('geometry', [gs]);
+  if (whyGeometry) {
+    skip(whyGeometry);
   } else {
     // The topology is not a free choice: a geometry shader declares the primitive it consumes
     // and the input assembler has to be set to feed it that one. Read from the module, never
@@ -441,10 +464,9 @@ function findBin(dir) {
 
   const hs = path.join(FIXTURES, 'tessHs.spv');
   const ds = path.join(FIXTURES, 'tessDs.spv');
-  if (!PY) {
-    skip('no Python interpreter');
-  } else if (!fs.existsSync(hs)) {
-    skip('no tessellation fixtures');
+  const whyTessellation = unready('tessellation', [hs]);
+  if (whyTessellation) {
+    skip(whyTessellation);
   } else {
     // The generated half has to be VALID for every domain, not just the one the fixtures use.
     // gl_TessLevelOuter is float[4] and gl_TessLevelInner is float[2] in SPIR-V whatever the
@@ -549,12 +571,9 @@ function findBin(dir) {
 
   const ms = path.join(FIXTURES, 'msMain.spv');
   const as = path.join(FIXTURES, 'asMain.spv');
-  if (!PY) {
-    skip('no Python interpreter');
-  } else if (!fs.existsSync(ms)) {
-    skip('no mesh fixtures');
-  } else if (!probe || probe.code !== 0) {
-    skip('no usable Vulkan device for the mesh round-trip');
+  const whyMesh = unready('mesh', [ms, as], { gpu: true });
+  if (whyMesh) {
+    skip(whyMesh);
   } else {
     // A mesh pipeline has no vertex stage at all - the mesh shader IS the front of it - so
     // this is the one graphics pipeline built with no vertex input and no input assembler.
@@ -596,10 +615,9 @@ function findBin(dir) {
   // instructions of plausible SASS. Nine validation errors, none of them visible in the
   // output. That is why the capabilities are read from the SPIR-V rather than hardcoded.
   const rqFs = path.join(FIXTURES, 'rqFs.spv');
-  if (!PY) {
-    skip('no Python interpreter');
-  } else if (!fs.existsSync(rqFs)) {
-    skip('no ray-query fixture');
+  const whyQuery = unready('ray-query', [rqFs]);
+  if (whyQuery) {
+    skip(whyQuery);
   } else {
     const r = run(PY, [REFLECT, rqFs, '--json']);
     if (check(r.code === 0, 'a ray-query module reflects', r.stderr)) {
@@ -642,10 +660,9 @@ function findBin(dir) {
   const [RGEN, MISS, CHIT, AHIT, SECT, CALL] = rtFiles;
   const rtLayout = { bindings: [[0, 0, 1000150000, 1], [0, 1, 3, 1], [0, 2, 6, 1]] };
 
-  if (!PY) {
-    skip('no Python interpreter');
-  } else if (!rtFiles.every(f => fs.existsSync(f))) {
-    skip('no raytracing fixtures');
+  const whyRt = unready('raytracing', rtFiles);
+  if (whyRt) {
+    skip(whyRt);
   } else {
     const r = run(PY, [REFLECT, RGEN, '--json']);
     if (check(r.code === 0, 'a raygeneration module reflects', r.stderr)) {
