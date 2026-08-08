@@ -88,8 +88,14 @@ const lines = [
   // Two loads arm scoreboard 4; one wait drains both. Lines 15-17.
   '        /*0040*/ [B------:R-:W4:Y:S04]  LDG.E R13, [UR4+0x1c] ;',
   '        /*0050*/ [B------:R-:W4:Y:S01]  LDG.E R0, [UR4+0x18] ;',
-  '        /*0060*/ [B----4-:R-:W-:-:S02]  FADD.FTZ R5, R13, R0 ;'
+  '        /*0060*/ [B----4-:R-:W-:-:S02]  FADD.FTZ R5, R13, R0 ;',
+  // Appended, so nothing above shifts. Two constants a reader meets constantly: the turns
+  // factor every trig call multiplies by, and an exp() the compiler folded into exp2.
+  'FMUL R5, R4, 0x3e22f983 ;',
+  'FMUL R7, R6, 0xc10a7fac ;'
 ];
+const TRIG_LINE = lines.length - 2;
+const FOLD_LINE = lines.length - 1;
 
 const document = {
   lineCount: lines.length,
@@ -154,6 +160,20 @@ console.log('\n2. Operand tooltips');
   // instruction spells - 0x3f800000 is eight digits and so eight groups.
   check(body(hover).includes('0011 1111 1000 0000 0000 0000 0000 0000'),
     'and shows the bit pattern in groups of four', body(hover));
+}
+{
+  // The hardware's sin and cos take TURNS, so every trig call multiplies by this first.
+  const hover = hoverAt(TRIG_LINE, '0x3e22f983', 0);
+  check(body(hover).includes('1/(2*pi)'),
+    'a well-known constant is named beside its float value', body(hover));
+}
+{
+  // exp(-6x) is emitted as exp2(-6*log2(e)*x); naming the multiplier traces the constant back
+  // to the line the author actually wrote.
+  const hover = hoverAt(FOLD_LINE, '0xc10a7fac', 0);
+  check(body(hover).includes('-6 * log2(e)'),
+    'a folded base change names the multiplier the source wrote', body(hover));
+  check(/only base-2/.test(body(hover)), 'and says why the fold happened', body(hover));
 }
 {
   const hover = hoverAt(4, 'a[0x7c]', 2);

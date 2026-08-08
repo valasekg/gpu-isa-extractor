@@ -351,6 +351,7 @@ function immediateMarkdown(token, opcode) {
   const hex = /^([-+])?0[xX]([0-9a-fA-F]+)$/.exec(text);
   const parts = [`### \`${text}\``];
 
+  let after = null;
   if (hex) {
     const digits = hex[2];
     const negated = hex[1] === '-';
@@ -368,7 +369,16 @@ function immediateMarkdown(token, opcode) {
       new DataView(buf).setUint32(0, u32);
       const f32 = new DataView(buf).getFloat32(0);
       if (s32 !== u32) rows.push(`| as int32 | ${s32} |`);
-      rows.push(`| as float32 | ${formatFloat(f32)} |`);
+      const named = NAMED_FLOATS.get(u32 >>> 0);
+      const folded = named ? null : foldedConstant(f32);
+      const gloss = named || (folded && folded.text);
+      rows.push(`| as float32 | ${formatFloat(f32)}${gloss ? ` - **${gloss}**` : ''} |`);
+      if (folded && folded.from) {
+        // Held until after the table, which is what it explains.
+        after = '> The hardware has only base-2 `MUFU` instructions, so a source ' +
+          `\`${folded.from}\` is emitted in base 2 with the source's own multiplier folded ` +
+          'into this constant.';
+      }
     } else if (digits.length <= 16) {
       const u64 = BigInt.asUintN(64, value);
       const buf = new ArrayBuffer(8);
@@ -377,6 +387,7 @@ function immediateMarkdown(token, opcode) {
     }
 
     parts.push('', '| | |', '|---|---|', ...rows);
+    if (after) parts.push('', after);
     parts.push('', '*Bit-pattern reinterpretations - which one is meant depends on the ' +
                    'instruction. Integer and bit-pattern immediates print in hex, float ' +
                    'immediates print in decimal, so a hex value feeding a float ' +
@@ -391,6 +402,51 @@ function immediateMarkdown(token, opcode) {
                    'not a value: `0xc0` = a AND b, `0xfc` = a OR b, `0x3c` = a XOR b.');
   }
   return parts.join('\n');
+}
+
+/**
+ * Constants worth naming when they turn up as a float32 bit pattern.
+ *
+ * Keyed on the bit pattern rather than the decimal, so the match is exact and needs no
+ * tolerance. `0x3e22f983` is the one to know: the hardware's sin and cos take TURNS, so every
+ * trigonometric call multiplies by 1/(2*pi) first.
+ */
+const NAMED_FLOATS = new Map([
+  [0x40490fdb, 'pi'], [0x3fc90fdb, 'pi/2'], [0x3f490fdb, 'pi/4'], [0x40c90fdb, '2*pi'],
+  [0x3ea2f983, '1/pi'], [0x3f22f983, '2/pi'], [0x3e22f983, '1/(2*pi)'],
+  [0x42652ee1, '180/pi, degrees per radian'], [0x3c8efa35, 'pi/180, radians per degree'],
+  [0x402df854, 'e'], [0x3ebc5ab2, '1/e'],
+  [0x3f317218, 'ln(2)'], [0x3fb8aa3b, 'log2(e)'], [0x40135d8e, 'ln(10)'],
+  [0x40549a78, 'log2(10)'], [0x3e9a209b, 'log10(2)'], [0x3ede5bd9, 'log10(e)'],
+  [0x3fb504f3, 'sqrt(2)'], [0x3f3504f3, '1/sqrt(2)'], [0x3fddb3d7, 'sqrt(3)'],
+  [0x3eaaaaab, '1/3'], [0x3f2aaaab, '2/3'], [0x3e2aaaab, '1/6'], [0x3b808081, '1/255'],
+  [0x3fcf1bbd, 'the golden ratio']
+]);
+
+/**
+ * A base change the compiler folded a source constant into, or null.
+ *
+ * The hardware has only `MUFU.EX2` and `MUFU.LG2`, so `exp(k*x)` is emitted as
+ * `exp2(k*log2(e)*x)` and the multiplier carries the source's own k. Naming the k is what
+ * makes the constant traceable back to the line it came from - `-8.65617` says nothing,
+ * `-6 * log2(e)` says the source wrote `exp(-6*x)`.
+ */
+function foldedConstant(f32) {
+  const folds = [
+    ['log2(e)', Math.LOG2E, 'exp'], ['1/(2*pi)', 1 / (2 * Math.PI), 'sin/cos'],
+    ['log2(10)', Math.log2(10), 'exp10'], ['ln(2)', Math.LN2, 'log']
+  ];
+  for (const [name, base, from] of folds) {
+    const k = f32 / base;
+    // Quarters keep it to multipliers a person would actually write, and the round trip is
+    // what stops a coincidence being reported as a fold.
+    const rounded = Math.round(k * 4) / 4;
+    if (!rounded || Math.abs(rounded) > 1024) continue;
+    if (Math.fround(rounded * base) !== f32) continue;
+    if (rounded === 1) return { text: name, from: null };
+    return { text: `${rounded} * ${name}`, from };
+  }
+  return null;
 }
 
 /** A bit pattern in groups of four - one group per hex digit of the literal. */
