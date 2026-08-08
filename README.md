@@ -186,6 +186,11 @@ intersection, callable
 Both end in the same place — microcode, in the same shape as bytes carved out of a cache — so
 the listing is produced by the extension's ordinary `nvdisasm --binary` path either way.
 
+The stage comes from the `[shader("...")]` attribute. A file that carries none — Falcor's
+shaders name the entry point host-side instead — is read from its filename:
+`2d.ps.slang` is a fragment shader with entry point `main`, and `.vs. .cs. .gs. .hs. .ds.
+.ms. .as.` follow the same convention. An explicit attribute always wins.
+
 Eight worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
 
 | | |

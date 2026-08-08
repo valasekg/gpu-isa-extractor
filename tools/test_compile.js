@@ -377,6 +377,44 @@ section('5. Entry points and the stage gate');
 }
 
 {
+  // A stage read out of the filename: `<name>.<stage>.slang`, Falcor's convention and a
+  // common HLSL one. Those files carry no [shader(...)] attribute at all - the host names the
+  // entry point when it builds the program - so without this they scanned as declaring
+  // nothing, which read as "compute-only" and took the CUDA road to a cubin with no kernel in
+  // it. The error talked about `__global__` for what was a pixel shader.
+  for (const [name, want] of [
+    ['2d.ps.slang', 'fragment'], ['fullscreen.vs.slang', 'vertex'], ['blur.cs.slang', 'compute'],
+    ['expand.gs.slang', 'geometry'], ['terrain.hs.slang', 'hull'], ['terrain.ds.slang', 'domain'],
+    ['meshlet.ms.slang', 'mesh'], ['cull.as.slang', 'amplification'],
+    ['2D.PS.SLANG', 'fragment'], ['a.b.c.ps.slang', 'fragment']
+  ]) {
+    equal(compile.stageFromName(name), want, `${name} names the ${want} stage`);
+  }
+  for (const name of ['shader.slang', 'weird.xx.slang', 'noextension', '']) {
+    equal(compile.stageFromName(name), null, `${name || '(empty)'} names no stage`);
+  }
+
+  const falcor = compile.chooseSlangEntry(
+    'float4 main(float2 uv : UV) : SV_TARGET { return float4(uv, 0, 1); }',
+    undefined, '/w/2d.ps.slang');
+  equal(falcor.stage, 'fragment', 'a file with no attribute takes its stage from its name');
+  equal(falcor.entry, 'main', 'and the entry point the convention implies');
+  equal(falcor.lineage, 'graphics', 'so it reaches the driver rather than the CUDA road');
+  check(/2d\.ps\.slang means fragment/.test(falcor.note || ''),
+    'and says where the stage came from', falcor.note);
+
+  // The attribute is the shader's own statement and outranks the filename.
+  const attributed = compile.chooseSlangEntry(
+    '[shader("compute")] [numthreads(1,1,1)] void csMain() { }', undefined, '/w/thing.ps.slang');
+  equal(attributed.stage, 'compute', 'an explicit [shader(...)] beats the filename');
+
+  // No attribute and no hint in the name: unchanged, so slangc still discovers for itself.
+  const plain = compile.chooseSlangEntry('void helper() { }', undefined, '/w/thing.slang');
+  equal(plain.lineage, 'cuda', 'a file with neither is routed exactly as before');
+  equal(plain.entry, undefined, 'and still lets slangc discover its own entry point');
+}
+
+{
   // The stages that have no road at all - a name from a newer Slang than the table knows. The
   // refusal path stayed live after the raytracing work and nothing asserted it any more, so a
   // regression would have sent a file to `slangc -target cuda`, which crashes with no

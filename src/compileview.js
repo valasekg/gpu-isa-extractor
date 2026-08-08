@@ -256,7 +256,7 @@ async function run(target, progress, token) {
   // would refuse to compile it on a machine that could - naming two tools it does not want.
   // The routing decision therefore has to happen before the tools are required, not after.
   let chosen = language === 'slang'
-    ? compile.chooseSlangEntry(text, undefined)
+    ? compile.chooseSlangEntry(text, undefined, file)
     : { lineage: 'cuda' };
 
   // A file holding entry points on both roads compiles one of them, and until now the other
@@ -273,7 +273,7 @@ async function run(target, progress, token) {
     if (!picked) return;                              // dismissed: not an error
     if (picked.name !== chosen.entry) {
       entry = picked.name;
-      chosen = compile.chooseSlangEntry(text, entry);
+      chosen = compile.chooseSlangEntry(text, entry, file);
     }
   }
 

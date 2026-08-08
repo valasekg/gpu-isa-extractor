@@ -427,6 +427,28 @@ const SHADER_ATTR_RE = /\[\s*shader\s*\(\s*"(\w+)"\s*\)\s*\]/g;
 const COMPUTE_STAGE = 'compute';
 
 /**
+ * The stage a `<name>.<stage>.slang` filename declares - Falcor's convention, and a common
+ * HLSL one.
+ *
+ * These files carry no `[shader(...)]` attribute at all: the host names the entry point and
+ * the stage when it builds the program, and the filename is where that choice is written down.
+ */
+const FILENAME_STAGES = {
+  ps: 'fragment', vs: 'vertex', cs: 'compute', gs: 'geometry', hs: 'hull', ds: 'domain',
+  ms: 'mesh', as: 'amplification'
+};
+
+/** `main`, by the same convention. Wrong only if the file names its entry something else. */
+const FILENAME_ENTRY = 'main';
+
+function stageFromName(file) {
+  const parts = path.basename(file || '').split('.');
+  return parts.length >= 3
+    ? FILENAME_STAGES[parts[parts.length - 2].toLowerCase()] || null
+    : null;
+}
+
+/**
  * What each shader stage needs before the driver will compile it.
  *
  * This was three tables that had to agree with one another - which road a stage takes, which
@@ -604,7 +626,7 @@ function functionAfter(text, at) {
  *   That is strictly better than a generated producer: it is the pairing the author actually
  *   wrote, so the varyings the fragment shader reads are the ones a real draw would supply.
  */
-function chooseSlangEntry(text, wanted) {
+function chooseSlangEntry(text, wanted, file) {
   const found = slangEntryPoints(text);
   const supported = found.filter(e => lineageOf(e.stage));
   const compute = found.filter(e => e.stage === COMPUTE_STAGE);
@@ -672,6 +694,24 @@ function chooseSlangEntry(text, wanted) {
   // Compute keeps its old behaviour exactly: a file that declares only compute entry points
   // lets slangc discover them itself, which is what makes a single-kernel file need no
   // `-entry` at all.
+  // A file with no attribute at all may still say what it is in its name. Only consulted
+  // when the scan found nothing, so an explicit `[shader(...)]` always wins.
+  if (!found.length) {
+    const named = stageFromName(file);
+    if (named) {
+      return {
+        entry: FILENAME_ENTRY,
+        stage: named,
+        lineage: lineageOf(named),
+        producer: null,
+        counterpart: null,
+        group: null,
+        note: `this file declares no [shader(...)] entry point, so its name was read instead: ` +
+          `${path.basename(file)} means ${named}, entry point ${FILENAME_ENTRY}`
+      };
+    }
+  }
+
   if (compute.length === found.length) {
     return { entry: undefined, stage: COMPUTE_STAGE, lineage: 'cuda', producer: null, note: null };
   }
@@ -1466,8 +1506,10 @@ async function compile(tools, file, options = {}) {
   }
 
   if (language === 'slang') {
+    // `file` may be a scratch copy of a dirty buffer, but it keeps the original basename,
+    // which is the only part the name convention reads.
     const chosen = chooseSlangEntry(
-      await fs.promises.readFile(file, 'utf8'), options.entry);
+      await fs.promises.readFile(file, 'utf8'), options.entry, file);
     if (chosen.note) notes.push(chosen.note);
 
     // The fork. A vertex or fragment entry point leaves the CUDA road entirely - there is no
@@ -1545,6 +1587,7 @@ module.exports = {
   splitIncludes,
   toolFlags,
   slangEntryPoints,
+  stageFromName,
   chooseSlangEntry,
   stageRefusal,
   STAGES,
