@@ -117,8 +117,17 @@ section('3. Pipeline controls for a graphics shader');
   equal(p.errors.length, 0, 'well-formed controls raise nothing', p.errors.join('; '));
   equal(p.state.samples, 4, 'a sample count is read as a number');
   equal(p.state.format, 'r16g16b16a16_sf', 'a render-target format is read');
-  equal(JSON.stringify(p.layout.bindings), '[[0,0,8,1],[0,1,2,1]]',
+  equal(JSON.stringify(p.layout), '[[0,0,8,1],[0,1,2,1]]',
     'bindings become set:binding:type:count, count defaulting to 1');
+
+  // A field left empty is not a zero. `bind=0:1:` used to pass `map(Number)` as [0,1,0] -
+  // descriptor type 0, VK_DESCRIPTOR_TYPE_SAMPLER - and replace the whole reflected layout
+  // with it, which is the one mistake nothing downstream can see.
+  for (const bad of ['bind=0:1:', 'bind=0:1:6:', 'bind=:1:6', 'bind=0::6']) {
+    const r_ = compile.pipelineControls([bad], HOME);
+    check(r_.errors.length === 1 && r_.layout === null,
+      `${bad} is refused rather than read as a zero`, JSON.stringify(r_.errors));
+  }
 }
 
 {
@@ -127,9 +136,19 @@ section('3. Pipeline controls for a graphics shader');
   // declares, and the measured effect of a wrong layout is different code, not an error.
   const quiet = compile.pipelineControls([], path.resolve('/w'));
   check(quiet.layout === null, 'a file that says nothing gets no layout, not an empty one');
+  check(quiet.pushBytes === null, 'and no push-constant range either');
+
+  // The two are SEPARATE overrides. They used to be one object built whenever either was
+  // given, so `push=16` alone produced a layout with zero bindings - and because a stated
+  // layout replaces the reflected one wholesale, a shader that samples a texture was compiled
+  // against no descriptors at all.
   const stated = compile.pipelineControls(['push=128'], path.resolve('/w'));
-  check(stated.layout !== null && stated.layout.pushBytes === 128,
-    'but a stated push-constant range does make the layout explicit');
+  equal(stated.pushBytes, 128, 'a stated push-constant range is read');
+  check(stated.layout === null,
+    'and stating one does NOT silently empty the descriptor layout', JSON.stringify(stated.layout));
+  const both = compile.pipelineControls(['push=64', 'bind=0:0:6:1'], path.resolve('/w'));
+  equal(both.pushBytes, 64, 'both can be stated together');
+  equal(JSON.stringify(both.layout), '[[0,0,6,1]]', 'and then both are taken from the file');
 }
 
 {
@@ -349,6 +368,76 @@ section('5. Entry points and the stage gate');
     '[shader("raygeneration")] void r() { }\n[shader("closesthit")] void h() { }', 'h');
   equal(withRgen.stage, 'closesthit', 'adding a raygeneration shader makes the same file compile');
   equal(withRgen.entry, 'h', 'and the named entry point is still the one compiled');
+
+  // The group is decided by the router, once, and carried. `graphicsCompile` used to re-read
+  // the file and re-derive membership with a predicate of its own, so what the user was told
+  // had been compiled and what actually was were two independent answers.
+  equal(JSON.stringify(withRgen.group), '[{"name":"r","stage":"raygeneration"}]',
+    'and the rest of the pipeline comes back with it');
+}
+
+{
+  // The stages that have no road at all - a name from a newer Slang than the table knows. The
+  // refusal path stayed live after the raytracing work and nothing asserted it any more, so a
+  // regression would have sent a file to `slangc -target cuda`, which crashes with no
+  // diagnostic. That is the whole reason this scan runs before slangc rather than after.
+  let threw = null;
+  try { compile.chooseSlangEntry('[shader("workgraph")] void w() { }'); } catch (e) { threw = e; }
+  check(threw instanceof compile.CompileError,
+    'a file declaring only an unknown stage is refused', threw && threw.message);
+  check(threw && /workgraph/.test(threw.message),
+    'and the refusal names the stage it did not recognise', threw && threw.message);
+  check(threw && /compute/.test(threw.message) && /raygeneration/.test(threw.message),
+    'and lists the stages that do work, so a typo is visible', threw && threw.message);
+
+  let named = null;
+  try { compile.chooseSlangEntry('[shader("workgraph")] void w() { }', 'w'); } catch (e) { named = e; }
+  check(named instanceof compile.CompileError,
+    'naming that entry point explicitly is refused too', named && named.message);
+}
+
+{
+  // Comments are not code. Every one of these used to be read as a real entry point, and on
+  // the graphics road a phantom entry point becomes a `-entry` argument for a function that
+  // does not exist - refusing a file that compiles perfectly well.
+  const commentedOut = compile.chooseSlangEntry(
+    '// [shader("vertex")] float4 vsOld(float4 p) { return p; }\n' +
+    '[shader("fragment")] float4 psMain(float2 uv : UV) : SV_Target { return 0; }');
+  equal(commentedOut.entry, 'psMain', 'a commented-out shader is not an entry point');
+  check(commentedOut.producer === null,
+    'and is not picked as a producer', JSON.stringify(commentedOut.producer));
+
+  const blockComment = compile.chooseSlangEntry(
+    '/* [shader("compute")] [numthreads(1,1,1)] void old() { } */\n' +
+    '[shader("fragment")] float4 psMain() : SV_Target { return 0; }');
+  equal(blockComment.stage, 'fragment', 'a block comment hides one too');
+
+  // A comment BETWEEN the attribute and the function used to be scanned for the parameter
+  // list, so its own parenthesis named the entry point.
+  const withParen = compile.chooseSlangEntry(
+    '[shader("fragment")]\n// Shades one sample (per MSAA)\nfloat4 psMain() : SV_Target { return 0; }');
+  equal(withParen.entry, 'psMain', 'a comment carrying a parenthesis does not name the entry');
+
+  // And a comment carrying a semicolon made the entry vanish entirely, which routed a graphics
+  // file down the CUDA road - the 0xC0000005 slangc crash this gate exists to prevent.
+  const withSemi = compile.chooseSlangEntry(
+    '[shader("fragment")]\n// TODO: clamp; guard NaN\nfloat4 psMain() : SV_Target { return 0; }');
+  equal(withSemi.entry, 'psMain', 'nor does one carrying a semicolon erase it');
+  equal(withSemi.lineage, 'graphics', 'so the file still takes the road its stage needs');
+
+  // The raygeneration anchor is a real shader or it is nothing.
+  let ghost = null;
+  try {
+    compile.chooseSlangEntry(
+      '// [shader("raygeneration")] void rayGen() { }\n[shader("closesthit")] void h() { }', 'h');
+  } catch (e) { ghost = e; }
+  check(ghost instanceof compile.CompileError,
+    'a commented-out raygeneration shader does not satisfy the anchor', ghost && ghost.message);
+
+  // The attribute's own string literal has to survive the blanking.
+  const stringy = compile.chooseSlangEntry(
+    '[shader("compute")] [numthreads(64,1,1)] void csMain(uint3 t : SV_DispatchThreadID) { }');
+  equal(stringy.stage, 'compute', 'and an ordinary entry point still reads normally');
 }
 
 {

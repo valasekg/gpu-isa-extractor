@@ -110,9 +110,19 @@ async function resolveTools() {
     nvrtc: (settings.get('compile.nvrtcPath') || '').trim()
   };
 
+  // A tool that is not on PATH is an answer, not an exception. `spawn.text` REJECTS when the
+  // process cannot be started at all - ENOENT arrives on the child's `error` event, before any
+  // `close` - so a bare await here threw straight out of resolveTools and took the whole
+  // command with it: a .cubin that needs no tools failed at the nvcc probe, the `py` ->
+  // `python` fallback below never reached its second operand, and `doctor.diagnose` aborted on
+  // exactly the incomplete machines it exists to describe.
   const onPath = async (bare, args) => {
-    const probe = await compile.run(bare, args, { timeout: 15000 });
-    return probe.failed && probe.code === -1 ? null : bare;
+    try {
+      const probe = await compile.run(bare, args, { timeout: 15000 });
+      return probe.failed && probe.code === -1 ? null : bare;
+    } catch (e) {
+      return null;
+    }
   };
 
   const tools = {
@@ -140,17 +150,32 @@ const WHERE_FROM = {
     'Slang\'s own releases. Set `nvIsaExtractor.compile.slangcPath` to one.',
   ptxas: 'ptxas assembles PTX into a cubin. It ships with the CUDA Toolkit, next to ' +
     'nvdisasm. Set `nvIsaExtractor.compile.ptxasPath` to one.',
+  // Two roads need Python for different reasons, and only one of them has an escape hatch.
+  // Offering `backend: nvcc` to someone compiling a fragment shader sends them in a circle:
+  // the Vulkan harness and the SPIR-V reflector are Python scripts whatever the CUDA backend
+  // is set to.
   python: 'Python drives NVRTC, which is the only CUDA front end that needs no host C++ ' +
     'compiler. Install Python 3, or set `nvIsaExtractor.compile.backend` to `nvcc` if you ' +
-    'have MSVC.'
+    'have MSVC.',
+  pythonGraphics: 'Python runs the Vulkan harness and the SPIR-V reflector, which is how a ' +
+    'graphics or raytracing shader reaches the driver. Install Python 3, or set ' +
+    '`nvIsaExtractor.compile.pythonPath`. The `compile.backend` setting does not apply here - ' +
+    'it chooses between NVRTC and nvcc on the CUDA road, and this shader does not take it.'
 };
 
-function requireTools(tools, needed) {
+/**
+ * Refuse, naming what to install.
+ *
+ * `lineage` picks between two explanations of the same missing interpreter: see WHERE_FROM.
+ */
+function requireTools(tools, needed, lineage) {
   const missing = needed.filter(name => !tools[name]);
   if (!missing.length) return;
+  const why = name =>
+    WHERE_FROM[name === 'python' && lineage === 'graphics' ? 'pythonGraphics' : name];
   throw new compile.CompileError(
     `${missing.join(' and ')} could not be found.\n` +
-    missing.map(name => WHERE_FROM[name]).filter(Boolean).join('\n'));
+    missing.map(why).filter(Boolean).join('\n'));
 }
 
 // --------------------------------------------------------------------------- target
@@ -230,9 +255,28 @@ async function run(target, progress, token) {
   // in its extension. A fragment `.slang` never touches ptxas or NVRTC, so demanding them
   // would refuse to compile it on a machine that could - naming two tools it does not want.
   // The routing decision therefore has to happen before the tools are required, not after.
-  const chosen = language === 'slang'
+  let chosen = language === 'slang'
     ? compile.chooseSlangEntry(text, undefined)
     : { lineage: 'cuda' };
+
+  // A file holding entry points on both roads compiles one of them, and until now the other
+  // was unreachable: the banner said to "name one with the entry-point argument" and no
+  // command, setting or picker took one. Asking is the missing half of that sentence.
+  let entry;
+  if (chosen.alternatives && chosen.alternatives.length) {
+    const picked = await vscode.window.showQuickPick([
+      { label: chosen.entry || `${chosen.stage}`, description: `${chosen.stage} (default)`,
+        name: chosen.entry },
+      ...chosen.alternatives.map(a => ({ label: a.name, description: a.stage, name: a.name }))
+    ], { title: `${path.basename(file)} declares entry points on both roads`,
+      placeHolder: 'Which one should be compiled?' });
+    if (!picked) return;                              // dismissed: not an error
+    if (picked.name !== chosen.entry) {
+      entry = picked.name;
+      chosen = compile.chooseSlangEntry(text, entry);
+    }
+  }
+
   const needed = [];
   if (language === 'slang') needed.push('slangc');
   if (chosen.lineage === 'graphics') {
@@ -241,7 +285,7 @@ async function run(target, progress, token) {
     if (language !== 'cubin') needed.push('ptxas');
     if ((language === 'slang' || language === 'cuda') && backend !== 'nvcc') needed.push('python');
   }
-  requireTools(tools, needed);
+  requireTools(tools, needed, chosen.lineage);
 
   // The graphics lineage compiles on THIS machine's driver, so its bytes are this device's
   // architecture by construction and the `arch` setting must not speak for them. That setting
@@ -272,7 +316,7 @@ async function run(target, progress, token) {
       await fs.promises.writeFile(source, text, 'utf8');
     }
     await build({ file, source, tools, flags, archInfo, outDir, backend, directive,
-      configured, progress, token, lineage: chosen.lineage,
+      configured, progress, token, lineage: chosen.lineage, entry,
       controls: compile.pipelineControls(flags.vk, path.dirname(file)) });
   } finally {
     inFlight.delete(tag);
@@ -281,7 +325,7 @@ async function run(target, progress, token) {
 
 /** The compile itself, once the scratch directory is claimed. */
 async function build({ file, source, tools, flags, archInfo, outDir, backend, directive,
-  configured, progress, token, lineage, controls }) {
+  configured, progress, token, lineage, controls, entry: named }) {
   progress.report({ message: lineage === 'graphics' ? 'asking the driver' : 'compiling' });
   const started = Date.now();
   const built = await compile.compile(tools, source, {
@@ -294,7 +338,11 @@ async function build({ file, source, tools, flags, archInfo, outDir, backend, di
     // to resolve against. `source` is a copy in the scratch directory when the buffer is
     // dirty, and every sibling of the file is invisible from there.
     home: path.dirname(file),
-    backend: backend === 'auto' ? undefined : backend
+    backend: backend === 'auto' ? undefined : backend,
+    // Set only when the user picked something other than the default, so a file with one road
+    // is compiled exactly as it always was - `entry: undefined` is what lets slangc discover a
+    // lone compute kernel by itself.
+    entry: named
   });
   if (token.isCancellationRequested) throw new Error('cancelled');
   log(`compiled ${path.basename(file)} in ${Date.now() - started} ms: ` +

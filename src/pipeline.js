@@ -45,9 +45,16 @@ function classify(filePath) {
 
 let cachedArch = null;
 
-function run(exe, args, { timeout = 15000 } = {}) {
+function run(exe, args, { timeout = 15000, scrub } = {}) {
   return new Promise(resolve => {
-    cp.execFile(exe, args, { timeout, windowsHide: true }, (error, stdout, stderr) => {
+    cp.execFile(exe, args, {
+      timeout, windowsHide: true,
+      // `scrub` exists for the Vulkan probe. Diagnosing the graphics road in an environment
+      // the graphics road never uses reports the wrong verdict in both directions: an implicit
+      // overlay layer can hang the probe on a machine where compiling works, and an inherited
+      // ICD override can make it name a driver the compile would never load.
+      env: scrub ? spawn.environment(null, scrub) : undefined
+    }, (error, stdout, stderr) => {
       resolve({ error, stdout: stdout || '', stderr: stderr || '' });
     });
   });
@@ -118,10 +125,19 @@ async function resolveArch({ probed = false } = {}) {
   const probe = await run('nvidia-smi', ['--query-gpu=compute_cap', '--format=csv,noheader']);
   const caps = probe.error ? [] : probe.stdout.split('\n').map(s => s.trim()).filter(Boolean);
   if (!caps.length) {
-    throw new Error(
-      'Could not determine the GPU architecture: nvidia-smi is not available or reported ' +
-      'nothing. Set `nvIsaExtractor.arch` to the compute capability of the GPU that compiled ' +
-      'these shaders, for example SM86.');
+    // Two different failures, and telling them apart is the whole point. In probed mode the
+    // `arch` setting is deliberately ignored, so advising it here sent the user round a loop
+    // they could not leave: set it, retry, get the same message, forever. The bytes came from
+    // THIS machine's driver, so the only real answer is to make the probe work.
+    throw new Error(probed
+      ? 'Could not determine the GPU architecture: nvidia-smi is not available or reported ' +
+        'nothing. These bytes were just produced by this machine\'s driver, so the ' +
+        '`nvIsaExtractor.arch` setting cannot answer for them and is ignored here - put ' +
+        'nvidia-smi on PATH (it installs beside the display driver) so the architecture can ' +
+        'be read from the hardware that compiled them.'
+      : 'Could not determine the GPU architecture: nvidia-smi is not available or reported ' +
+        'nothing. Set `nvIsaExtractor.arch` to the compute capability of the GPU that ' +
+        'compiled these shaders, for example SM86.');
   }
 
   const [major, minor] = caps[0].split('.');
@@ -272,7 +288,10 @@ async function disassemble(source, chosen, { token, log, scratchDir } = {}) {
   const sweepResult = source;
   const object = nvcache.carveAt(sweepResult.buf, chosen.offset, {
     source: sweepResult.source,
-    backend: sweepResult.backend
+    backend: sweepResult.backend,
+    // A raytracing frame holds several entry points at one offset, so the name is what picks
+    // the one the user clicked. Ignored for every other container, which holds exactly one.
+    name: chosen.name || null
   });
   if (!object) {
     throw new Error(

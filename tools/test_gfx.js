@@ -25,6 +25,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const nvcache = require(path.join(ROOT, 'src', 'nvcache.js'));
+const spawn = require(path.join(ROOT, 'src', 'spawn.js'));
 
 const VK_COMPILE = path.join(ROOT, 'src', 'vk_compile.py');
 const REFLECT = path.join(ROOT, 'src', 'spirv_reflect.py');
@@ -47,10 +48,18 @@ function check(condition, what, detail = '') {
 function skip(what) { skipped++; console.log(`  skip  ${what}`); }
 function section(title) { console.log(`\n${title}`); }
 
+/**
+ * Run a tool the way the extension runs it.
+ *
+ * `spawn.environment` with the same scrub the compile road applies is the point: without it
+ * these measurements were taken under whatever implicit Vulkan layers this machine happens to
+ * have - Steam's overlay, RenderDoc, Nsight - while the shipped path forbids exactly those.
+ * Digests pinned under conditions production does not use are not evidence about production.
+ */
 function run(exe, args, env) {
   const r = cp.spawnSync(exe, args, {
     encoding: 'utf8', maxBuffer: 1 << 26,
-    env: env ? { ...process.env, ...env } : process.env
+    env: spawn.environment(env || {}, spawn.VULKAN_ENV)
   });
   return {
     code: r.status,
@@ -95,9 +104,16 @@ if (!PY) {
     for (const name of Object.keys(frozen)) {
       const got = mine[name];
       if (!got) { mismatches++; console.log(`        missing from ctypes: ${name}`); continue; }
-      if (got.sizeof !== frozen[name].sizeof) {
+      // Offsets must match exactly; size must be at least the real one. Two structs are
+      // declared as a prefix plus a `_tail` reserve on purpose - only their leading fields are
+      // ever read, but the driver writes the whole thing, so the allocation has to cover a
+      // struct this file does not describe field by field. Over-allocating is the safe
+      // direction and under-allocating is the buffer overrun, so the rule is `>=` rather than
+      // an exemption list that would stop checking them at all.
+      if (got.sizeof < frozen[name].sizeof) {
         mismatches++;
-        console.log(`        ${name}: sizeof ctypes ${got.sizeof}, C ${frozen[name].sizeof}`);
+        console.log(`        ${name}: ctypes allocates ${got.sizeof} for a struct C makes ` +
+          `${frozen[name].sizeof} - the driver would write past the end`);
       }
       for (const [field, offset] of Object.entries(frozen[name].fields)) {
         fields++;
@@ -161,13 +177,87 @@ const KNOWN = {
 };
 const WRONG = { superset: '0a206c89ea37', dynamic: 'de06f203bf3b' };
 
+/**
+ * The device these digests were recorded on.
+ *
+ * A pinned digest is a fact about one compiler compiling for one architecture. On any other
+ * NVIDIA GPU the ISA itself differs, so every pin below would FAIL - reporting "the ctypes port
+ * drifted" on a machine where nothing had drifted, and drowning the checks that ARE
+ * machine-independent (a generated hull equals the real one, dropping the any-hit shader
+ * changes nothing else - those compare two runs on whatever machine is running them).
+ *
+ * So the pins are gated and SKIPPED elsewhere, and the gate names what to do: re-record them
+ * here, the way `tools/vk_abi_freeze.py` re-records the struct ABI.
+ */
+const PINNED_DEVICE = /NVIDIA RTX A4500/i;
+let pinsApply = false;
+
+/** Assert a recorded digest, or skip where this machine cannot be held to it. */
+function pinned(actual, expected, what, detail) {
+  if (!pinsApply) return skip(`${what} (recorded on an RTX A4500; this is another device)`);
+  return check(actual === expected, what, detail || `got ${actual}, want ${expected}`);
+}
+
 async function pipeline(tag, request) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvisa-gfx-'));
+  // `finally`, not a call on each exit path. There were three exits and two of them removed
+  // the directory; the third was a throw from the carve - a truncated .bin, a file the driver
+  // still holds - which leaked the directory AND took the whole suite down with a stack trace
+  // instead of one failed check.
+  try {
+    const cache = path.join(dir, 'cache');
+    fs.mkdirSync(cache);
+    const file = path.join(dir, 'request.json');
+    fs.writeFileSync(file, JSON.stringify(request), 'utf8');
+
+    const r = run(PY, [VK_COMPILE, file], {
+      __GL_SHADER_DISK_CACHE_PATH: cache,
+      __GL_SHADER_DISK_CACHE: '1',
+      __GL_SHADER_DISK_CACHE_SKIP_CLEANUP: '1'
+    });
+    if (r.code !== 0) {
+      return { error: (r.stderr || r.stdout).trim().split('\n')[0], code: r.code };
+    }
+
+    const bin = findBin(cache);
+    if (!bin) return { error: 'the driver wrote nothing to the isolated cache' };
+
+    let toc = null;
+    try { toc = fs.readFileSync(bin.slice(0, -4) + '.toc'); } catch (e) { toc = null; }
+    const { objects } = await nvcache.enumerateObjects(fs.readFileSync(bin), {
+      source: bin, backend: 'vk', toc, keepMicrocode: true, minCode: 0
+    });
+    // One stage does not always mean one object. A raytracing shader that calls TraceRay is
+    // split at the trace point into separately scheduled pieces, so its stage arrives carrying
+    // two of them; the digests are joined in the order the container lists them, which keeps a
+    // stage a single string to pin while still showing that it came apart.
+    const parts = {};
+    for (const o of objects) {
+      const stage = (o.metadata && o.metadata.stage) || `code${o.metadata && o.metadata.stageCode}`;
+      (parts[stage] = parts[stage] || []).push(o.sha1.slice(0, 12));
+    }
+    const out = {};
+    for (const [stage, digests] of Object.entries(parts)) out[stage] = digests.join('+');
+    return out;
+  } catch (e) {
+    return { error: `carving what the driver wrote failed: ${e.message}` };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Like `pipeline`, but keeping the objects and the cache file rather than digests.
+ *
+ * The browsing path reads these records; the compile path rebuilds its own from the microcode,
+ * so it cannot speak for what the tree and the re-carve actually receive.
+ */
+async function carve(request) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvisa-carve-'));
   const cache = path.join(dir, 'cache');
   fs.mkdirSync(cache);
   const file = path.join(dir, 'request.json');
   fs.writeFileSync(file, JSON.stringify(request), 'utf8');
-
   const r = run(PY, [VK_COMPILE, file], {
     __GL_SHADER_DISK_CACHE_PATH: cache,
     __GL_SHADER_DISK_CACHE: '1',
@@ -175,33 +265,28 @@ async function pipeline(tag, request) {
   });
   if (r.code !== 0) {
     fs.rmSync(dir, { recursive: true, force: true });
-    return { error: (r.stderr || r.stdout).trim().split('\n')[0], code: r.code };
+    return { error: (r.stderr || r.stdout).trim().split('\n')[0] };
   }
-
   const bin = findBin(cache);
   if (!bin) {
     fs.rmSync(dir, { recursive: true, force: true });
     return { error: 'the driver wrote nothing to the isolated cache' };
   }
+  // The bytes come back, not the path: the caller re-carves out of the buffer, so the
+  // directory can go now rather than outliving the run.
   let toc = null;
   try { toc = fs.readFileSync(bin.slice(0, -4) + '.toc'); } catch (e) { toc = null; }
-  const { objects } = await nvcache.enumerateObjects(fs.readFileSync(bin), {
-    source: bin, backend: 'vk', toc, keepMicrocode: true, minCode: 0
-  });
-  // One stage does not always mean one object. A raytracing shader that calls TraceRay is
-  // split at the trace point into separately scheduled pieces, so its stage arrives carrying
-  // two of them; the digests are joined in the order the container lists them, which keeps a
-  // stage a single string to pin while still showing that it came apart.
-  const parts = {};
-  for (const o of objects) {
-    const stage = (o.metadata && o.metadata.stage) || `code${o.metadata && o.metadata.stageCode}`;
-    (parts[stage] = parts[stage] || [])
-      .push(crypto.createHash('sha1').update(o.microcode).digest('hex').slice(0, 12));
+  const buf = fs.readFileSync(bin);
+  try {
+    const { objects } = await nvcache.enumerateObjects(buf, {
+      source: bin, backend: 'vk', toc, keepMicrocode: false, minCode: 0
+    });
+    return { objects, buf, bin };
+  } catch (e) {
+    return { error: `carving what the driver wrote failed: ${e.message}` };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-  const out = {};
-  for (const [stage, digests] of Object.entries(parts)) out[stage] = digests.join('+');
-  fs.rmSync(dir, { recursive: true, force: true });
-  return out;
 }
 
 function findBin(dir) {
@@ -231,6 +316,13 @@ function findBin(dir) {
     check(/vendor 0x10DE/i.test(probe.stdout), 'the probe names an NVIDIA device',
       probe.stdout.trim().split('\n').join(' | '));
 
+    // Whether the recorded digests speak for this machine at all.
+    pinsApply = PINNED_DEVICE.test(probe.stdout);
+    if (!pinsApply) {
+      console.log('  note  digests were recorded on an RTX A4500; the pins below are skipped ' +
+        'and the relational checks still run');
+    }
+
     for (const [tag, want] of Object.entries(KNOWN)) {
       const got = await pipeline(tag, {
         vs: path.join(FIXTURES, want.vs),
@@ -239,10 +331,10 @@ function findBin(dir) {
       });
       if (!check(!got.error, `${tag}: the pipeline is created and the driver writes a cache`,
         got.error)) continue;
-      check(got.pixel === want.pixel,
+      pinned(got.pixel, want.pixel,
         `${tag}: the fragment microcode is what the C++ harness produced`,
         `got ${got.pixel}, want ${want.pixel}`);
-      check(got.vertex === want.vertex,
+      pinned(got.vertex, want.vertex,
         `${tag}: the vertex microcode is what the C++ harness produced`,
         `got ${got.vertex}, want ${want.vertex}`);
     }
@@ -253,7 +345,8 @@ function findBin(dir) {
       layout: { bindings: [[0, 0, 6, 1], [0, 1, 2, 1], [0, 2, 0, 1], [0, 3, 7, 1],
         [0, 9, 6, 1], [0, 10, 7, 1], [0, 11, 2, 4]] }
     });
-    check(!superset.error && superset.pixel === WRONG.superset,
+    check(!superset.error, 'a superset layout still builds a pipeline', superset.error);
+    pinned(superset.pixel, WRONG.superset,
       'a superset layout still produces the superset code, so the layout is load-bearing',
       superset.error || `got ${superset.pixel}, want ${WRONG.superset}`);
 
@@ -307,7 +400,7 @@ function findBin(dir) {
         layout: { bindings: [] }, state: { topology: 'triangle_list' }
       });
       if (check(!paired.error, 'a vertex + geometry pipeline is created', paired.error)) {
-        check(paired.geometry === 'ce4a65b17741',
+        pinned(paired.geometry, 'ce4a65b17741',
           'the geometry microcode is what was recorded',
           `got ${paired.geometry}, want ce4a65b17741`);
         check(!!paired.vertex, 'and the vertex stage is carved beside it, told apart by code',
@@ -353,6 +446,29 @@ function findBin(dir) {
   } else if (!fs.existsSync(hs)) {
     skip('no tessellation fixtures');
   } else {
+    // The generated half has to be VALID for every domain, not just the one the fixtures use.
+    // gl_TessLevelOuter is float[4] and gl_TessLevelInner is float[2] in SPIR-V whatever the
+    // domain is, so a triangle domain's `float edges[3]` became an OpStore of the wrong-sized
+    // array - rejected by spirv-val, built anyway by this driver, and invisible because the
+    // fixtures are quads whose 4 and 2 already matched.
+    const genCheck = run(PY, [REFLECT, ds, '--counterpart',
+      path.join(os.tmpdir(), 'nvisa-gen-hull.slang')]);
+    if (check(genCheck.code === 0, 'a counterpart hull is generated', genCheck.stderr)) {
+      const text = fs.readFileSync(path.join(os.tmpdir(), 'nvisa-gen-hull.slang'), 'utf8');
+      check(/float edges\[4\] : SV_TessFactor;/.test(text),
+        'with its outer factors sized to the builtin, not to the domain');
+      check(/float inside\[2\] : SV_InsideTessFactor;/.test(text),
+        'and its inner factors likewise');
+      check(/c\.edges\[3\] = /.test(text) && /c\.inside\[1\] = /.test(text),
+        'and every element written, so none of the array is left undefined');
+      // `outputtopology` names a WINDING in Slang, not an output primitive - the spelling that
+      // looks right for isolines, `line`, lowers to a mesh-shader execution mode and makes the
+      // module invalid. Measured; see the comment on the emission.
+      check(/\[outputtopology\("triangle_(cw|ccw)"\)\]/.test(text),
+        'and a winding spelling even where the domain draws no triangles');
+      fs.rmSync(path.join(os.tmpdir(), 'nvisa-gen-hull.slang'), { force: true });
+    }
+
     // A hull shader carries the whole declaration - domain, spacing, winding, how many control
     // points it emits. A domain shader carries only the domain, because in HLSL the rest is
     // the hull shader's to state. That asymmetry is why the two synthesis directions differ.
@@ -384,9 +500,9 @@ function findBin(dir) {
       };
       const real = await pipeline('tess', trio);
       if (check(!real.error, 'a vertex + hull + domain pipeline is created', real.error)) {
-        check(real.hull === '618d558286e5', 'the hull microcode is what was recorded',
+        pinned(real.hull, '618d558286e5', 'the hull microcode is what was recorded',
           `got ${real.hull}, want 618d558286e5`);
-        check(real.domain === '22d5ea41c851', 'the domain microcode is what was recorded',
+        pinned(real.domain, '22d5ea41c851', 'the domain microcode is what was recorded',
           `got ${real.domain}, want 22d5ea41c851`);
       }
 
@@ -445,7 +561,7 @@ function findBin(dir) {
     const alone = await pipeline('mesh', { ms, fs: null, layout: { bindings: [] } });
     if (check(!alone.error, 'a mesh shader alone makes a pipeline', alone.error)) {
       // Stage code 9, established by construction: this pipeline holds exactly one module.
-      check(alone.mesh === '79fc9202f25d', 'the mesh microcode is what was recorded',
+      pinned(alone.mesh, '79fc9202f25d', 'the mesh microcode is what was recorded',
         `got ${alone.mesh}, want 79fc9202f25d`);
     }
 
@@ -509,9 +625,7 @@ function findBin(dir) {
       // the only thing that said otherwise was the layer.
       check(!got.error, 'a ray-query pipeline is valid once its capabilities are enabled',
         got.error);
-      check(!got.error && got.pixel === 'b0d9cfaca1c4',
-        'and the fragment microcode is what was recorded',
-        `got ${got.pixel}, want b0d9cfaca1c4`);
+      pinned(got.pixel, 'b0d9cfaca1c4', 'and the fragment microcode is what was recorded');
     }
   }
 
@@ -570,10 +684,47 @@ function findBin(dir) {
           'the raygeneration shader comes apart at its TraceRay call', full.raygeneration);
         check((full.closesthit || '').includes('+'),
           'and the closest-hit shader at its CallShader call', full.closesthit);
-        check(full.raygeneration === '9eeec1ef5ed0+4f255e6a3d6c' &&
-              full.miss === '7f95ed9babd6' && full.intersection === 'c7a82af21201',
-          'and the microcode is what was recorded',
-          `${full.raygeneration} / ${full.miss} / ${full.intersection}`);
+        pinned(`${full.raygeneration} ${full.miss} ${full.intersection}`,
+          '9eeec1ef5ed0+4f255e6a3d6c 7f95ed9babd6 c7a82af21201',
+          'and the microcode is what was recorded');
+      }
+
+      // What the BROWSER needs from these objects, which is not what the compile road needs.
+      // The compile road rebuilds every record itself, so it never noticed that raytracing
+      // objects were missing the fields the tree reads - and the tree dereferences them
+      // without asking, so one raytracing payload in a cache broke the whole view.
+      const carved = await carve({
+        rgen: RGEN, miss: MISS, chit: CHIT, ahit: AHIT, sect: SECT, call: CALL,
+        layout: rtLayout
+      });
+      if (check(!carved.error, 'a raytracing cache enumerates', carved.error)) {
+        check(carved.objects.every(o => Number.isInteger(o.instructions) && o.instructions > 0),
+          'every raytracing object carries an instruction count',
+          JSON.stringify(carved.objects.map(o => [o.name, o.instructions])));
+        check(carved.objects.every(o => o.sha1 && o.metadata && o.metadata.stage),
+          'and its identity and stage');
+
+        // The driver compiles each shader twice and writes both copies; one entry point means
+        // one object. Keyed per object rather than per file - when this was decided per file,
+        // a single raytracing payload put every NVuc object in a mixed cache through the same
+        // rule, and unnamed ones (all sharing the key `null`) silently collapsed into one.
+        const names = carved.objects.map(o => o.name);
+        check(new Set(names).size === names.length,
+          'and each entry point appears exactly once', names.join(' '));
+
+        // Re-carving is what the browser does when the object is clicked, having dropped the
+        // microcode. Several raytracing entry points share one frame offset, so the offset
+        // alone cannot pick one - it used to return null and the user was told, wrongly, that
+        // the cache file had changed underneath them.
+        let recarved = 0;
+        for (const o of carved.objects) {
+          const again = nvcache.carveAt(carved.buf, o.offset,
+            { source: carved.bin, backend: 'vk', name: o.name });
+          if (again && again.name === o.name && again.sha1 === o.sha1) recarved++;
+        }
+        check(recarved === carved.objects.length,
+          'and can be carved again one entry point at a time',
+          `${recarved} of ${carved.objects.length}`);
       }
 
       // What moves what, measured rather than assumed - the same question section 3 asked of

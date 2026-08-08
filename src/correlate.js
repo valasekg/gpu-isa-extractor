@@ -361,6 +361,13 @@ function readMarkers(text) {
   const lines = text.split('\n');
   let current = null;
   for (let i = 0; i < lines.length; i++) {
+    // A banner line is commentary about the listing, not a line of it. The banner quotes
+    // instruction addresses when it has something to say about them - the reuse-bit tripwire
+    // prints `/*0120*/ decoded 2 reuse bit(s), printed 1` - and those quotes matched the
+    // address scan below, so the banner's own rows were indexed as if they were code: moving
+    // the cursor scrolled the listing back up to the header.
+    if (/^\s*\/\//.test(lines[i]) && !MARKER_RE.test(lines[i])) continue;
+
     const marker = MARKER_RE.exec(lines[i]);
     if (marker) {
       current = { label: marker[1], line: Number(marker[2]) };

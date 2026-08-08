@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Freeze the Vulkan struct ABI, as a C compiler computes it, for the test suite to check.
 
-`src/vk_compile.py` describes about two dozen Vulkan structs in ctypes. If any one of them has
+`src/vk_compile.py` describes several dozen Vulkan structs in ctypes. If any one of them has
 a field at the wrong offset, the driver reads a plausible value from the wrong place and the
 result is a shader that compiles to the wrong thing rather than an error - so the layouts have
 to be checked against an authority, and the authority is the real headers.

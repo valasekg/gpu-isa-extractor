@@ -58,7 +58,11 @@ DEC_BUILTIN = 11
 DEC_LOCATION = 30
 DEC_BINDING = 33
 DEC_DESCRIPTOR_SET = 34
+DEC_ARRAY_STRIDE = 6
+DEC_MATRIX_STRIDE = 7
+DEC_OFFSET = 35
 OP_DECORATE = 71
+OP_MEMBER_DECORATE = 72
 
 SC_UNIFORM_CONSTANT = 0
 SC_INPUT = 1
@@ -161,6 +165,7 @@ class Module(object):
         self.constants = {}                      # id -> value
         self.names = {}                          # id -> debug name
         self.decorations = {}                    # id -> {decoration: [operands]}
+        self.member_decorations = {}             # struct id -> {member: {decoration: [ops]}}
         self.variables = []                      # (result_type_id, result_id, storage_class)
         self.entry_points = []                   # (stage, name)
         self.execution_modes = []                # (mode, [operands]), in declaration order
@@ -183,6 +188,9 @@ class Module(object):
                 self.execution_modes.append((w[1], list(w[2:])))
             elif op == OP_DECORATE and len(w) >= 2:
                 self.decorations.setdefault(w[0], {})[w[1]] = list(w[2:])
+            elif op == OP_MEMBER_DECORATE and len(w) >= 3:
+                self.member_decorations.setdefault(w[0], {}) \
+                    .setdefault(w[1], {})[w[2]] = list(w[3:])
             elif op == OP_CONSTANT and len(w) >= 3:
                 self.constants[w[1]] = w[2]
             elif op == OP_VARIABLE and len(w) >= 3:
@@ -309,6 +317,74 @@ class Module(object):
     def push_constant_blocks(self):
         return [self.names.get(rid, "") for tid, rid, sc in self.variables
                 if sc == SC_PUSH_CONSTANT]
+
+    def type_bytes(self, type_id):
+        """How many bytes a type occupies, or None where this cannot say.
+
+        None is a real answer and the caller must treat it as one. A push-constant range that
+        is too small is not a smaller range - it is an invalid pipeline, and on this driver an
+        invalid pipeline compiles into microcode that looks exactly like the right answer. So
+        anything not understood here refuses rather than estimating.
+        """
+        entry = self.types.get(type_id)
+        if not entry:
+            return None
+        op, ops = entry
+
+        if op in (OP_TYPE_INT, OP_TYPE_FLOAT) and ops:
+            return ops[0] // 8
+        if op == OP_TYPE_BOOL:
+            return 4
+        if op == OP_TYPE_VECTOR and len(ops) >= 2:
+            inner = self.type_bytes(ops[0])
+            return None if inner is None else inner * ops[1]
+        if op == OP_TYPE_MATRIX and len(ops) >= 2:
+            # The declared column stride wins where there is one: a float3x3 is laid out on
+            # 16-byte columns, so counting the columns' own sizes under-reports it by 12.
+            stride = self.decorations.get(type_id, {}).get(DEC_MATRIX_STRIDE)
+            column = stride[0] if stride else self.type_bytes(ops[0])
+            return None if column is None else column * ops[1]
+        if op == OP_TYPE_ARRAY and len(ops) >= 2:
+            if ops[1] not in self.constants:
+                return None                      # a specialisation constant; not a fixed size
+            stride = self.decorations.get(type_id, {}).get(DEC_ARRAY_STRIDE)
+            element = stride[0] if stride else self.type_bytes(ops[0])
+            return None if element is None else element * self.constants[ops[1]]
+        if op == OP_TYPE_STRUCT:
+            # Members are placed by explicit Offset decorations, so the struct ends where its
+            # last member ends - which is not necessarily the one declared last.
+            members = self.member_decorations.get(type_id, {})
+            end = 0
+            for index, member_type in enumerate(ops):
+                offset = members.get(index, {}).get(DEC_OFFSET)
+                size = self.type_bytes(member_type)
+                if offset is None or size is None:
+                    return None
+                end = max(end, offset[0] + size)
+            return end
+        return None
+
+    def push_constant_bytes(self):
+        """The size of the push-constant range this module needs, or None if it needs none.
+
+        Raises where a block is present but its size cannot be computed, because the two must
+        not look alike: "no push constants" and "push constants of an unknown size" lead to
+        opposite decisions, and only one of them can be guessed at safely.
+        """
+        total = None
+        for tid, rid, sc in self.variables:
+            if sc != SC_PUSH_CONSTANT:
+                continue
+            pointee = self.pointee(tid, rid)
+            size = self.type_bytes(pointee) if pointee is not None else None
+            if size is None:
+                raise ReflectError(
+                    "%s is a push-constant block whose size cannot be read out of this module. "
+                    "State it with `-Xvk push=<bytes>`: a pipeline layout without the range "
+                    "the shader uses is invalid, and this driver compiles it anyway."
+                    % (self.names.get(rid, "a push-constant block")))
+            total = size if total is None else max(total, size)
+        return total
 
     # ---------------------------------------------------------------- stage interface
 
@@ -510,7 +586,7 @@ def parse_type(spelling):
     return None
 
 
-def producer(inputs, extra=0, mistype=False):
+def producer(inputs, extra=0, mistype=False, consumer="fragment"):
     """Slang source for a vertex shader whose outputs match `inputs` exactly.
 
     A Vulkan graphics pipeline cannot be created from a fragment stage alone, so compiling a
@@ -532,8 +608,9 @@ def producer(inputs, extra=0, mistype=False):
         parsed = parse_type(v["type"])
         if not parsed:
             raise ReflectError(
-                "location %d is %s, which a generated producer cannot declare and fill; this "
-                "fragment shader needs a producer written by hand" % (v["location"], v["type"]))
+                "location %d is %s, which a generated producer cannot declare and fill; "
+                "this %s shader needs a producer written by hand"
+                % (v["location"], v["type"], consumer))
         base, components = parsed
         declared = v["type"]
         if mistype:
@@ -610,9 +687,14 @@ def tess_counterpart(stage, tess, varyings, patch_points):
                       % (v["location"], v["type"], i, i))
         assigns.append((i, base, components))
 
-    const_fields = ["    float edges[%d] : SV_TessFactor;" % outer]
-    if inner:
-        const_fields.append("    float inside[%d] : SV_InsideTessFactor;" % inner)
+    # Declared at the size of the BUILTIN, not of the domain. gl_TessLevelOuter is float[4] and
+    # gl_TessLevelInner is float[2] in every SPIR-V module whatever the domain is, so a triangle
+    # domain's `float edges[3]` compiled into an OpStore of a float[3] into a float[4] - which
+    # spirv-val rejects (VUID-VkShaderModuleCreateInfo-pCode-08737) and which this driver builds
+    # anyway. Only the quad case, whose 4 and 2 already match, was ever valid, and the fixtures
+    # are quads, which is why nothing caught it.
+    const_fields = ["    float edges[4] : SV_TessFactor;",
+                    "    float inside[2] : SV_InsideTessFactor;"]
 
     common = [
         "// Generated: the other half of a tessellation pair. Hull and domain shaders cannot",
@@ -634,14 +716,24 @@ def tess_counterpart(stage, tess, varyings, patch_points):
             "PatchConstants hsConst(InputPatch<Patch, %d> patch)" % patch_points,
             "{",
             "    PatchConstants c;",
-        ] + ["    c.edges[%d] = 2.0f;" % k for k in range(outer)] \
-          + (["    c.inside[%d] = 2.0f;" % k for k in range(inner)] if inner else []) + [
+        ] + ["    c.edges[%d] = %s;" % (k, "2.0f" if k < outer else "0.0f")
+             for k in range(4)] \
+          + ["    c.inside[%d] = %s;" % (k, "2.0f" if k < inner else "0.0f")
+             for k in range(2)] + [
             "    return c;",
             "}",
             "",
             '[shader("hull")]',
             '[domain("%s")]' % domain,
             '[partitioning("%s")]' % (tess["spacing"] or "integer").replace("equal", "integer"),
+            # `outputtopology` names a WINDING here, not an output primitive: Slang lowers
+            # `triangle_cw` to `OpExecutionMode VertexOrderCw`, which is what a tessellator
+            # takes. So it stays a triangle spelling even for an isoline domain, where winding
+            # is meaningless and simply ignored - measured, because the obvious-looking
+            # `outputtopology("line")` is worse than useless: Slang 2024.13 lowers it to
+            # `OutputTrianglesEXT`, a MESH SHADER mode, and spirv-val then rejects the module
+            # for declaring a capability it does not have. An isoline hull with this spelling
+            # validates clean.
             '[outputtopology("%s")]' % ("triangle_cw" if tess["winding"] != "ccw"
                                         else "triangle_ccw"),
             "[outputcontrolpoints(%d)]" % (tess["outputVertices"] or patch_points),
@@ -710,6 +802,9 @@ def reflect(path):
         "inputs": module.interface(SC_INPUT),
         "outputs": module.interface(SC_OUTPUT),
         "pushConstants": module.push_constant_blocks(),
+        # The SIZE, not just the names. A pipeline layout that omits the range a module
+        # statically uses is invalid, and nothing downstream of here can tell.
+        "pushBytes": module.push_constant_bytes(),
     }
     if any(s == "geometry" for s, _ in module.entry_points):
         name, topology, vertices = module.input_primitive()
@@ -815,12 +910,21 @@ def main(argv):
             with open(paths[0], "rb") as handle:
                 module = Module(handle.read())
             stage = module.entry_points[0][0] if module.entry_points else "fragment"
-            # A geometry shader reads its inputs as per-vertex arrays; the producer emits one
-            # element of each, so the array dimension comes off before matching.
+            # Every stage that reads a PRIMITIVE reads its inputs as arrays indexed by vertex
+            # or control point, and the producer emits one element of each, so the array
+            # dimension comes off before matching. Only geometry was listed here, so a
+            # tessellation-only file - a hull and domain pair with no vertex shader to feed
+            # them - handed `float3[4]` to a synthesiser that can only declare scalars and
+            # vectors, and refused a file that compiles perfectly well.
+            per_primitive = ("geometry", "tessellation_control", "tessellation_evaluation")
             inputs = (module.per_vertex_inputs() if stage == "geometry"
+                      else module.per_control_point_inputs() if stage in per_primitive
                       else module.interface(SC_INPUT))
             source = producer(inputs, extra=int(os.environ.get("NVISA_PRODUCER_EXTRA", 0) or 0),
-                              mistype="--mistype" in argv)
+                              mistype="--mistype" in argv,
+                              # Named, so a refusal describes the shader it was handed rather
+                              # than calling every stage a fragment shader.
+                              consumer=stage)
         except ReflectError as e:
             sys.stderr.write("producer synthesis refused: %s\n" % e)
             return 1
@@ -837,7 +941,11 @@ def main(argv):
 
     if as_json:
         merged = merge_descriptors(reflections)
-        print(json.dumps({"modules": reflections, "layout": merged}, indent=2))
+        # The range every module in the set needs: one layout serves the whole pipeline,
+        # so the largest wins rather than the last.
+        push = [r["pushBytes"] for r in reflections if r["pushBytes"]]
+        print(json.dumps({"modules": reflections, "layout": merged,
+                          "pushBytes": max(push) if push else 0}, indent=2))
         return 0
 
     for path, r in zip(paths, reflections):
@@ -853,7 +961,7 @@ def main(argv):
         for v in r["outputs"]:
             print("  out        location %-2d %-10s %s" % (v["location"], v["type"], v["name"]))
         for p in r["pushConstants"]:
-            print("  push       %s" % p)
+            print("  push       %s (%s bytes)" % (p, r["pushBytes"]))
 
     if len(paths) > 1:
         print("\nmerged layout:")

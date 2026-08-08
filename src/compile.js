@@ -260,8 +260,16 @@ function pipelineControls(flags, home) {
       // set:binding:type[:count], the type being VkDescriptorType's own numbering - the same
       // integers a reflector emits, so a value read out of one tool can be pasted into the
       // other without a translation table to keep in step.
-      const parts = value.split(':').map(Number);
-      if (parts.length < 3 || parts.length > 4 || parts.some(n => !Number.isInteger(n) || n < 0)) {
+      // Split first, and check the TEXT of each field before converting. `map(Number)` alone
+      // turns an empty field into 0, which is a valid set, a valid binding, and - worse -
+      // VK_DESCRIPTOR_TYPE_SAMPLER, so `bind=0:1:` (a directive stopped mid-edit) was accepted
+      // as a sampler and replaced the whole reflected layout with it. A wrong layout is the one
+      // mistake nothing downstream can see: the driver builds it and the listing looks fine.
+      const fields = value.split(':');
+      const parts = fields.map(Number);
+      if (fields.length < 3 || fields.length > 4 ||
+          fields.some(f => !/^\d+$/.test(f.trim())) ||
+          parts.some(n => !Number.isInteger(n) || n < 0)) {
         errors.push(`-Xvk bind=${value}: expected set:binding:type[:count], all non-negative`);
         continue;
       }
@@ -291,11 +299,14 @@ function pipelineControls(flags, home) {
     }
   }
 
+  // Two independent overrides, not one. They used to be a single object built whenever EITHER
+  // was given, and because a stated layout replaces the reflected one wholesale, `push=16`
+  // alone silently compiled the shader against zero descriptors. `bind` speaks for the
+  // bindings and `push` for the range; whichever is not stated is still reflected.
   return {
     state,
-    layout: bindings.length || push !== null
-      ? { bindings, pushBytes: push || 0 }
-      : null,
+    layout: bindings.length ? bindings : null,
+    pushBytes: push,
     producer,
     errors
   };
@@ -487,17 +498,77 @@ const lineageOf = stage => (STAGES[stage] || {}).lineage;
  * interpreting the wreckage afterwards would turn "this shader is not a compute shader" into
  * "the compiler crashed", which tells the user nothing about what to do next.
  *
- * A regex over the source is enough for the purpose: it is a gate on stages, not a parser,
- * and a file it reads wrongly ends up compiled by slangc's own discovery, which is where it
- * would have gone anyway.
+ * A regex over the source is enough for the purpose: it is a gate on stages, not a parser.
+ * That used to come with the excuse that a file read wrongly "ends up compiled by slangc's own
+ * discovery, which is where it would have gone anyway" - true when this only chose a road, and
+ * false since the graphics road landed. What this returns now becomes `-entry` arguments, a
+ * synthesised producer's name, and the membership of a raytracing pipeline, so reading a
+ * commented-out shader as a real one refuses a file that compiles perfectly well.
+ *
+ * Hence the blanking pass. Comments cannot declare entry points; code can.
  */
 function slangEntryPoints(text) {
+  const code = withoutComments(text);
   const out = [];
   SHADER_ATTR_RE.lastIndex = 0;
   let m;
-  while ((m = SHADER_ATTR_RE.exec(text))) {
-    const name = functionAfter(text, m.index + m[0].length);
+  while ((m = SHADER_ATTR_RE.exec(code))) {
+    const name = functionAfter(code, m.index + m[0].length);
     if (name) out.push({ stage: m[1].toLowerCase(), name });
+  }
+  return out;
+}
+
+/**
+ * The same text with every comment replaced by spaces of the same length.
+ *
+ * Offsets are preserved so the scan's indices still point at the real file, and newlines are
+ * kept as newlines so anything counting lines still counts the same ones.
+ *
+ * Three failures came from not doing this, and the third is the worst:
+ *
+ *   `// [shader("vertex")] float4 vsOld(...)`  - a phantom entry point, picked as a fragment
+ *      shader's producer and handed to slangc as `-entry vsOld`, which does not exist.
+ *   `[shader("fragment")]` / `// one sample (per MSAA)` / `float4 psMain(` - the scan for the
+ *      parameter list stops inside the comment and the entry point is named `sample`.
+ *   `[shader("fragment")]` / `// TODO: clamp; guard` / `float4 psMain(` - the `;` makes the
+ *      declaration unrecognisable, the entry vanishes, the file looks like it holds no
+ *      graphics stage, and it routes to `slangc -target cuda` - the 0xC0000005 crash with no
+ *      diagnostic that this whole scan exists to keep the user away from.
+ *
+ * String literals are left alone, because the attribute this hunts for contains one:
+ * `[shader("compute")]`. A string whose CONTENTS spell a shader attribute would still be
+ * misread, which is a stranger thing to write than a commented-out shader and is not worth a
+ * tokeniser to defend against.
+ */
+function withoutComments(text) {
+  let out = '';
+  let i = 0;
+  const blank = s => s.replace(/[^\n]/g, ' ');
+  while (i < text.length) {
+    const c = text[i];
+    const d = text[i + 1];
+    if (c === '/' && d === '/') {
+      const end = text.indexOf('\n', i);
+      const stop = end < 0 ? text.length : end;
+      out += blank(text.slice(i, stop));
+      i = stop;
+    } else if (c === '/' && d === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const stop = end < 0 ? text.length : end + 2;
+      out += blank(text.slice(i, stop));
+      i = stop;
+    } else if (c === '"' || c === '\'') {
+      // Copied through, escapes and all, so the attribute's own string survives.
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += text[j] === '\\' ? 2 : 1;
+      const stop = Math.min(j + 1, text.length);
+      out += text.slice(i, stop);
+      i = stop;
+    } else {
+      out += c;
+      i++;
+    }
   }
   return out;
 }
@@ -582,6 +653,15 @@ function chooseSlangEntry(text, wanted) {
       counterpart: spec.pair
         ? (found.find(e => e.stage === spec.pair) || null)
         : null,
+      // The other members of a grouped pipeline, decided HERE rather than rescanned later.
+      // `graphicsCompile` used to re-read the file and re-run the scan with a predicate of its
+      // own, so the set the user was told about and the set actually compiled were two
+      // independent answers to one question.
+      group: spec.group
+        ? found.filter(e => (STAGES[e.stage] || {}).group === spec.group &&
+            e.name !== chosen.name)
+          .map(e => ({ name: e.name, stage: e.stage }))
+        : null,
       note: null
     };
   };
@@ -634,8 +714,12 @@ function chooseSlangEntry(text, wanted) {
   if (left.length) {
     result.note = `compiling ${chosen.name} (${chosen.stage}); this file also declares ` +
       left.map(e => `${e.name} (${e.stage})`).join(', ') +
-      ' - name one with the entry-point argument to compile it instead';
+      ' - run the command again and pick one to compile it instead';
   }
+  // What the note offers, so the command can offer it too. Without this the message described
+  // an "entry-point argument" that no editor surface accepted: the other entry point of a
+  // mixed file was named in the banner and uncompilable from VS Code.
+  result.alternatives = left.map(e => ({ name: e.name, stage: e.stage }));
   if (result.producer) {
     result.note = (result.note ? `${result.note}. ` : '') +
       `${result.producer.name} is used as its producer, so the varyings are the ones this ` +
@@ -758,6 +842,13 @@ async function slangToSpirv(tools, source, outDir, { flags = [], entry, stage, n
  */
 async function spirvToCache(tools, outDir, { modules, layout, state, cacheDir, token }) {
   const request = path.join(outDir, 'vk-request.json');
+  // Emptied, not merely created. This directory is derived from the source path so it is the
+  // SAME directory every time this file is compiled, `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP`
+  // stops the driver trimming it, and the driver keys objects by content - so an edited shader
+  // deposited a second object beside the first and the carve returned both. Two entries with
+  // one name, the older first, and picking it showed the previous edit's SASS as though it
+  // were the current code.
+  await fs.promises.rm(cacheDir, { recursive: true, force: true });
   await fs.promises.mkdir(cacheDir, { recursive: true });
   await fs.promises.writeFile(request, JSON.stringify({
     ...modules, layout, state,
@@ -777,8 +868,26 @@ async function spirvToCache(tools, outDir, { modules, layout, state, cacheDir, t
     },
     scrub: spawn.VULKAN_ENV
   });
-  if (result.failed) fail('driver', result);
+  // A cancelled run is not a failure to report, it is a user who changed their mind. Without
+  // this it fell through to `fail` and raised an error dialog saying "driver failed (exit
+  // null)" for a deliberate Cancel. The sentinel is the one `compileview` already recognises.
+  if (result.cancelled) throw new Error('cancelled');
+  if (result.failed) fail(driverStep(result.code), result);
   return { argv: result.argv, log: result.stdout + result.stderr };
+}
+
+/**
+ * Which step to blame for a `vk_compile.py` exit code.
+ *
+ * Every non-zero exit used to be reported as "driver failed", which named a component that in
+ * three of the five cases had never run - a machine whose `py` resolves to the Microsoft Store
+ * shim got "driver failed (exit 3)" for a Python problem.
+ */
+function driverStep(code) {
+  if (code === 2) return 'the Vulkan request';        // unusable loader, or a bad request
+  if (code === 3) return 'the Python interpreter';    // refused before Vulkan was touched
+  if (code === 5) return 'pipeline validation';       // built, and the layer objects to it
+  return 'driver';                                    // 1 refused, 4 faulted, anything else
 }
 
 /**
@@ -915,18 +1024,34 @@ async function graphicsCompile(tools, file, options) {
   // pipeline.
   let group = null;
   if (spec.group) {
-    const members = slangEntryPoints(await fs.promises.readFile(file, 'utf8'))
-      .filter(e => (STAGES[e.stage] || {}).group === spec.group && e.name !== chosen.entry);
+    const members = chosen.group || [];
     // Every member is a shader the author wrote in this file and the driver really compiled,
     // so the carve keeps all of them rather than the one that was named. A synthesised
     // producer is scaffolding and stays hidden; these are not.
-    group = [{ name: chosen.entry, stage }, ...members.map(e => ({ name: e.name, stage: e.stage }))];
+    group = [{ name: chosen.entry, stage }, ...members];
+
+    // One module per slot is all the pipeline can hold, and two shaders of one stage is a
+    // thing people write - a primary miss shader and a shadow miss shader is the ordinary
+    // raytracing arrangement. Assigning both to `modules.miss` dropped the first silently
+    // while the note below went on claiming it had been compiled, so it is refused by name.
+    const claimed = new Map([[spec.slot, chosen.entry]]);
     for (const member of members) {
+      const slot = STAGES[member.stage].slot;
+      if (claimed.has(slot)) {
+        throw new CompileError(
+          `${claimed.get(slot)} and ${member.name} are both ${member.stage} shaders, and a ` +
+          'pipeline holds one shader per stage. A real raytracing pipeline reaches several ' +
+          'through its shader binding table, which is a property of the scene rather than of ' +
+          'the code, so there is nothing here to choose between them. Compile them from ' +
+          'separate files, or delete one.');
+      }
+      claimed.set(slot, member.name);
+
       const step = await slangToSpirv(tools, file, outDir, {
         flags: flags.slang, entry: member.name, stage: member.stage, name: member.name
       });
       steps.push({ tool: 'slangc', command: quote(step.argv), log: step.log });
-      modules[STAGES[member.stage].slot] = step.file;
+      modules[slot] = step.file;
     }
     if (members.length) {
       notes.push(`compiled as one pipeline with ${members.map(e => `${e.name} (${e.stage})`)
@@ -1029,10 +1154,26 @@ async function graphicsCompile(tools, file, options) {
     }
   }
 
-  const layout = controls.layout ||
-    await reflectLayout(tools, Object.values(modules));
-  if (controls.layout) {
+  // Reflection runs unless the file stated BOTH halves, and each half is taken from the file
+  // only where the file said something. The push-constant range is reflected now rather than
+  // assumed to be zero: a shader declaring `[[vk::push_constant]]` was getting a pipeline
+  // layout without the range its SPIR-V statically uses, which is invalid - and invalid is
+  // exactly what this driver compiles without complaint.
+  const stated = controls.layout;
+  const statedPush = controls.pushBytes;
+  const reflected = stated && statedPush !== null
+    ? null
+    : await reflectLayout(tools, Object.values(modules));
+  const layout = {
+    bindings: stated || reflected.bindings,
+    pushBytes: statedPush !== null ? statedPush : reflected.pushBytes
+  };
+  if (stated) {
     notes.push('the descriptor layout was taken from this file rather than reflected');
+  }
+  if (statedPush === null && layout.pushBytes) {
+    notes.push(`a ${layout.pushBytes}-byte push-constant range was reflected out of the ` +
+      'shader; state it with `-Xvk push=<bytes>` to compile against a different one');
   }
 
   const cacheDir = path.join(outDir, 'cache');
@@ -1055,7 +1196,7 @@ async function graphicsCompile(tools, file, options) {
   const describe = raytracing ? [
     `${stage} stage`,
     bindings
-      ? `${bindings} binding(s) ${controls.layout ? 'from the file' : 'by reflection'}`
+      ? `${bindings} binding(s) ${stated ? 'from the file' : 'by reflection'}`
       : 'no descriptors',
     // No render state at all - a raytracing pipeline has none, and printing a colour format
     // for one would describe something that is not there.
@@ -1063,7 +1204,7 @@ async function graphicsCompile(tools, file, options) {
   ].join(', ') : [
     `${stage} stage`,
     bindings
-      ? `${bindings} binding(s) ${controls.layout ? 'from the file' : 'by reflection'}`
+      ? `${bindings} binding(s) ${stated ? 'from the file' : 'by reflection'}`
       : 'no descriptors',
     STAGES[stage].producer
       ? (controls.producer ? 'producer named by the file'
@@ -1133,10 +1274,15 @@ async function generateProducer(tools, fragmentSpv, outDir) {
   };
 }
 
-/** The `_ss_N` continuation suffix a split raytracing shader carries, or ''. */
+/**
+ * The `_ss_N` continuation suffix a split raytracing shader carries, or ''.
+ *
+ * Read through the same parser that reads the rest of the name, so there is one description of
+ * this mangling rather than one per thing that wants a piece of it.
+ */
 function splitSuffix(name) {
-  const m = /(_ss_\d+)$/.exec(name || '');
-  return m ? m[1] : '';
+  const parsed = require('./nvcache').rtxNameOf(name);
+  return parsed && parsed.split !== null ? `_ss_${parsed.split}` : '';
 }
 
 /** Everything the reflector can say about one module. */
@@ -1173,13 +1319,23 @@ async function generateCounterpart(tools, module, wanted, outDir) {
   };
 }
 
-/** The descriptor layout every stage of this pipeline declares between them. */
+/**
+ * The pipeline layout every stage of this pipeline declares between them.
+ *
+ * Both halves come from the modules. `pushBytes` was hardcoded to 0 here, which is the right
+ * answer for every shader that declares no push constants and an invalid pipeline for one that
+ * does - the reflector computes the range's real size from the block's member offsets, and
+ * refuses rather than guessing where it cannot.
+ */
 async function reflectLayout(tools, modules) {
   const result = await run(tools.python, [tools.reflectHelper, ...modules, '--json']);
   if (result.failed) fail('reflection', result);
   try {
-    return { bindings: JSON.parse(result.stdout).layout.map(
-      d => [d.set, d.binding, d.type, d.count]), pushBytes: 0 };
+    const read = JSON.parse(result.stdout);
+    return {
+      bindings: read.layout.map(d => [d.set, d.binding, d.type, d.count]),
+      pushBytes: read.pushBytes || 0
+    };
   } catch (e) {
     throw new CompileError(`the descriptor layout could not be read: ${e.message}`);
   }
@@ -1207,11 +1363,15 @@ async function carveCache(cacheDir, stage, entryName, group) {
   // else agrees. Geometry is stage code 4, established by building a pipeline that had only
   // one of them in it.
   const wanted = stage === 'fragment' ? 'pixel' : stage;
-  // A grouped pipeline is carved whole. The driver's name for each shader is its Slang name
-  // with a stage prefix and a hash around it, so the member is found by looking for its own
-  // name inside that rather than by parsing a mangling this code does not own.
-  const memberOf = driverName => (group || []).find(m =>
-    (driverName || '').includes(`_${m.name}_`)) || null;
+  // A grouped pipeline is carved whole. The Slang entry point is READ OUT of the driver's
+  // name by the parser that owns that mangling, and matched exactly. Searching for the member
+  // name as a substring instead put `shadow_miss`'s code under the name `miss`, because
+  // `_rtx_MISS_5_shadow_miss_2_<hash>` contains `_miss_`.
+  const memberOf = driverName => {
+    const parsed = nvcache.rtxNameOf(driverName);
+    if (!parsed) return null;
+    return (group || []).find(m => m.name === parsed.entry) || null;
+  };
   const out = [];
   for (const bin of bins) {
     let toc = null;

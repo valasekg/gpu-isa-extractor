@@ -11,6 +11,17 @@
   },
   "sizeof": 48
  },
+ "VkDebugUtilsMessengerCallbackDataEXT": {
+  "fields": {
+   "flags": 16,
+   "messageIdNumber": 32,
+   "pMessage": 40,
+   "pMessageIdName": 24,
+   "pNext": 8,
+   "sType": 0
+  },
+  "sizeof": 96
+ },
  "VkDebugUtilsMessengerCreateInfoEXT": {
   "fields": {
    "flags": 16,
@@ -68,6 +79,14 @@
    "sType": 0
   },
   "sizeof": 40
+ },
+ "VkExtent3D": {
+  "fields": {
+   "depth": 8,
+   "height": 4,
+   "width": 0
+  },
+  "sizeof": 12
  },
  "VkGraphicsPipelineCreateInfo": {
   "fields": {
@@ -216,6 +235,18 @@
    "taskShader": 16
   },
   "sizeof": 40
+ },
+ "VkPhysicalDeviceProperties": {
+  "fields": {
+   "apiVersion": 0,
+   "deviceID": 12,
+   "deviceName": 20,
+   "deviceType": 16,
+   "driverVersion": 4,
+   "pipelineCacheUUID": 276,
+   "vendorID": 8
+  },
+  "sizeof": 824
  },
  "VkPhysicalDeviceRayQueryFeaturesKHR": {
   "fields": {

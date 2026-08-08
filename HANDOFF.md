@@ -142,7 +142,7 @@ and returned microcode matching an independent C++ harness byte for byte:
   that no feature had turned on.
 
 Neither was visible to a digest, a struct-layout diff or an exit code. Both were obvious to the
-validation layer within seconds. Section 5 of `test_gfx.js` now runs every fixture with
+validation layer within seconds. Section 9 of `test_gfx.js` now runs every fixture with
 `validate: true`, which makes the layer's verdict fatal (exit 5) and prints the VUID. Fixing
 both changed no microcode at all - the requests were invalid, the answers were right - which is
 precisely why nothing else could find them.
@@ -150,7 +150,9 @@ precisely why nothing else could find them.
 **Why ctypes and not a binary.** Same reason as `nvrtc_compile.py`: the extension host cannot
 call native code, and a VSIX carrying per-platform binaries would end the no-build-step
 packaging story. The port is pinned against a C++ harness byte for byte, and `tools/vk_abi.json`
-holds what a C compiler computes for all 24 structs.
+holds what a C compiler computes for every struct `vk_compile.py` declares - the list is
+discovered from the module rather than hand-written, because a hand-written one is what
+let three used structs go unfrozen while the suite reported full coverage.
 
 ## Traps
 
@@ -307,7 +309,7 @@ breaks, the compiled path is the thing to change, not the shared code.
   is counted as a use of R8 — the banner then reports registers the code never touches and
   `crossCheck` accuses the cache of disagreeing with the code over a directory name.
   `result.text` is the pre-merge listing and is what the banner reads; `result.correlated` is
-  the body that gets written. `test_compile.js` section 8 pins this.
+  the body that gets written. `test_compile.js` section 12 pins this.
 - **A compiled listing is not identified by its microcode sha1.** `output.listingName` is
   built on "identical bytes make an identical listing", which is true for a carve and false
   here: adding a comment to a kernel leaves `.text` byte-identical and moves every line

@@ -823,21 +823,25 @@
         },
         "nvIsaExtractor.compile.slangcPath": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "markdownDescription": "Explicit `slangc` path; empty auto-locates. Ships with the Vulkan SDK."
         },
         "nvIsaExtractor.compile.ptxasPath": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "markdownDescription": "Explicit `ptxas` path; empty auto-locates via `PATH` and `%CUDA_PATH%\\bin`."
         },
         "nvIsaExtractor.compile.pythonPath": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "markdownDescription": "Explicit Python interpreter for the NVRTC helper; empty tries `py`, then `python3`."
         },
         "nvIsaExtractor.compile.nvrtcPath": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "markdownDescription": "Explicit `nvrtc64_*.dll`; empty searches `%CUDA_PATH%\\bind` and the loader path."
         },

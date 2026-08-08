@@ -15,6 +15,7 @@ const path = require('path');
 const vscode = require('vscode');
 
 const pipeline = require('./pipeline');
+const spawn = require('./spawn');
 const output = require('./output');
 const zstd = require('./zstd');
 const nvcache = require('./nvcache');
@@ -229,7 +230,8 @@ async function diagnose(context) {
     // regression in the extension rather than as a property of the session.
     let canGraphics = false;
     if (tools.python) {
-      const probe = await pipeline.run(tools.python, [tools.vkHelper, '--probe']);
+      const probe = await pipeline.run(tools.python, [tools.vkHelper, '--probe'],
+        { scrub: spawn.VULKAN_ENV });
       const output_ = `${probe.stdout || ''}${probe.stderr || ''}`;
       // The NVIDIA line specifically, not whichever device enumerates first: a laptop with an
       // integrated Intel GPU lists that too, and it has no SASS to give.

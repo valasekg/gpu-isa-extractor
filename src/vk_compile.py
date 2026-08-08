@@ -17,8 +17,8 @@ the only thing in it, ready for the same carve the cache path already performs.
 Vulkan is a C API behind a loader, and the extension host cannot call native code - the same
 problem `nvrtc_compile.py` has with NVRTC, solved the same way, for the same reason: a ctypes
 file needs no build step, no npm, and no per-platform binary in the VSIX. Measured on this
-machine, this file reproduces a C++ harness's microcode byte for byte, and all 21 struct
-layouts match what MSVC computes from the real headers.
+machine, this file reproduces a C++ harness's microcode byte for byte, and every struct
+layout matches what MSVC computes from the real headers.
 
 ## Contract
 
@@ -422,7 +422,27 @@ class VkGraphicsPipelineCreateInfo(C.Structure):
                 ("basePipelineHandle", NonDisp), ("basePipelineIndex", i32)]
 
 
-LAYOUT_STRUCTS = [
+# Every ctypes Structure this file defines, discovered rather than listed.
+#
+# It used to be a hand-written list, and `tools/vk_abi_freeze.py` generates its C from that same
+# list - so the suite's "neither side declares a struct the other does not" check compared a set
+# against a copy of itself and could never find a struct that was USED but never frozen. Three
+# already were: VkPhysicalDeviceProperties (which picks the GPU and names it in the banner),
+# VkDebugUtilsMessengerCallbackDataEXT (dereferenced in the validation callback) and VkExtent3D.
+# Reading the module's own namespace means a new Structure is frozen by existing, which is the
+# only version of this that cannot drift.
+def _declared_structs():
+    import sys as _sys
+    module = _sys.modules[__name__]
+    out = []
+    for name in dir(module):
+        obj = getattr(module, name)
+        if isinstance(obj, type) and issubclass(obj, C.Structure) and obj is not C.Structure:
+            out.append(obj)
+    return sorted(out, key=lambda s: s.__name__)
+
+
+LAYOUT_ORDER = [
     VkApplicationInfo, VkInstanceCreateInfo, VkQueueFamilyProperties,
     VkDeviceQueueCreateInfo, VkPhysicalDeviceFeatures, VkPhysicalDeviceFeatures2,
     VkPhysicalDeviceVulkan11Features, VkPhysicalDeviceMeshShaderFeaturesEXT,
@@ -444,6 +464,10 @@ LAYOUT_STRUCTS = [
     VkPipelineRenderingCreateInfo, VkGraphicsPipelineCreateInfo,
     VkRayTracingShaderGroupCreateInfoKHR, VkRayTracingPipelineCreateInfoKHR,
 ]
+
+# The declared order first, so the generated C and the frozen file keep their familiar shape,
+# then anything the list forgot.
+LAYOUT_STRUCTS = LAYOUT_ORDER + [s for s in _declared_structs() if s not in LAYOUT_ORDER]
 
 
 def layout_report():
@@ -776,10 +800,12 @@ class Poke(object):
 
     def destroy(self):
         vk, device = self.vk, self.device
-        # The messenger goes first: it must outlive everything it might report on, and it
-        # cannot outlive the instance it belongs to.
-        if self.validation:
-            self.validation.detach()
+        # The messenger is detached LAST, just before the instance it belongs to, because it
+        # must outlive everything it might report on. It used to go first, which meant the
+        # layer had nowhere to deliver anything raised while the pipeline, the layouts, the
+        # modules or the device were being destroyed - and `main` says, correctly, that it
+        # reads the messages after teardown so those are counted too. They were not: detaching
+        # first closed the window that sentence describes.
         if device is not None:
             if self.pipeline:
                 vk["vkDestroyPipeline"](device, self.pipeline, None)
@@ -790,6 +816,8 @@ class Poke(object):
             for h in self.modules:
                 vk["vkDestroyShaderModule"](device, h, None)
             vk["vkDestroyDevice"](device, None)
+        if self.validation:
+            self.validation.detach()
         if self.instance is not None:
             vk["vkDestroyInstance"](self.instance, None)
 
@@ -1114,6 +1142,11 @@ class Poke(object):
         self.note("layout: %d set(s), %d binding(s), %d push byte(s)"
                   % (len(by_set), sum(len(v) for v in by_set.values()), push_bytes))
 
+        # Said before the roads part. It used to be printed further down, past the point
+        # where a raytracing pipeline returns, so the one lineage whose output is specific to
+        # the local GPU produced listings that never named it.
+        self.note("device            %s" % props.deviceName.decode("utf-8", "replace"))
+
         if rt_pipeline:
             return self.raytracing_pipeline(handles, code)
 
@@ -1202,7 +1235,6 @@ class Poke(object):
             return EXIT_REFUSED, "vkCreateGraphicsPipelines failed (VkResult %d)" % r
         self.pipeline = pipeline.value
 
-        self.note("device            %s" % props.deviceName.decode("utf-8", "replace"))
         v = props.apiVersion
         self.note("api               %u.%u.%u" % (v >> 22, (v >> 12) & 0x3FF, v & 0xFFF))
         self.note("colour format     %s (%d)" % (fmt_name, colour))

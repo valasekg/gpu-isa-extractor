@@ -360,9 +360,36 @@ const RTX_STAGES = {
   ANY_HIT: 'anyhit', INTERSECTION: 'intersection', CALLABLE: 'callable'
 };
 
+/**
+ * The whole of the driver's raytracing name: `_rtx_<STAGE>_<n>_<entry>_<n>_<hash>[_ss_N]`.
+ *
+ * The entry name is matched lazily because it may itself contain underscores, and what pins
+ * it is what follows: a decimal, then a hex digest, then an optional continuation suffix.
+ */
+const RTX_NAME_RE = /^_rtx_([A-Z][A-Z_]*?)_(\d+)_(.+?)_(\d+)_([0-9a-f]{8,})(?:_ss_(\d+))?$/;
+
+/**
+ * `{stage, entry, split}` for a driver-written raytracing name, or null.
+ *
+ * The Slang entry point is READ OUT of the name rather than searched for inside it. Looking
+ * for the name as a substring - `driverName.includes('_' + entry + '_')` - matched the wrong
+ * shader whenever one entry point's name appeared inside another's: a file with `miss` and
+ * `shadow_miss` produces `_rtx_MISS_5_shadow_miss_2_<hash>`, whose `shadow_miss_2` segment
+ * contains `_miss_`, so the shadow shader's code was carved out under the other one's name.
+ */
+function rtxNameOf(name) {
+  const m = RTX_NAME_RE.exec(name || '');
+  if (!m || !RTX_STAGES[m[1]]) return null;
+  return {
+    stage: RTX_STAGES[m[1]],
+    entry: m[3],
+    split: m[6] === undefined ? null : Number(m[6])
+  };
+}
+
 function rtxStageOf(name) {
-  const m = /^_rtx_([A-Z_]+?)_\d+_/.exec(name || '');
-  return (m && RTX_STAGES[m[1]]) || null;
+  const parsed = rtxNameOf(name);
+  return parsed ? parsed.stage : null;
 }
 
 /**
@@ -389,6 +416,16 @@ function raytracingObjects(payload, source, offset) {
     offset,
     codeBytes: entry.codeBytes,
     microcode: entry.microcode,
+    // Every other object carries these, and the tree dereferences `instructions` without
+    // asking. Leaving them off made one raytracing payload enough to break the render of a
+    // whole cache file - `obj.instructions.toLocaleString()` on undefined - and the batch
+    // estimate silently became NaN. `cubin.entryPoints` already computed it.
+    instructions: entry.instructions,
+    backend: 'vk',
+    // Which kind of container this came out of. `backend` cannot answer that: an NVuc object
+    // carved from the same GLCache carries `backend: 'vk'` too, so keying the duplicate rule
+    // on it would hide exactly the objects that rule must leave alone.
+    container: 'raytracing',
     sha1: crypto.createHash('sha1').update(entry.microcode).digest('hex'),
     warnings: [],
     metadata: {
@@ -487,7 +524,6 @@ async function enumerateObjects(buf, opts = {}) {
 
   const stats = {};
   const objects = [];
-  let rtxSeen = false;
   const frames = planFrames(buf, { backend, toc, scan });
   // A scan hits frames that no index vouched for, so its failures are not reportable: a
   // false-positive magic hit is not a truncated frame, and counting them would report a
@@ -527,7 +563,6 @@ async function enumerateObjects(buf, opts = {}) {
         if (one.codeBytes < minCode) continue;
         if (!keepMicrocode) one.microcode = null;
         objects.push(one);
-        rtxSeen = true;
       }
       continue;
     }
@@ -538,36 +573,54 @@ async function enumerateObjects(buf, opts = {}) {
     objects.push(obj);
   }
 
-  return { objects: rtxSeen ? pickLatest(objects) : objects, stats, frames: frames.length };
+  return { objects: pickLatestRtx(objects), stats, frames: frames.length };
 }
 
 /**
- * One object per entry point, keeping the last of any duplicates.
+ * One object per raytracing entry point, keeping the last of any duplicates.
  *
  * The driver compiles a raytracing shader twice and writes both, so the same entry point
  * arrives under two container tags with two register allocations. The later one is compiled
  * against the assembled pipeline, so it is the one kept - see `raytracingObjects`.
  *
- * Only raytracing caches are put through this. Every other kind writes one container per
- * shader, and two objects sharing a name there would be a fact about the cache worth showing
- * rather than a duplicate worth hiding.
+ * ONLY raytracing objects are eligible, and the test is per object rather than per file. It
+ * used to be per file - one raytracing payload anywhere put every object through this - which
+ * quietly wrecked the ordinary case: a real cache holds several copies of one shader on
+ * purpose (the browser has a node kind for them), and an NVuc container with no name section
+ * has `name === null`, so every unnamed shader in a mixed cache collapsed onto one Map key and
+ * vanished. Two NVuc objects sharing a name are a fact about the cache worth showing.
  */
-function pickLatest(objects) {
+function pickLatestRtx(objects) {
   const at = new Map();
   const out = [];
   for (const o of objects) {
-    if (at.has(o.name)) out[at.get(o.name)] = o;
-    else { at.set(o.name, out.length); out.push(o); }
+    const key = o.container === 'raytracing' && o.name ? o.name : null;
+    if (key !== null && at.has(key)) out[at.get(key)] = o;
+    else {
+      if (key !== null) at.set(key, out.length);
+      out.push(o);
+    }
   }
   return out;
 }
 
-/** Re-decode and carve a single known frame - what the enumeration deliberately threw away. */
-function carveAt(buf, offset, { source = '<buffer>', backend = 'raw' } = {}) {
+/**
+ * Re-decode and carve a single known frame - what the enumeration deliberately threw away.
+ *
+ * `name` picks one entry point out of a raytracing frame. One of those frames holds several,
+ * all sharing the frame's offset, so an offset alone cannot name one again once the microcode
+ * has been dropped; without it, a listed raytracing object could never be disassembled and the
+ * failure was reported as "the cache file changed while it was open", which was never true.
+ */
+function carveAt(buf, offset, { source = '<buffer>', backend = 'raw', name = null } = {}) {
   const fcs = frameContentSize(buf, offset);
   const window = fcs !== null ? Math.min(buf.length, offset + 2 * fcs + 8192) : null;
   const payload = decodeFrame(buf, offset, window, fcs);
   if (!payload) return null;
+
+  const rtx = raytracingObjects(payload, source, offset);
+  if (rtx) return rtx.find(o => o.name === name) || (name === null ? rtx[0] : null) || null;
+
   return objectFromPayload(payload, source, offset, backend, null);
 }
 
@@ -592,6 +645,7 @@ module.exports = {
   objectFromPayload,
   raytracingObjects,
   rtxStageOf,
+  rtxNameOf,
   planFrames,
   enumerateObjects,
   carveAt,

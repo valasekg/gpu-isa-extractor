@@ -55,11 +55,22 @@ function normalise(chunks) {
  *
  * `VK_LOADER_LAYERS_DISABLE` turns off implicit layers that no variable names, which is most
  * of them; the rest are pointed at nothing rather than left inherited.
+ *
+ * It says `~implicit~` and not `*`. The glob disables EXPLICIT layers too - including the
+ * validation layer the harness asks for by name - so with `*` here a run that requested
+ * validation either failed with VK_ERROR_LAYER_NOT_PRESENT or reported "clean" from a layer
+ * that never loaded. That is the worst of the three outcomes: this driver compiles invalid
+ * pipelines into plausible microcode, and the layer is the only thing that has ever caught it.
+ * `~implicit~` is the loader's name for exactly the set this is meant to exclude.
+ *
+ * `VK_LAYER_PATH` is deleted rather than kept: the validation layer is found through the
+ * registry manifests the SDK installs, and an inherited override pointing somewhere else is
+ * how a layer goes missing.
  */
 const VULKAN_ENV = {
   VK_ICD_FILENAMES: '', VK_DRIVER_FILES: '', VK_ADD_DRIVER_FILES: '',
   VK_LAYER_PATH: '', VK_ADD_LAYER_PATH: '', VK_INSTANCE_LAYERS: '',
-  VK_LOADER_LAYERS_DISABLE: '*'
+  VK_LOADER_LAYERS_DISABLE: '~implicit~'
 };
 
 /**
@@ -115,11 +126,11 @@ function text(exe, args, { timeout = 0, token, cwd, env, scrub } = {}) {
 
     const timer = timeout > 0 ? setTimeout(() => {
       timedOut = true;
-      child.kill();
+      terminate(child);
     }, timeout) : null;
 
     const subscription = token && token.onCancellationRequested
-      ? token.onCancellationRequested(() => { cancelled = true; child.kill(); })
+      ? token.onCancellationRequested(() => { cancelled = true; terminate(child); })
       : null;
 
     const done = () => {
@@ -156,9 +167,32 @@ function text(exe, args, { timeout = 0, token, cwd, env, scrub } = {}) {
   });
 }
 
+/**
+ * Kill a child and everything it started.
+ *
+ * `child.kill()` alone ends one process, and on Windows the process that matters is usually a
+ * grandchild: `tools.python` resolves to the `py` launcher, which runs the real `python.exe`
+ * and waits. Killing the launcher left that interpreter holding a Vulkan device and still
+ * writing the shader cache the next compile was about to read - a cancelled compile that
+ * quietly corrupted the one after it.
+ *
+ * `taskkill /T` walks the tree. If it cannot run, the direct kill below is still better than
+ * nothing, so its failure is deliberately ignored rather than surfaced: this runs on a path
+ * that is already unwinding.
+ */
+function terminate(child) {
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      cp.spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true })
+        .on('error', () => {});
+    } catch (e) { /* fall through to the direct kill */ }
+  }
+  child.kill();
+}
+
 /** An argv array as a command line that can be pasted back into a shell. */
 function quote(argv) {
   return argv.map(a => (/[\s"]/.test(a) ? `"${a}"` : a)).join(' ');
 }
 
-module.exports = { text, quote, environment, VULKAN_ENV };
+module.exports = { text, quote, environment, terminate, VULKAN_ENV };
