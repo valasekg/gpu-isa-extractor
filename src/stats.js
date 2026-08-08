@@ -266,7 +266,7 @@ function summaryLines(stats, metadata) {
     lines.push(share('let the scheduler switch to another warp here', sc.yieldShare));
     lines.push(share('re-read an operand from the reuse cache', sc.reuseShare));
     lines.push(`${blank}${sc.stallTotal.toLocaleString()} cycles in total, counted from the ` +
-      'control codes.');
+      'control codes - a floor on issue, not a performance figure.');
   }
 
   // Vector and uniform registers are the general-purpose file; predicates are a separate one

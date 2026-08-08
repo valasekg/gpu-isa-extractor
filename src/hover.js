@@ -357,6 +357,9 @@ function immediateMarkdown(token, opcode) {
     const value = BigInt('0x' + digits);
     const rows = [];
     rows.push(`| decimal | ${negated ? '-' : ''}${value.toString()} |`);
+    // One group of four bits per hex digit, so the groups line up with the digits written in
+    // the instruction and a mask can be read off against them.
+    rows.push(`| binary | ${negated ? '-' : ''}\`${binaryGroups(value, digits.length)}\` |`);
 
     if (digits.length <= 8) {
       const u32 = Number(BigInt.asUintN(32, value));
@@ -388,6 +391,13 @@ function immediateMarkdown(token, opcode) {
                    'not a value: `0xc0` = a AND b, `0xfc` = a OR b, `0x3c` = a XOR b.');
   }
   return parts.join('\n');
+}
+
+/** A bit pattern in groups of four - one group per hex digit of the literal. */
+function binaryGroups(value, hexDigits) {
+  const width = hexDigits * 4;
+  return BigInt.asUintN(width, value).toString(2).padStart(width, '0')
+    .replace(/(.{4})(?=.)/g, '$1 ');
 }
 
 function formatFloat(v) {

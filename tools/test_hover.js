@@ -150,6 +150,10 @@ console.log('\n2. Operand tooltips');
   const hover = hoverAt(3, '0x3f800000', 3);
   check(body(hover).includes('| as float32 | 1 |'),
     'immediate hover reinterprets a float bit pattern', body(hover));
+  // Four bits per group, one group per hex digit, so the groups line up with the digits the
+  // instruction spells - 0x3f800000 is eight digits and so eight groups.
+  check(body(hover).includes('0011 1111 1000 0000 0000 0000 0000 0000'),
+    'and shows the bit pattern in groups of four', body(hover));
 }
 {
   const hover = hoverAt(4, 'a[0x7c]', 2);
