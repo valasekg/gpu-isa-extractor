@@ -254,19 +254,21 @@ function summaryLines(stats, metadata) {
 
   const sc = stats.scheduling;
   if (sc) {
-    // Both the average and the denominator are spelled out. "1.98 cycles/instr, 11% wait"
-    // leaves a reader guessing whether the percentage is of instructions, of cycles, or of
-    // something to do with the scoreboards themselves.
+    // Tabulated rather than run together in prose: these are four independent measurements of
+    // one instruction stream, and a sentence listing them reads as though they add up.
+    const share = (label, value) =>
+      `${blank}  ${`${round(value)}%`.padStart(5)}  ${label}`;
     lines.push(pad('scheduling') +
-      `mean stall ${sc.stallPerInstruction.toFixed(2)} cycles per instruction`);
-    lines.push(`${blank}of ${sc.instructions.toLocaleString()} instructions: ` +
-      `${round(sc.waitShare)}% wait on a scoreboard, ${round(sc.armShare)}% arm one, `);
-    lines.push(`${blank}${round(sc.yieldShare)}% set the yield hint, ` +
-      `${round(sc.reuseShare)}% reuse an operand`);
-    lines.push(`${blank}${sc.stallTotal.toLocaleString()} static issue cycles in total - one ` +
-      'warp on a straight line, ignoring');
-    lines.push(`${blank}memory latency, occupancy and loop counts. A floor on issue, not a ` +
-      'performance figure.');
+      `average stall of ${sc.stallPerInstruction.toFixed(2)} cycles per instruction`);
+    lines.push(`${blank}of ${sc.instructions.toLocaleString()} instructions:`);
+    lines.push(share('wait for a scoreboard to drain before issuing', sc.waitShare));
+    lines.push(share('raise a scoreboard for a later instruction to wait on', sc.armShare));
+    lines.push(share('let the scheduler switch to another warp here', sc.yieldShare));
+    lines.push(share('re-read an operand from the reuse cache', sc.reuseShare));
+    lines.push(`${blank}${sc.stallTotal.toLocaleString()} cycles in total, counted from the ` +
+      'control codes: one warp on a');
+    lines.push(`${blank}straight line, ignoring memory latency, occupancy and loop counts.`);
+    lines.push(`${blank}A floor on issue, not a performance figure.`);
   }
 
   // Vector and uniform registers are the general-purpose file; predicates are a separate one
