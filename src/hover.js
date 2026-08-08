@@ -369,9 +369,8 @@ function immediateMarkdown(token, opcode) {
       new DataView(buf).setUint32(0, u32);
       const f32 = new DataView(buf).getFloat32(0);
       if (s32 !== u32) rows.push(`| as int32 | ${s32} |`);
-      const named = NAMED_FLOATS.get(u32 >>> 0);
-      const folded = named ? null : foldedConstant(f32);
-      const gloss = named || (folded && folded.text);
+      const folded = describeFloat(f32);
+      const gloss = folded && folded.text;
       rows.push(`| as float32 | ${formatFloat(f32)}${gloss ? ` - **${gloss}**` : ''} |`);
       if (folded && folded.from) {
         // Held until after the table, which is what it explains.
@@ -393,6 +392,19 @@ function immediateMarkdown(token, opcode) {
                    'immediates print in decimal, so a hex value feeding a float ' +
                    'instruction is a bit pattern.*');
   } else {
+    // A float immediate prints in DECIMAL, so this is the branch that actually meets
+    // 0.15915493667125702 and the rest of them - the hex branch above never sees one.
+    const decimal = /^[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?$/.test(text)
+      ? Math.fround(parseFloat(text)) : NaN;
+    const known = Number.isFinite(decimal) ? describeFloat(decimal) : null;
+    if (known) {
+      parts.push('', `**${known.text}**`);
+      if (known.from) {
+        parts.push('', '> The hardware has only base-2 `MUFU` instructions, so a source ' +
+          `\`${known.from}\` is emitted in base 2 with the source's own multiplier folded ` +
+          'into this constant.');
+      }
+    }
     parts.push('', 'Immediate literal, encoded in the instruction and therefore uniform ' +
                    'across the warp.');
   }
@@ -431,6 +443,20 @@ const NAMED_FLOATS = new Map([
  * makes the constant traceable back to the line it came from - `-8.65617` says nothing,
  * `-6 * log2(e)` says the source wrote `exp(-6*x)`.
  */
+/**
+ * What a float32 value is, by name, or null.
+ *
+ * Both immediate spellings go through this: a bit pattern written in hex, and the decimal a
+ * float immediate is actually printed as.
+ */
+function describeFloat(f32) {
+  const buf = new ArrayBuffer(4);
+  new DataView(buf).setFloat32(0, f32);
+  const named = NAMED_FLOATS.get(new DataView(buf).getUint32(0) >>> 0);
+  if (named) return { text: named, from: null };
+  return foldedConstant(f32);
+}
+
 function foldedConstant(f32) {
   const folds = [
     ['log2(e)', Math.LOG2E, 'exp'], ['1/(2*pi)', 1 / (2 * Math.PI), 'sin/cos'],

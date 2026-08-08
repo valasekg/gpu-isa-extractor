@@ -92,10 +92,16 @@ const lines = [
   // Appended, so nothing above shifts. Two constants a reader meets constantly: the turns
   // factor every trig call multiplies by, and an exp() the compiler folded into exp2.
   'FMUL R5, R4, 0x3e22f983 ;',
-  'FMUL R7, R6, 0xc10a7fac ;'
+  'FMUL R7, R6, 0xc10a7fac ;',
+  // The spelling that actually turns up: a float immediate prints in DECIMAL, so these are
+  // the tokens a reader hovers, and the hex branch never sees them.
+  'FMUL R5, R4, 0.15915493667125701904 ;',
+  'FFMA R7, R6, -8.656169891357421875, RZ ;'
 ];
-const TRIG_LINE = lines.length - 2;
-const FOLD_LINE = lines.length - 1;
+const TRIG_LINE = lines.length - 4;
+const FOLD_LINE = lines.length - 3;
+const TRIG_DECIMAL_LINE = lines.length - 2;
+const FOLD_DECIMAL_LINE = lines.length - 1;
 
 const document = {
   lineCount: lines.length,
@@ -174,6 +180,16 @@ console.log('\n2. Operand tooltips');
   check(body(hover).includes('-6 * log2(e)'),
     'a folded base change names the multiplier the source wrote', body(hover));
   check(/only base-2/.test(body(hover)), 'and says why the fold happened', body(hover));
+}
+{
+  // The case that was missed first time: the naming was wired only to the hex branch, so the
+  // decimal a float immediate is really printed as fell through to the generic note.
+  const trig = hoverAt(TRIG_DECIMAL_LINE, '0.15915493667125701904', 0);
+  check(body(trig).includes('1/(2*pi)'),
+    'a decimal float immediate is named too', body(trig));
+  const folded = hoverAt(FOLD_DECIMAL_LINE, '-8.656169891357421875', 0);
+  check(body(folded).includes('-6 * log2(e)'),
+    'and so is a decimal that is a folded base change', body(folded));
 }
 {
   const hover = hoverAt(4, 'a[0x7c]', 2);
