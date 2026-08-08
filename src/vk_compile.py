@@ -194,6 +194,7 @@ class VkPhysicalDeviceFeatures(C.Structure):
 # catches it as VUID-VkGraphicsPipelineCreateInfo-dynamicRendering-06576 while the driver
 # creates the pipeline anyway. One chain, one answer.
 class VkPhysicalDeviceFeatures2(C.Structure):
+    _stype = "PHYSICAL_DEVICE_FEATURES_2"
     _fields_ = [("sType", VkEnum), ("pNext", VOID), ("features", VkPhysicalDeviceFeatures)]
 
 
@@ -208,10 +209,12 @@ class VkPhysicalDeviceFeatures2(C.Structure):
 # whole point: `RayQuery` reached a working listing through the existing graphics path, and
 # only the validation layer noticed the pipeline was invalid while it did so.
 class VkPhysicalDeviceRayQueryFeaturesKHR(C.Structure):
+    _stype = "PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR"
     _fields_ = [("sType", VkEnum), ("pNext", VOID), ("rayQuery", VkBool32)]
 
 
 class VkPhysicalDeviceAccelerationStructureFeaturesKHR(C.Structure):
+    _stype = "PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR"
     _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
         (n, VkBool32) for n in (
             "accelerationStructure", "accelerationStructureCaptureReplay",
@@ -220,6 +223,7 @@ class VkPhysicalDeviceAccelerationStructureFeaturesKHR(C.Structure):
 
 
 class VkPhysicalDeviceRayTracingPipelineFeaturesKHR(C.Structure):
+    _stype = "PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR"
     _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
         (n, VkBool32) for n in (
             "rayTracingPipeline", "rayTracingPipelineShaderGroupHandleCaptureReplay",
@@ -228,6 +232,7 @@ class VkPhysicalDeviceRayTracingPipelineFeaturesKHR(C.Structure):
 
 
 class VkPhysicalDeviceBufferDeviceAddressFeatures(C.Structure):
+    _stype = "PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES"
     _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
         (n, VkBool32) for n in (
             "bufferDeviceAddress", "bufferDeviceAddressCaptureReplay",
@@ -235,6 +240,7 @@ class VkPhysicalDeviceBufferDeviceAddressFeatures(C.Structure):
 
 
 class VkPhysicalDeviceMeshShaderFeaturesEXT(C.Structure):
+    _stype = "PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT"
     _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
         (n, VkBool32) for n in (
             "taskShader", "meshShader", "multiviewMeshShader",
@@ -242,6 +248,7 @@ class VkPhysicalDeviceMeshShaderFeaturesEXT(C.Structure):
 
 
 class VkPhysicalDeviceVulkan11Features(C.Structure):
+    _stype = "PHYSICAL_DEVICE_VULKAN_1_1_FEATURES"
     _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
         (n, VkBool32) for n in (
             "storageBuffer16BitAccess", "uniformAndStorageBuffer16BitAccess",
@@ -252,6 +259,7 @@ class VkPhysicalDeviceVulkan11Features(C.Structure):
 
 
 class VkPhysicalDeviceVulkan13Features(C.Structure):
+    _stype = "PHYSICAL_DEVICE_VULKAN_1_3_FEATURES"
     _fields_ = [("sType", VkEnum), ("pNext", VOID)] + [
         (n, VkBool32) for n in (
             "robustImageAccess", "inlineUniformBlock",
@@ -832,19 +840,14 @@ class Poke(object):
         self.keep.append(obj)
         return C.pointer(obj)
 
-    def chain(self, cls, stype, head=None, **fields):
+    def chain(self, cls, head=None, **fields):
         """Link one feature struct onto a pNext chain and return the new head.
 
-        Seven of these were written out by hand, each four lines whose only load-bearing
-        differences were the class and the sType - and the two must agree. That pairing is
-        exactly what went wrong once before: `VkPhysicalDeviceVulkan13Features` was chained
-        carrying the sType of the 1.1 struct, so `dynamicRendering` was never enabled and every
-        pipeline was built invalidly on a driver that did not object. One argument list now
-        holds both, where before they sat on separate lines.
-
-        The pointee stays alive through `ptr`, which is why the return value can be dropped.
+        The sType comes from the class, not from the caller: a struct chained under another
+        struct's sType is ignored by the driver, so the feature is silently never enabled -
+        which is how `dynamicRendering` was off for a while. `ptr` keeps the pointee alive.
         """
-        return self.ptr(cls(sType=ST[stype],
+        return self.ptr(cls(sType=ST[cls._stype],
                             pNext=C.cast(head, VOID) if head is not None else None,
                             **fields))
 
@@ -1005,10 +1008,8 @@ class Poke(object):
         qci = VkDeviceQueueCreateInfo(sType=ST["DEVICE_QUEUE_CREATE_INFO"],
                                       queueFamilyIndex=graphics, queueCount=1,
                                       pQueuePriorities=self.ptr(priority))
-        head = self.chain(VkPhysicalDeviceVulkan13Features,
-                          "PHYSICAL_DEVICE_VULKAN_1_3_FEATURES", dynamicRendering=VK_TRUE)
-        head = self.chain(VkPhysicalDeviceVulkan11Features,
-                          "PHYSICAL_DEVICE_VULKAN_1_1_FEATURES", head,
+        head = self.chain(VkPhysicalDeviceVulkan13Features, dynamicRendering=VK_TRUE)
+        head = self.chain(VkPhysicalDeviceVulkan11Features, head,
                           shaderDrawParameters=VK_TRUE)
         device_extensions = []
 
@@ -1018,36 +1019,31 @@ class Poke(object):
         if CAP_RAY_QUERY in caps or CAP_RAY_TRACING in caps:
             device_extensions += [b"VK_KHR_acceleration_structure",
                                   b"VK_KHR_deferred_host_operations"]
-            head = self.chain(VkPhysicalDeviceBufferDeviceAddressFeatures,
-                              "PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES", head,
+            head = self.chain(VkPhysicalDeviceBufferDeviceAddressFeatures, head,
                               bufferDeviceAddress=VK_TRUE)
-            head = self.chain(VkPhysicalDeviceAccelerationStructureFeaturesKHR,
-                              "PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR", head,
+            head = self.chain(VkPhysicalDeviceAccelerationStructureFeaturesKHR, head,
                               accelerationStructure=VK_TRUE)
             if CAP_RAY_QUERY in caps:
                 device_extensions.append(b"VK_KHR_ray_query")
-                head = self.chain(VkPhysicalDeviceRayQueryFeaturesKHR,
-                                  "PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR", head,
+                head = self.chain(VkPhysicalDeviceRayQueryFeaturesKHR, head,
                                   rayQuery=VK_TRUE)
             if CAP_RAY_TRACING in caps:
                 # Slang declares RayTracingKHR even for inline ray tracing, so this follows the
                 # module rather than the feature being used.
                 device_extensions.append(b"VK_KHR_ray_tracing_pipeline")
-                head = self.chain(VkPhysicalDeviceRayTracingPipelineFeaturesKHR,
-                                  "PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR", head,
+                head = self.chain(VkPhysicalDeviceRayTracingPipelineFeaturesKHR, head,
                                   rayTracingPipeline=VK_TRUE)
             self.note("ray tracing       enabled from the modules' declared capabilities")
         if mesh_pipeline:
             # Mesh shading is an extension: the feature struct alone is not enough, the device
             # extension has to be enabled too or the stage bits are not even recognised.
             device_extensions.append(MESH_EXTENSION)
-            head = self.chain(VkPhysicalDeviceMeshShaderFeaturesEXT,
-                              "PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT", head,
+            head = self.chain(VkPhysicalDeviceMeshShaderFeaturesEXT, head,
                               meshShader=VK_TRUE,
                               taskShader=VK_TRUE if "ts" in code else VK_FALSE)
         # A geometry or tessellation stage is a device feature, not just another entry in the
         # stage array: a pipeline naming one on a device where it was not enabled is rejected.
-        f2 = self.chain(VkPhysicalDeviceFeatures2, "PHYSICAL_DEVICE_FEATURES_2", head,
+        f2 = self.chain(VkPhysicalDeviceFeatures2, head,
                         features=VkPhysicalDeviceFeatures(
                             geometryShader=VK_TRUE if "gs" in code else VK_FALSE,
                             tessellationShader=(VK_TRUE if ("hs" in code or "ds" in code)

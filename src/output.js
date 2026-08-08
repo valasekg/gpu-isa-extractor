@@ -142,9 +142,8 @@ const PROVENANCE = {
 /**
  * The source and the toolchain that ran over it - shared by both compiled origins.
  *
- * Two roads record the same thing about themselves and differ only in what they add. Written
- * out twice, the copies had already drifted apart in wording ('via' against 'with') without
- * anyone deciding they should, so the difference that IS deliberate is a parameter now.
+ * `joiner` differs because the extra sources do: the CUDA road records the generated `.cu` a
+ * compile went *via*, the driver road the companion shaders it was compiled *with*.
  */
 function toolchainLines(result, field, joiner) {
   const { object, compile } = result;

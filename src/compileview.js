@@ -388,16 +388,20 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
   const rawPath = path.join(outDir, `${entry.name}.raw`);
   await fs.promises.writeFile(rawPath, entry.microcode);
 
-  // The same call the browse path makes, rather than a second spelling of it. It returns the
-  // command it really ran, quoted by `spawn.quote` - the hand-built string this used to carry
-  // left the executable bare, so a banner from the ordinary Windows CUDA install (under
-  // `C:\Program Files\...`) could not be pasted back into a shell.
+  // The browse path's call, not a second spelling of it: it returns the command it really
+  // ran, properly quoted.
   const disassembled = await pipeline.runNvdisasm(nvdisasm, built.arch, rawPath, token);
   const sass = disassembled.text;
   const annotation = config().get('decodeControlCodes') !== false
     ? ctrl.annotate(sass, entry.microcode)
     : null;
   const plain = annotation ? annotation.text : sass;
+
+  // Same lifetime the browse path gives it - the setting means the same thing on both roads,
+  // and without this every compiled entry left a .raw in the scratch directory.
+  if (!config().get('keepRawMicrocode')) {
+    fs.promises.unlink(rawPath).catch(() => {});
+  }
 
   // Correlation comes from a second pass over the cubin, because line info lives in the ELF
   // and `--binary` has no ELF to read it from.

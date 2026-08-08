@@ -17,7 +17,6 @@
  *   ELECTRON_RUN_AS_NODE=1 Code.exe tools/test_gfx.js
  */
 
-const crypto = require('crypto');
 const cp = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -86,10 +85,8 @@ let probe = null;
 /**
  * Why a section cannot run, or null.
  *
- * Seven sections spelled the same prerequisites out by hand - Python, then the fixtures, then
- * sometimes a usable device - and they had already drifted: some checked the probe and some
- * did not, so a machine without a GPU failed one section and skipped another. Adding a
- * prerequisite meant seven edits, and missing one meant a FAIL where a skip was meant.
+ * `fixtures` must list every file the section uses unconditionally - too few and it FAILs
+ * where it meant to skip, too many and it skips checks that would have run.
  */
 function unready(what, fixtures, { gpu = false } = {}) {
   if (!PY) return 'no Python interpreter';
@@ -412,8 +409,9 @@ function findBin(dir) {
         JSON.stringify(m.perVertexInputs));
     }
 
-    if (!probe || probe.code !== 0) {
-      skip('no usable Vulkan device for the geometry round-trip');
+    const noDevice = unready('geometry', [], { gpu: true });
+    if (noDevice) {
+      skip(noDevice);
     } else {
       // Stage code 4. Established by construction rather than inferred: a pipeline holding
       // exactly one vertex and one geometry module deposits exactly two objects, and one of
@@ -464,7 +462,7 @@ function findBin(dir) {
 
   const hs = path.join(FIXTURES, 'tessHs.spv');
   const ds = path.join(FIXTURES, 'tessDs.spv');
-  const whyTessellation = unready('tessellation', [hs]);
+  const whyTessellation = unready('tessellation', [hs, ds]);
   if (whyTessellation) {
     skip(whyTessellation);
   } else {
@@ -512,8 +510,9 @@ function findBin(dir) {
         JSON.stringify(m.tessellation));
     }
 
-    if (!probe || probe.code !== 0) {
-      skip('no usable Vulkan device for the tessellation round-trip');
+    const noDevice = unready('tessellation', [], { gpu: true });
+    if (noDevice) {
+      skip(noDevice);
     } else {
       const trio = {
         vs: path.join(FIXTURES, 'tessVs.spv'), fs: null, hs, ds,
@@ -571,7 +570,7 @@ function findBin(dir) {
 
   const ms = path.join(FIXTURES, 'msMain.spv');
   const as = path.join(FIXTURES, 'asMain.spv');
-  const whyMesh = unready('mesh', [ms, as], { gpu: true });
+  const whyMesh = unready('mesh', [ms], { gpu: true });
   if (whyMesh) {
     skip(whyMesh);
   } else {
@@ -632,8 +631,9 @@ function findBin(dir) {
         JSON.stringify(m.descriptors.map(d => d.type)));
     }
 
-    if (!probe || probe.code !== 0) {
-      skip('no usable Vulkan device for the ray-query round-trip');
+    const noDevice = unready('ray-query', [], { gpu: true });
+    if (noDevice) {
+      skip(noDevice);
     } else {
       const got = await pipeline('rayquery', {
         vs: path.join(FIXTURES, 'rqVs.spv'), fs: rqFs,
@@ -681,8 +681,9 @@ function findBin(dir) {
         'with the SPIR-V extension that goes with it', JSON.stringify(m.extensions));
     }
 
-    if (!probe || probe.code !== 0) {
-      skip('no usable Vulkan device for the raytracing round-trip');
+    const noDevice = unready('raytracing', [], { gpu: true });
+    if (noDevice) {
+      skip(noDevice);
     } else {
       const full = await pipeline('rt-full', {
         rgen: RGEN, miss: MISS, chit: CHIT, ahit: AHIT, sect: SECT, call: CALL,

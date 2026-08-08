@@ -47,25 +47,12 @@ function normalise(chunks) {
  * Environment variables that redirect the Vulkan loader, cleared for a child that creates a
  * pipeline.
  *
- * Inheriting them is the default and it is wrong here. A developer's machine routinely has
- * implicit layers hooking pipeline creation - Steam's overlay, OBS, RenderDoc, Afterburner,
- * the Game Bar, Nsight - and any of them can perturb, hang or crash a compile that is
- * supposed to be measuring the driver. When that happens the failure is attributed to the
- * user's shader, because that is the only thing the listing names.
+ * Implicit layers - Steam's overlay, RenderDoc, Nsight - can perturb or hang a compile that
+ * is meant to be measuring the driver, and the listing would blame the user's shader.
  *
- * `VK_LOADER_LAYERS_DISABLE` turns off implicit layers that no variable names, which is most
- * of them; the rest are pointed at nothing rather than left inherited.
- *
- * It says `~implicit~` and not `*`. The glob disables EXPLICIT layers too - including the
- * validation layer the harness asks for by name - so with `*` here a run that requested
- * validation either failed with VK_ERROR_LAYER_NOT_PRESENT or reported "clean" from a layer
- * that never loaded. That is the worst of the three outcomes: this driver compiles invalid
- * pipelines into plausible microcode, and the layer is the only thing that has ever caught it.
- * `~implicit~` is the loader's name for exactly the set this is meant to exclude.
- *
- * `VK_LAYER_PATH` is deleted rather than kept: the validation layer is found through the
- * registry manifests the SDK installs, and an inherited override pointing somewhere else is
- * how a layer goes missing.
+ * `~implicit~` and not `*`: the glob disables EXPLICIT layers too, including the validation
+ * layer the harness asks for by name, so a run that requested validation would report "clean"
+ * from a layer that never loaded.
  */
 const VULKAN_ENV = {
   VK_ICD_FILENAMES: '', VK_DRIVER_FILES: '', VK_ADD_DRIVER_FILES: '',
@@ -170,15 +157,10 @@ function text(exe, args, { timeout = 0, token, cwd, env, scrub } = {}) {
 /**
  * Kill a child and everything it started.
  *
- * `child.kill()` alone ends one process, and on Windows the process that matters is usually a
- * grandchild: `tools.python` resolves to the `py` launcher, which runs the real `python.exe`
- * and waits. Killing the launcher left that interpreter holding a Vulkan device and still
- * writing the shader cache the next compile was about to read - a cancelled compile that
- * quietly corrupted the one after it.
- *
- * `taskkill /T` walks the tree. If it cannot run, the direct kill below is still better than
- * nothing, so its failure is deliberately ignored rather than surfaced: this runs on a path
- * that is already unwinding.
+ * The process that matters is often a grandchild: on Windows `py` launches the real
+ * `python.exe` and waits, so killing the launcher leaves the interpreter running - still
+ * holding a device and writing the cache the next compile reads. `taskkill /T` walks the tree;
+ * its own failure is ignored because this path is already unwinding.
  */
 function terminate(child) {
   if (process.platform === 'win32' && child.pid) {
