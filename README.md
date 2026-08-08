@@ -189,7 +189,16 @@ the listing is produced by the extension's ordinary `nvdisasm --binary` path eit
 The stage comes from the `[shader("...")]` attribute. A file that carries none — Falcor's
 shaders name the entry point host-side instead — is read from its filename:
 `2d.ps.slang` is a fragment shader with entry point `main`, and `.vs. .cs. .gs. .hs. .ds.
-.ms. .as.` follow the same convention. An explicit attribute always wins.
+.ms. .as.` follow the same convention.
+
+Where neither says it — an entry point not called `main`, say — the directive does:
+
+```
+// nv-isa-extractor -stage fragment -entry shadeIt
+```
+
+Most specific wins: the directive, then the attribute, then the filename. A file that says it
+in none of the three is refused with all three named, rather than compiled down the wrong road.
 
 Eight worked examples are in `samples/` — open any and press `Ctrl+Alt+Shift+B`:
 

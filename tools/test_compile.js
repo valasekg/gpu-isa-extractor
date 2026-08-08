@@ -408,10 +408,47 @@ section('5. Entry points and the stage gate');
     '[shader("compute")] [numthreads(1,1,1)] void csMain() { }', undefined, '/w/thing.ps.slang');
   equal(attributed.stage, 'compute', 'an explicit [shader(...)] beats the filename');
 
-  // No attribute and no hint in the name: unchanged, so slangc still discovers for itself.
-  const plain = compile.chooseSlangEntry('void helper() { }', undefined, '/w/thing.slang');
-  equal(plain.lineage, 'cuda', 'a file with neither is routed exactly as before');
-  equal(plain.entry, undefined, 'and still lets slangc discover its own entry point');
+  // No attribute, no hint in the name, no directive: refused HERE, naming the three ways to
+  // say what the file is. It used to fall through to the CUDA road and fail two tools later
+  // with a message about `__global__` - for a file that may well be a pixel shader.
+  let silent = null;
+  try { compile.chooseSlangEntry('void helper() { }', undefined, '/w/thing.slang'); }
+  catch (e) { silent = e; }
+  check(silent instanceof compile.CompileError,
+    'a file that says nothing anywhere is refused', silent && silent.message);
+  check(silent && /<name>\.<stage>\.slang/.test(silent.message) &&
+    /-stage/.test(silent.message) && /shader\("/.test(silent.message),
+    'and the refusal names all three ways to say what it is', silent && silent.message);
+
+  // The directive outranks both the attribute and the name - the escape hatch for a shader
+  // whose entry point is not called `main`.
+  const stated = compile.chooseSlangEntry(
+    'float4 shade(float2 uv : UV) : SV_TARGET { return 0; }', undefined, '/w/thing.slang',
+    compile.routeFlags(['-stage', 'fragment', '-entry', 'shade']));
+  equal(stated.stage, 'fragment', 'a stated stage routes the file');
+  equal(stated.entry, 'shade', 'and a stated entry point names it');
+  equal(stated.lineage, 'graphics', 'so it reaches the driver');
+
+  const over = compile.chooseSlangEntry(
+    '[shader("compute")] [numthreads(1,1,1)] void csMain() { }', undefined, '/w/x.ps.slang',
+    compile.routeFlags(['-stage', 'vertex']));
+  equal(over.stage, 'vertex', 'and it outranks both the attribute and the filename');
+
+  let bogus = null;
+  try {
+    compile.chooseSlangEntry('void f() { }', undefined, '/w/x.slang',
+      compile.routeFlags(['-stage', 'nonsense']));
+  } catch (e) { bogus = e; }
+  check(bogus instanceof compile.CompileError,
+    'a stage the table does not know is refused by name', bogus && bogus.message);
+
+  // The routing flags must not also reach slangc, which sets -entry/-stage itself.
+  const routed = compile.routeFlags(['-O3', '-stage', 'fragment', '-entry', 'main']);
+  equal(routed.primary.join(' '), '-O3', 'neither is forwarded as a compiler flag');
+  equal(routed.stage, 'fragment', 'the stage is captured');
+  equal(routed.entry, 'main', 'and so is the entry point');
+  const eqForm = compile.routeFlags(['-stage=vertex', '-entry=vsMain']);
+  equal(eqForm.stage + ' ' + eqForm.entry, 'vertex vsMain', 'the = spelling works too');
 }
 
 {

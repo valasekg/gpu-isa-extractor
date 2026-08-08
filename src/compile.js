@@ -165,10 +165,13 @@ function readDirective(text) {
  * accepted rather than rejected so that a directive can be moved between files unchanged.
  */
 function routeFlags(flags) {
-  const out = { primary: [], nvrtc: [], ptxas: [], vk: [] };
+  const out = { primary: [], nvrtc: [], ptxas: [], vk: [], stage: null, entry: null };
   const forward = {
     '-Xptxas': 'ptxas', '-Xnvrtc': 'nvrtc', '-Xslang': 'primary', '-Xvk': 'vk'
   };
+  // Kept out of `primary`: these decide which road the file takes, so they are read before
+  // slangc runs and passed back to it by the compile itself rather than forwarded twice.
+  const mine = { '-stage': 'stage', '-entry': 'entry' };
 
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i];
@@ -179,6 +182,11 @@ function routeFlags(flags) {
       const target = out[forward[head]];
       if (eq > 0) target.push(flag.slice(eq + 1));
       else if (i + 1 < flags.length) target.push(flags[++i]);
+      continue;
+    }
+    if (mine[head]) {
+      if (eq > 0) out[mine[head]] = flag.slice(eq + 1);
+      else if (i + 1 < flags.length) out[mine[head]] = flags[++i];
       continue;
     }
     out.primary.push(flag);
@@ -626,7 +634,7 @@ function functionAfter(text, at) {
  *   That is strictly better than a generated producer: it is the pairing the author actually
  *   wrote, so the varyings the fragment shader reads are the ones a real draw would supply.
  */
-function chooseSlangEntry(text, wanted, file) {
+function chooseSlangEntry(text, wanted, file, stated) {
   const found = slangEntryPoints(text);
   const supported = found.filter(e => lineageOf(e.stage));
   const compute = found.filter(e => e.stage === COMPUTE_STAGE);
@@ -676,6 +684,35 @@ function chooseSlangEntry(text, wanted, file) {
     };
   };
 
+  // What the file's own directive says, which outranks both the attribute and the name: it
+  // is the author telling this tool what to build, and it is the only way to say so for a
+  // shader whose entry point is not called `main`.
+  const forcedStage = stated && stated.stage ? String(stated.stage).toLowerCase() : null;
+  if (forcedStage && !STAGES[forcedStage]) {
+    throw new CompileError(
+      `-stage ${stated.stage} is not a stage this compiles. ${stageRefusal()}`);
+  }
+  const named = wanted || (stated && stated.entry) || null;
+  if (forcedStage) {
+    const entry = named || (found.find(e => e.stage === forcedStage) || {}).name ||
+      FILENAME_ENTRY;
+    return {
+      entry,
+      stage: forcedStage,
+      lineage: lineageOf(forcedStage),
+      producer: found.find(e => e.stage === (STAGES[forcedStage].producer)) || null,
+      counterpart: STAGES[forcedStage].pair
+        ? (found.find(e => e.stage === STAGES[forcedStage].pair) || null)
+        : null,
+      group: STAGES[forcedStage].group
+        ? found.filter(e => (STAGES[e.stage] || {}).group === STAGES[forcedStage].group &&
+            e.name !== entry).map(e => ({ name: e.name, stage: e.stage }))
+        : null,
+      note: `the file's directive states ${forcedStage}, entry point ${entry}`
+    };
+  }
+  if (named) wanted = named;
+
   if (wanted) {
     const match = found.find(e => e.name === wanted);
     if (match && !lineageOf(match.stage)) refuse(match);
@@ -710,6 +747,14 @@ function chooseSlangEntry(text, wanted, file) {
           `${path.basename(file)} means ${named}, entry point ${FILENAME_ENTRY}`
       };
     }
+  }
+
+  if (!found.length) {
+    throw new CompileError(
+      'this file declares no entry point this can see. Slang finds one through a ' +
+      '[shader("...")] attribute; without one, say which it is - name the file ' +
+      `<name>.<stage>.slang (${Object.keys(FILENAME_STAGES).join(', ')}), or put ` +
+      '`// nv-isa-extractor -stage <stage> -entry <name>` at the top of it.');
   }
 
   if (compute.length === found.length) {
@@ -1509,7 +1554,7 @@ async function compile(tools, file, options = {}) {
     // `file` may be a scratch copy of a dirty buffer, but it keeps the original basename,
     // which is the only part the name convention reads.
     const chosen = chooseSlangEntry(
-      await fs.promises.readFile(file, 'utf8'), options.entry, file);
+      await fs.promises.readFile(file, 'utf8'), options.entry, file, routed);
     if (chosen.note) notes.push(chosen.note);
 
     // The fork. A vertex or fragment entry point leaves the CUDA road entirely - there is no
