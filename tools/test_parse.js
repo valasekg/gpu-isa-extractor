@@ -338,6 +338,40 @@ check(data.lookupModifier('UIADD3', 'X') !== null,
 check(data.uniformTwinOf('UIADD3') === 'IADD3', 'uniform twin resolution');
 check(data.uniformTwinOf('IADD3') === null, 'non-uniform opcode has no twin');
 
+const sassKingModifiers = {
+  BSSY: ['RECONVERGENT'],
+  BSYNC: ['RECONVERGENT'],
+  LDG: ['ENL2', '256'],
+  STG: ['ENL2', '256'],
+  REDG: ['ADD'],
+  REDUX: ['SUM', 'MIN', 'MAX', 'OR', 'XOR'],
+  LDSM: ['16', 'M88', 'MT88', '2', '4'],
+  STSM: ['16', '8', 'M88', 'MT88', 'MT168', '2', '4'],
+  QMMA: ['SF', '16864', 'E2M1', 'E3M2', 'E2M3', 'E8'],
+  OMMA: ['SF', '16864', '168128', 'E2M1', 'E8', 'UE4M3', '4X'],
+  BPT: ['TRAP']
+};
+const sassKingEntries = Object.entries(sassKingModifiers).flatMap(([op, mods]) =>
+  mods.map(mod => ({ op, mod, entry: data.lookupModifier(op, mod) })));
+const missingSassKingEntries = sassKingEntries
+  .filter(item => !item.entry)
+  .map(item => `${item.op}.${item.mod}`);
+check(missingSassKingEntries.length === 0,
+  'all imported SASS King postfix forms resolve', missingSassKingEntries.join(' '));
+const incompleteSassKingEntries = sassKingEntries
+  .filter(item => item.entry &&
+    (item.entry.source !== 'sass-king' || !item.entry.source_ref ||
+     !item.entry.confidence || !item.entry.targets || !item.entry.targets.length))
+  .map(item => `${item.op}.${item.mod}`);
+check(incompleteSassKingEntries.length === 0,
+  'all imported SASS King postfix forms retain source, confidence, and target metadata',
+  incompleteSassKingEntries.join(' '));
+check(data.lookupModifier('STSM', '8').targets.join(',') === 'sm_120a',
+  'STSM.8 remains specifically target-qualified to SM120a');
+check(data.lookupModifier('LDSM', 'MT88').targets.includes('sm_120') &&
+      data.lookupModifier('LDSM', 'MT88').targets.includes('sm_120a'),
+  'LDSM.MT88 records both observed Blackwell targets');
+
 check(data.isControlFlow('BRA') === true, 'BRA is control flow');
 check(data.isControlFlow('FFMA') === false, 'FFMA is not control flow');
 check(data.isUniformDatapath('ULDC') === true, 'ULDC is uniform datapath');

@@ -22,3 +22,15 @@ hovers). Same author, same MIT license, carried over in `LICENSE`.
 permit redistribution; this extension locates an installed copy and runs it. The shader
 cache container format is not documented by NVIDIA — the reader here is reverse-engineered
 and validated against a Python implementation on real caches.
+
+## SASS King — `data/modifiers.json`
+
+The SM120/SM120a postfix descriptions with `source: "sass-king"` are paraphrased from
+controlled observations published by
+[`florianmattana/sass-king`](https://github.com/florianmattana/sass-king), pinned in the
+data file to revision `079016969849858c781f8ff315fc018cc04a89ed`. Each affected tooltip
+links to its evidence page and records the observed target and confidence. No SASS King
+source code or corpus files are bundled here.
+
+SASS King is provided under the Apache License 2.0 — see the
+[upstream license](https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/LICENSE).

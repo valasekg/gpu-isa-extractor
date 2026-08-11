@@ -13,7 +13,13 @@ const SOURCE_LABEL = {
   ptx: 'documented in the PTX ISA',
   slides: 'from the Ampere deep-dive lecture notes',
   community: 'established by published reverse-engineering',
-  corpus: 'read off observed disassembly - inferred, not confirmed'
+  corpus: 'read off observed disassembly - inferred, not confirmed',
+  'sass-king': 'from controlled SASS King SM120/SM120a studies'
+};
+
+const CONFIDENCE_LABEL = {
+  observed: 'direct observation',
+  inferred: 'controlled inference'
 };
 
 class SassHoverProvider {
@@ -82,10 +88,34 @@ function md(markdown, range) {
   return new vscode.Hover(m, range);
 }
 
-function sourceNote(source) {
-  if (!source) return '';
-  const label = SOURCE_LABEL[source] || source;
-  return `\n\n*Source: ${label}.*`;
+function targetLabel(target) {
+  return String(target).replace(/^sm_/, 'SM');
+}
+
+function provenanceSummary(value) {
+  if (!value) return '';
+  const entry = typeof value === 'string' ? { source: value } : value;
+  if (!entry.source) return '';
+
+  const refs = data.modifiersMeta.references || {};
+  const ref = entry.source_ref ? refs[entry.source_ref] : null;
+  const source = ref
+    ? `[${ref.label}](${ref.url})`
+    : (SOURCE_LABEL[entry.source] || entry.source);
+  const parts = [source];
+  if (entry.confidence) {
+    parts.push(`confidence: ${CONFIDENCE_LABEL[entry.confidence] || entry.confidence}`);
+  }
+  if (entry.targets && entry.targets.length) {
+    const targets = entry.targets.map(targetLabel).join(', ');
+    parts.push(`${entry.targets.length === 1 ? 'observed target' : 'observed targets'}: ${targets}`);
+  }
+  return parts.join(' · ');
+}
+
+function sourceNote(entry) {
+  const summary = provenanceSummary(entry);
+  return summary ? `\n\n*Source: ${summary}.*` : '';
 }
 
 function architectureFor(document) {
@@ -128,7 +158,7 @@ function opcodeMarkdown(name, arch, parsed, elaborate) {
     lines.push('', '> Absent from NVIDIA\'s tables, which cover the compute pipeline only. ' +
                    'This is a graphics-pipeline instruction; the description is reconstructed ' +
                    'from observed shader disassembly.');
-    lines.push(sourceNote(entry.source));
+    lines.push(sourceNote(entry));
   }
 
   if (data.isUniformDatapath(name)) {
@@ -167,7 +197,7 @@ function elaborateOpcodeMarkdown(name, entry, parsed) {
       const known = data.lookupModifier(name, mod.text);
       const meaning = known ? known.desc : 'No curated description is recorded.';
       const provenance = known && known.source
-        ? ` *(${SOURCE_LABEL[known.source] || known.source})*` : '';
+        ? ` *(${provenanceSummary(known)})*` : '';
       lines.push(`- \`.${mod.text}\` — ${meaning}${provenance}`);
     }
   }
@@ -227,7 +257,7 @@ function modifierMarkdown(opcode, mod) {
   if (entry.class) extra.push(`class \`${entry.class}\``);
   extra.push(`postfix #${mod.tier === 3 ? '3+' : mod.tier}`);
   lines.push('', `*${extra.join(' · ')}*`);
-  lines.push(sourceNote(entry.source));
+  lines.push(sourceNote(entry));
   return lines.join('\n');
 }
 
@@ -280,7 +310,7 @@ function tokenMarkdown(token, parsed) {
       return immediateMarkdown(token, opcode);
     case 'reuse': {
       const entry = data.lookupModifier(null, 'reuse');
-      return entry ? `### \`.reuse\`\n\n${entry.desc}${sourceNote(entry.source)}` : null;
+      return entry ? `### \`.reuse\`\n\n${entry.desc}${sourceNote(entry)}` : null;
     }
     default:
       return null;

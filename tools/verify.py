@@ -133,12 +133,34 @@ else:
     bad("opcodes-extra.json _meta.opcode_count disagrees with the table")
 
 VALID_SOURCES = set(modifiers["_meta"]["sources"])
+VALID_CONFIDENCE = set(modifiers["_meta"].get("confidence", {}))
+VALID_REFERENCES = set(modifiers["_meta"].get("references", {}))
 bad_sources = []
+bad_provenance = []
 mod_count = 0
+
+
+def check_modifier_provenance(label, entry):
+    source_ref = entry.get("source_ref")
+    confidence = entry.get("confidence")
+    targets = entry.get("targets")
+    if source_ref and source_ref not in VALID_REFERENCES:
+        bad_provenance.append("%s source_ref=%s" % (label, source_ref))
+    if confidence and confidence not in VALID_CONFIDENCE:
+        bad_provenance.append("%s confidence=%s" % (label, confidence))
+    if targets is not None and (not isinstance(targets, list) or not targets or
+                                any(not re.fullmatch(r"sm_\d+a?", target)
+                                    for target in targets)):
+        bad_provenance.append("%s targets=%r" % (label, targets))
+    if entry.get("source") == "sass-king" and not (source_ref and confidence and targets):
+        bad_provenance.append("%s incomplete SASS King provenance" % label)
+
+
 for name, entry in modifiers["generic"].items():
     mod_count += 1
     if entry.get("source") not in VALID_SOURCES:
         bad_sources.append("generic.%s" % name)
+    check_modifier_provenance("generic.%s" % name, entry)
 for gname, group in modifiers["groups"].items():
     if "opcodes" not in group or "mods" not in group:
         bad("modifier group %s is missing opcodes/mods" % gname)
@@ -146,10 +168,16 @@ for gname, group in modifiers["groups"].items():
         mod_count += 1
         if entry.get("source") not in VALID_SOURCES:
             bad_sources.append("%s.%s" % (gname, name))
+        check_modifier_provenance("%s.%s" % (gname, name), entry)
 if bad_sources:
     bad("modifier entries with an unknown `source`", " ".join(bad_sources[:10]))
 else:
     ok("every modifier entry (%d) declares a known source" % mod_count)
+
+if bad_provenance:
+    bad("modifier entries with invalid provenance metadata", " ".join(bad_provenance[:10]))
+else:
+    ok("modifier provenance references, confidence and targets are valid")
 
 # Group opcodes should be real opcodes, otherwise the group silently never applies.
 known_opcodes = set(opcodes["opcodes"]) | set(extra["opcodes"])

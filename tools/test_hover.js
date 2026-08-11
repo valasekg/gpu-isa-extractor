@@ -91,6 +91,8 @@ const lines = [
   '        /*0060*/ [B----4-:R-:W-:-:S02]  FADD.FTZ R5, R13, R0 ;',
   // Appended, so nothing above shifts. Two constants a reader meets constantly: the turns
   // factor every trig call multiplies by, and an exp() the compiler folded into exp2.
+  'QMMA.SF.16864.F32.E2M1.E3M2 R8, R4, R2, R8, R10, 0x0 ;',
+  'STSM.8.MT168.4 [R12], R16 ;',
   'FMUL R5, R4, 0x3e22f983 ;',
   'FMUL R7, R6, 0xc10a7fac ;',
   // The spelling that actually turns up: a float immediate prints in DECIMAL, so these are
@@ -98,6 +100,8 @@ const lines = [
   'FMUL R5, R4, 0.15915493667125701904 ;',
   'FFMA R7, R6, -8.656169891357421875, RZ ;'
 ];
+const QMMA_LINE = lines.length - 6;
+const STSM_LINE = lines.length - 5;
 const TRIG_LINE = lines.length - 4;
 const FOLD_LINE = lines.length - 3;
 const TRIG_DECIMAL_LINE = lines.length - 2;
@@ -141,6 +145,22 @@ console.log('\n1. Opcode and postfix tooltips');
   const hover = hoverAt(4, 'IPA', 1);
   check(body(hover).includes('graphics-pipeline instruction'),
     'graphics opcode hover distinguishes reconstructed documentation', body(hover));
+}
+{
+  const hover = hoverAt(QMMA_LINE, '.E2M1', 2);
+  const text = body(hover);
+  check(text.includes('FP4 with a 2-bit exponent and 1-bit mantissa'),
+    'Blackwell QMMA input-format hover resolves the imported semantics', text);
+  check(text.includes('SASS King QMMA encoding notes') &&
+        text.includes('confidence: direct observation') &&
+        text.includes('observed target: SM120a'),
+    'imported modifier hover shows a pinned source, confidence, and target', text);
+}
+{
+  const hover = hoverAt(STSM_LINE, '.8', 1);
+  const text = body(hover);
+  check(text.includes('rejected for plain SM120') && text.includes('observed target: SM120a'),
+    'target-qualified STSM.8 hover preserves the negative SM120 evidence', text);
 }
 
 console.log('\n2. Operand tooltips');

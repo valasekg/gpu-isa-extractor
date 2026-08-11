@@ -7,7 +7,23 @@
    "ptx": "Semantics documented in the PTX ISA for the corresponding PTX instruction, which SASS mirrors closely.",
    "slides": "Stated in the GPGPU Arch 07 - NVIDIA Ampere deep dive lecture notes.",
    "community": "Established by published reverse-engineering, chiefly arXiv:1903.07486 (Dissecting the NVidia Turing T4 GPU) and the Maxwell-era assembler work.",
-   "corpus": "Read off observed disassembly; the reading is consistent with every occurrence seen but is not independently confirmed."
+   "corpus": "Read off observed disassembly; the reading is consistent with every occurrence seen but is not independently confirmed.",
+   "sass-king": "Controlled SM120/SM120a reverse-engineering from the SASS King project; the entry links to a revision-pinned evidence page."
+  },
+  "confidence": {
+   "observed": "Directly observed in controlled SASS dumps, compiler results, or runtime probes.",
+   "inferred": "Inferred from controlled comparisons; useful for readout, but not an NVIDIA-published semantic guarantee."
+  },
+  "references": {
+   "sass-king-qmma": { "label": "SASS King QMMA encoding notes", "url": "https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/knowledge/encoding/QMMA.md" },
+   "sass-king-omma": { "label": "SASS King OMMA pattern", "url": "https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/patterns/04-omma-block-scaled-fp4-accumulator-chain.md" },
+   "sass-king-ldsm": { "label": "SASS King LDSM encoding notes", "url": "https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/knowledge/encoding/LDSM.md" },
+   "sass-king-stsm": { "label": "SASS King STSM encoding notes", "url": "https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/knowledge/encoding/STSM.md" },
+   "sass-king-reconvergence": { "label": "SASS King reconvergence pattern", "url": "https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/patterns/08-divergence-and-reconvergence-control.md" },
+   "sass-king-wide-global": { "label": "SASS King vectorized-global-memory pattern", "url": "https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/patterns/11-vectorized-global-memory-access.md" },
+   "sass-king-redux": { "label": "SASS King warp-reduction pattern", "url": "https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/patterns/01-warp-reduction.md" },
+   "sass-king-redg": { "label": "SASS King REDG reduction pattern", "url": "https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/patterns/28-global-reduction-epilogue-with-redg.md" },
+   "sass-king-trap": { "label": "SASS King cold-trap pattern", "url": "https://github.com/florianmattana/sass-king/blob/079016969849858c781f8ff315fc018cc04a89ed/patterns/29-cold-error-and-trap-path.md" }
   }
  },
 
@@ -181,7 +197,8 @@
     "ALL": { "desc": "Wait for every lane in the mask before proceeding.", "class": "branch", "source": "community" },
     "EXCLUSIVE": { "desc": "Only the lanes in the mask participate; the rest continue.", "class": "branch", "source": "corpus" },
     "32": { "desc": "Move the 32-bit convergence-barrier state.", "class": "width", "source": "corpus" },
-    "CLEAR": { "desc": "Clear the source convergence-barrier state after moving it.", "class": "branch", "source": "corpus" }
+    "CLEAR": { "desc": "Clear the source convergence-barrier state after moving it.", "class": "branch", "source": "corpus" },
+    "RECONVERGENT": { "desc": "Marks a compiler-managed reconvergence region: BSSY establishes the region and BSYNC rejoins it after divergent control flow.", "class": "branch", "source": "sass-king", "source_ref": "sass-king-reconvergence", "targets": ["sm_120", "sm_120a"], "confidence": "observed" }
    }
   },
 
@@ -195,6 +212,15 @@
     "ACCESS": { "desc": "Take the normal cached path rather than bypassing.", "class": "cache", "source": "corpus" },
     "LTC128B": { "desc": "128-byte L2 cache-line granularity hint for the access.", "class": "cache", "source": "corpus" },
     "SYS": { "desc": "Scope: system-wide, covering the host and peer devices.", "class": "scope", "source": "ptx" }
+   }
+  },
+
+  "wide_global": {
+   "desc": "SM120 wide global-memory access forms.",
+   "opcodes": ["LDG", "STG"],
+   "mods": {
+    "256": { "desc": "256-bit global-memory access spanning eight consecutive registers. The observed SASS form also carries `.ENL2` and names two register bases.", "class": "width", "source": "sass-king", "source_ref": "sass-king-wide-global", "targets": ["sm_120", "sm_120a"], "confidence": "observed" },
+    "ENL2": { "desc": "Extended form observed with the 256-bit LDG/STG encoding, which names two register bases. Cache, ordering, and latency implications beyond that observed role are not established.", "class": "encoding", "source": "sass-king", "source_ref": "sass-king-wide-global", "targets": ["sm_120", "sm_120a"], "confidence": "observed" }
    }
   },
 
@@ -217,13 +243,49 @@
    }
   },
 
+  "redg": {
+   "desc": "Global-memory reduction/writeback forms.",
+   "opcodes": ["REDG"],
+   "mods": {
+    "ADD": { "desc": "Add the source value into the addressed global-memory destination. Observed as a reduction/atomic writeback rather than a plain store.", "class": "atomic", "source": "sass-king", "source_ref": "sass-king-redg", "targets": ["sm_120a"], "confidence": "observed" }
+   }
+  },
+
+  "redux": {
+   "desc": "Warp-level reductions into a uniform destination.",
+   "opcodes": ["REDUX"],
+   "mods": {
+    "SUM": { "desc": "Reduce participating warp lanes by addition.", "class": "warp", "source": "sass-king", "source_ref": "sass-king-redux", "targets": ["sm_120"], "confidence": "observed" },
+    "MIN": { "desc": "Reduce participating warp lanes by minimum.", "class": "warp", "source": "sass-king", "source_ref": "sass-king-redux", "targets": ["sm_120"], "confidence": "observed" },
+    "MAX": { "desc": "Reduce participating warp lanes by maximum.", "class": "warp", "source": "sass-king", "source_ref": "sass-king-redux", "targets": ["sm_120"], "confidence": "observed" },
+    "OR": { "desc": "Reduce participating warp lanes with bitwise OR.", "class": "warp", "source": "sass-king", "source_ref": "sass-king-redux", "targets": ["sm_120"], "confidence": "observed" },
+    "XOR": { "desc": "Reduce participating warp lanes with bitwise XOR.", "class": "warp", "source": "sass-king", "source_ref": "sass-king-redux", "targets": ["sm_120"], "confidence": "observed" }
+   }
+  },
+
   "ldsm": {
    "desc": "Warp-level matrix loads from shared memory.",
    "opcodes": ["LDSM"],
    "mods": {
-    "16": { "desc": "Load 16-bit matrix elements.", "class": "type", "source": "community" },
-    "M88": { "desc": "Use an 8 by 8 matrix fragment layout.", "class": "shape", "source": "community" },
-    "4": { "desc": "Load four matrix fragments into four consecutive, naturally aligned destination registers.", "class": "shape", "source": "community" }
+    "16": { "desc": "Load 16-bit matrix elements.", "class": "type", "source": "sass-king", "source_ref": "sass-king-ldsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" },
+    "M88": { "desc": "Use the non-transposed 8 by 8 matrix-fragment layout.", "class": "shape", "source": "sass-king", "source_ref": "sass-king-ldsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" },
+    "MT88": { "desc": "Use the transposed 8 by 8 matrix-fragment layout; the `T` marks the observed transpose form.", "class": "shape", "source": "sass-king", "source_ref": "sass-king-ldsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" },
+    "2": { "desc": "Load two matrix-fragment groups; the destination register footprint grows with this width suffix.", "class": "width", "source": "sass-king", "source_ref": "sass-king-ldsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" },
+    "4": { "desc": "Load four matrix-fragment groups; the destination register footprint grows with this width suffix.", "class": "width", "source": "sass-king", "source_ref": "sass-king-ldsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" }
+   }
+  },
+
+  "stsm": {
+   "desc": "Warp-level matrix stores from registers to shared memory.",
+   "opcodes": ["STSM"],
+   "mods": {
+    "16": { "desc": "Store 16-bit matrix elements.", "class": "type", "source": "sass-king", "source_ref": "sass-king-stsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" },
+    "8": { "desc": "Store 8-bit matrix elements. This b8 STSM path was accepted for SM120a and rejected for plain SM120 in the controlled source probe.", "class": "type", "source": "sass-king", "source_ref": "sass-king-stsm", "targets": ["sm_120a"], "confidence": "observed" },
+    "M88": { "desc": "Use the non-transposed 8 by 8 matrix-fragment layout.", "class": "shape", "source": "sass-king", "source_ref": "sass-king-stsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" },
+    "MT88": { "desc": "Use the transposed 8 by 8 matrix-fragment layout; the `T` marks the observed transpose form.", "class": "shape", "source": "sass-king", "source_ref": "sass-king-stsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" },
+    "MT168": { "desc": "Use the transposed 16 by 8 matrix-fragment layout observed for the SM120a b8 store path.", "class": "shape", "source": "sass-king", "source_ref": "sass-king-stsm", "targets": ["sm_120a"], "confidence": "observed" },
+    "2": { "desc": "Store two matrix-fragment groups; the source register footprint and shared-memory footprint grow with this suffix.", "class": "width", "source": "sass-king", "source_ref": "sass-king-stsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" },
+    "4": { "desc": "Store four matrix-fragment groups; the source register footprint and shared-memory footprint grow with this suffix.", "class": "width", "source": "sass-king", "source_ref": "sass-king-stsm", "targets": ["sm_120", "sm_120a"], "confidence": "observed" }
    }
   },
 
@@ -301,6 +363,41 @@
     "ROW": { "desc": "Row-major operand layout.", "class": "shape", "source": "community" },
     "COL": { "desc": "Column-major operand layout.", "class": "shape", "source": "community" },
     "SP": { "desc": "Structured-sparsity variant: one operand is 2:4 sparse, which doubles throughput.", "class": "shape", "source": "slides" }
+   }
+  },
+
+  "qmma": {
+   "desc": "Blackwell FP8/FP6/FP4 matrix multiply-accumulate forms.",
+   "opcodes": ["QMMA"],
+   "mods": {
+    "SF": { "desc": "Scale-factor mode: the instruction carries additional scale-factor operands alongside the matrix fragments and accumulator.", "class": "tensor", "source": "sass-king", "source_ref": "sass-king-qmma", "targets": ["sm_120a"], "confidence": "observed" },
+    "16864": { "desc": "Tile shape M16 N8 K64, observed on sparse QMMA forms with metadata operands.", "class": "shape", "source": "sass-king", "source_ref": "sass-king-qmma", "targets": ["sm_120a"], "confidence": "observed" },
+    "E2M1": { "desc": "Input element format: FP4 with a 2-bit exponent and 1-bit mantissa.", "class": "type", "source": "sass-king", "source_ref": "sass-king-qmma", "targets": ["sm_120a"], "confidence": "observed" },
+    "E3M2": { "desc": "Input element format: FP6 with a 3-bit exponent and 2-bit mantissa.", "class": "type", "source": "sass-king", "source_ref": "sass-king-qmma", "targets": ["sm_120a"], "confidence": "observed" },
+    "E2M3": { "desc": "Input element format: FP6 with a 2-bit exponent and 3-bit mantissa.", "class": "type", "source": "sass-king", "source_ref": "sass-king-qmma", "targets": ["sm_120a"], "confidence": "observed" },
+    "E8": { "desc": "Scale-factor format emitted for the observed E8/UE8M0 block-scale path.", "class": "type", "source": "sass-king", "source_ref": "sass-king-qmma", "targets": ["sm_120a"], "confidence": "observed" }
+   }
+  },
+
+  "omma": {
+   "desc": "Blackwell block-scaled FP4 matrix multiply-accumulate forms.",
+   "opcodes": ["OMMA"],
+   "mods": {
+    "SF": { "desc": "Scale-factor mode: the instruction carries explicit scale operands in addition to its matrix fragments and accumulator.", "class": "tensor", "source": "sass-king", "source_ref": "sass-king-omma", "targets": ["sm_120a"], "confidence": "observed" },
+    "16864": { "desc": "Tile shape M16 N8 K64 for the observed dense block-scaled FP4 OMMA form.", "class": "shape", "source": "sass-king", "source_ref": "sass-king-omma", "targets": ["sm_120a"], "confidence": "observed" },
+    "168128": { "desc": "Tile shape M16 N8 K128 for the observed sparse block-scaled FP4 OMMA form.", "class": "shape", "source": "sass-king", "source_ref": "sass-king-omma", "targets": ["sm_120a"], "confidence": "observed" },
+    "E2M1": { "desc": "Input element format: FP4 with a 2-bit exponent and 1-bit mantissa.", "class": "type", "source": "sass-king", "source_ref": "sass-king-omma", "targets": ["sm_120a"], "confidence": "observed" },
+    "E8": { "desc": "Scale-factor format emitted for the observed default 2X E8/UE8M0 block-scale path.", "class": "type", "source": "sass-king", "source_ref": "sass-king-omma", "targets": ["sm_120a"], "confidence": "observed" },
+    "UE4M3": { "desc": "Unsigned E4M3 scale-factor format used by the observed fine-grained FP4 scale path.", "class": "type", "source": "sass-king", "source_ref": "sass-king-omma", "targets": ["sm_120a"], "confidence": "observed" },
+    "4X": { "desc": "Select the observed 4X scale-vector mode, paired with `.UE4M3` on the fine-grained FP4 path.", "class": "tensor", "source": "sass-king", "source_ref": "sass-king-omma", "targets": ["sm_120a"], "confidence": "observed" }
+   }
+  },
+
+  "bpt": {
+   "desc": "Breakpoint and trap forms.",
+   "opcodes": ["BPT"],
+   "mods": {
+    "TRAP": { "desc": "Trap form. Observed behind guarded cold/error paths; the opcode alone does not prove a source-level assert or that the path is unreachable.", "class": "branch", "source": "sass-king", "source_ref": "sass-king-trap", "targets": ["sm_120", "sm_120a"], "confidence": "inferred" }
    }
   },
 
