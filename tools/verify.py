@@ -224,95 +224,140 @@ def walk_regexes(node, path="$"):
             yield from walk_regexes(v, "%s[%d]" % (path, i))
 
 
+# One descriptor per ISA dialect this extension both highlights and parses.
+#
+# There is one today, and a loop over one entry proves nothing by itself. It is written this
+# way because the alternative, when a second ISA arrives, is hand-duplicating eighty lines of
+# capture-index arithmetic - and a check that has to be copied to keep covering the code is a
+# check that stops covering it. The grammar and the parser are two independent statements about
+# the same line format, and this block exists to make them disagree loudly; that value is per
+# dialect, so the block is per dialect too.
+#
+# `opcode_capture` is the load-bearing number. TextMate capture indices are positional, so
+# adding one group anywhere in the `begin` regex renumbers everything after it and silently
+# moves the opcode somewhere the beginCaptures no longer scope.
+DIALECT_GRAMMARS = [
+    {
+        "label": "NVIDIA SASS",
+        "grammar": "syntaxes/sass.tmLanguage.json",
+        "parser": ("src", "parse.js"),
+        "opcode_capture": 28,
+        "opcode_scope": "keyword.other.opcode.sass",
+        # Every prefix form has to leave the opcode in the same capture, or the renumbering
+        # broke one of them. The bracketed column is the one this extension emits; the rest are
+        # inputs it reads.
+        "prefix_forms": [
+            ("no prefix", "        ISETP.GE.AND P0, PT, R0, 0x80, PT ;", "ISETP"),
+            ("Maxwell control column",
+             "01:-:-:Y:d      ISETP.GE.AND P0, PT, R0, 0x80, PT ;", "ISETP"),
+            ("nvdisasm address",
+             "        /*0130*/ ISETP.GE.AND P0, PT, R0, 0x80, PT ;", "ISETP"),
+            ("Nsight address", "0x0000000300000030  ISETP.GE.AND P0, PT, R0, 0x80, PT",
+             "ISETP"),
+            ("Volta+ control column",
+             "        /*0130*/ [B--2---:R-:W0:Y:S04]  ISETP.GE.AND P0, PT, R0, 0x80, PT ;",
+             "ISETP"),
+            ("Volta+ control column with guard",
+             "        /*0310*/ [B------:R-:W-:-:S01]  @!P0 BRA 0x3a0 ;", "BRA"),
+            ("Volta+ control column, no address",
+             "[B0-----:R1:W-:Y:S12]  IADD3 R2, R3, R4, RZ ;", "IADD3"),
+        ],
+        # The column's five value captures must land on the control-code scopes, otherwise the
+        # column renders as punctuation and the era distinction is invisible.
+        #
+        # The roots differ per field on purpose. A scope is only coloured by a theme that has a
+        # rule matching one of its dot-prefixes, and `constant.other` is not such a rule in the
+        # default theme family - dark_vs defines constant.language, constant.numeric,
+        # constant.regexp and constant.character but nothing bare enough to catch
+        # constant.other. Scoping all five fields under it left the control column at plain
+        # foreground in Dark+, Dark Modern, Light+ and both high-contrast themes: 8 of the 19
+        # built-in themes, and the most used ones. These roots are styled by 18 or 19 of the 19,
+        # and give the column three distinct colours instead of none.
+        "column_name": "Volta+ control column",
+        "column_sample": "Volta+ control column",         # which prefix form to match against
+        "column_captures": {
+            15: ("variable.other.control-code.wait-barrier", "B--2---"),
+            17: ("variable.other.control-code.read-barrier", "R-"),
+            19: ("variable.other.control-code.write-barrier", "W0"),
+            21: ("constant.language.control-code.yield", "Y"),
+            23: ("constant.numeric.control-code.stall", "S04"),
+        },
+        # The parser and the grammar have to agree on the column's shape, or highlight and
+        # hover drift apart.
+        "parser_pattern": r"CONTROL_COLUMN_VOLTA_RE\s*=\s*/\^\\\[\(B\[0-5-\]\{6\}\)",
+        "parser_symbol": "CONTROL_COLUMN_VOLTA_RE",
+    },
+]
+
 regex_count = 0
 regex_bad = 0
-for where, pattern in walk_regexes(grammar):
-    regex_count += 1
-    try:
-        re.compile(pattern)
-    except re.error as e:
-        regex_bad += 1
-        bad("grammar regex does not compile at %s" % where, "%s\n%s" % (e, pattern))
+for dialect in DIALECT_GRAMMARS:
+    for where, pattern in walk_regexes(docs[dialect["grammar"]]):
+        regex_count += 1
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            regex_bad += 1
+            bad("grammar regex does not compile at %s (%s)" % (where, dialect["label"]),
+                "%s\n%s" % (e, pattern))
 if regex_bad == 0:
     ok("all %d grammar regexes compile (Python re; Oniguruma is the real engine)" % regex_count)
 
-# A control column and its instruction start at the same position. The instruction rule must
-# consume both; otherwise TextMate matches the standalone control-column rule first and can
-# never reach the opcode because the instruction rule is line-anchored.
-instruction_rule = grammar["repository"]["instruction"]
-instruction_re = re.compile(instruction_rule["begin"])
-opcode_capture = 28
+for dialect in DIALECT_GRAMMARS:
+    label = dialect["label"]
+    capture = dialect["opcode_capture"]
 
-if (instruction_rule["beginCaptures"].get(str(opcode_capture), {}).get("name")
-        == "keyword.other.opcode.sass"):
-    ok("the instruction rule scopes capture %d as the opcode" % opcode_capture)
-else:
-    bad("capture %d is not the opcode - the begin regex and beginCaptures have drifted apart"
-        % opcode_capture)
+    # A control column and its instruction start at the same position. The instruction rule
+    # must consume both; otherwise TextMate matches the standalone control-column rule first
+    # and can never reach the opcode, because the instruction rule is line-anchored.
+    instruction_rule = docs[dialect["grammar"]]["repository"]["instruction"]
+    instruction_re = re.compile(instruction_rule["begin"])
 
-# Every prefix form has to leave the opcode in the same capture, or the renumbering broke one
-# of them. The bracketed column is the one this extension emits; the rest are inputs it reads.
-PREFIX_FORMS = [
-    ("no prefix", "        ISETP.GE.AND P0, PT, R0, 0x80, PT ;", "ISETP"),
-    ("Maxwell control column", "01:-:-:Y:d      ISETP.GE.AND P0, PT, R0, 0x80, PT ;", "ISETP"),
-    ("nvdisasm address", "        /*0130*/ ISETP.GE.AND P0, PT, R0, 0x80, PT ;", "ISETP"),
-    ("Nsight address", "0x0000000300000030  ISETP.GE.AND P0, PT, R0, 0x80, PT", "ISETP"),
-    ("Volta+ control column",
-     "        /*0130*/ [B--2---:R-:W0:Y:S04]  ISETP.GE.AND P0, PT, R0, 0x80, PT ;", "ISETP"),
-    ("Volta+ control column with guard",
-     "        /*0310*/ [B------:R-:W-:-:S01]  @!P0 BRA 0x3a0 ;", "BRA"),
-    ("Volta+ control column, no address",
-     "[B0-----:R1:W-:Y:S12]  IADD3 R2, R3, R4, RZ ;", "IADD3"),
-]
-lost = []
-for label, line, expected in PREFIX_FORMS:
-    m = instruction_re.match(line)
-    if not m or m.group(opcode_capture) != expected:
-        lost.append("%s -> %s (expected %s)"
-                    % (label, m.group(opcode_capture) if m else "no match", expected))
-if lost:
-    bad("the instruction rule loses the opcode after some line prefixes", "\n".join(lost))
-else:
-    ok("the instruction rule keeps the opcode in capture %d across all %d line prefixes"
-       % (opcode_capture, len(PREFIX_FORMS)))
+    if (instruction_rule["beginCaptures"].get(str(capture), {}).get("name")
+            == dialect["opcode_scope"]):
+        ok("the %s instruction rule scopes capture %d as the opcode" % (label, capture))
+    else:
+        bad("capture %d is not the %s opcode - the begin regex and beginCaptures have drifted "
+            "apart" % (capture, label))
 
-# The Volta+ column's five value captures must land on the control-code scopes, otherwise the
-# column renders as punctuation and the era distinction is invisible.
-#
-# The roots differ per field on purpose. A scope is only coloured by a theme that has a rule
-# matching one of its dot-prefixes, and `constant.other` is not such a rule in the default
-# theme family - dark_vs defines constant.language, constant.numeric, constant.regexp and
-# constant.character but nothing bare enough to catch constant.other. Scoping all five fields
-# under it left the control column at plain foreground in Dark+, Dark Modern, Light+ and both
-# high-contrast themes: 8 of the 19 built-in themes, and the most used ones. These roots are
-# styled by 18 or 19 of the 19, and give the column three distinct colours instead of none.
-VOLTA_FIELD_CAPTURES = {
-    15: ("variable.other.control-code.wait-barrier", "B--2---"),
-    17: ("variable.other.control-code.read-barrier", "R-"),
-    19: ("variable.other.control-code.write-barrier", "W0"),
-    21: ("constant.language.control-code.yield", "Y"),
-    23: ("constant.numeric.control-code.stall", "S04"),
-}
-volta_match = instruction_re.match(PREFIX_FORMS[4][1])          # the bracketed-column sample
-wrong = []
-for group, (expected_scope, text) in VOLTA_FIELD_CAPTURES.items():
-    scope = instruction_rule["beginCaptures"].get(str(group), {}).get("name", "")
-    if not scope.startswith(expected_scope):
-        wrong.append("capture %d is scoped %r" % (group, scope))
-    elif volta_match and volta_match.group(group) != text:
-        wrong.append("capture %d matched %r, expected %r"
-                     % (group, volta_match.group(group), text))
-if wrong:
-    bad("the Volta+ control column's fields are mis-captured or mis-scoped", "\n".join(wrong))
-else:
-    ok("the Volta+ control column captures and scopes all five fields")
+    lost = []
+    for prefix_label, line, expected in dialect["prefix_forms"]:
+        m = instruction_re.match(line)
+        if not m or m.group(capture) != expected:
+            lost.append("%s -> %s (expected %s)"
+                        % (prefix_label, m.group(capture) if m else "no match", expected))
+    if lost:
+        bad("the %s instruction rule loses the opcode after some line prefixes" % label,
+            "\n".join(lost))
+    else:
+        ok("the %s instruction rule keeps the opcode in capture %d across all %d line prefixes"
+           % (label, capture, len(dialect["prefix_forms"])))
 
-# The parser and the grammar have to agree on the column's shape, or highlight and hover drift.
-parse_src = open(rel("src", "parse.js"), encoding="utf-8").read()
-if re.search(r"CONTROL_COLUMN_VOLTA_RE\s*=\s*/\^\\\[\(B\[0-5-\]\{6\}\)", parse_src):
-    ok("parse.js recognises the same bracketed control column the grammar does")
-else:
-    bad("parse.js has no CONTROL_COLUMN_VOLTA_RE matching the grammar's column shape")
+    sample = next(form for form in dialect["prefix_forms"]
+                  if form[0] == dialect["column_sample"])
+    column_match = instruction_re.match(sample[1])
+    wrong = []
+    for group, (expected_scope, text) in dialect["column_captures"].items():
+        scope = instruction_rule["beginCaptures"].get(str(group), {}).get("name", "")
+        if not scope.startswith(expected_scope):
+            wrong.append("capture %d is scoped %r" % (group, scope))
+        elif column_match and column_match.group(group) != text:
+            wrong.append("capture %d matched %r, expected %r"
+                         % (group, column_match.group(group), text))
+    if wrong:
+        bad("the %s's fields are mis-captured or mis-scoped" % dialect["column_name"],
+            "\n".join(wrong))
+    else:
+        ok("the %s captures and scopes all %d fields"
+           % (dialect["column_name"], len(dialect["column_captures"])))
+
+    parser_name = dialect["parser"][-1]
+    parse_src = open(rel(*dialect["parser"]), encoding="utf-8").read()
+    if re.search(dialect["parser_pattern"], parse_src):
+        ok("%s recognises the same control column the %s grammar does" % (parser_name, label))
+    else:
+        bad("%s has no %s matching the grammar's column shape"
+            % (parser_name, dialect["parser_symbol"]))
 
 # A scoreboard slot inside a control column is a bare digit sitting between dashes. Editor
 # features that resolve "the word at the cursor" - ctrl+click, double-click, and VS Code's own
@@ -335,8 +380,13 @@ if word_pattern:
         bad("wordPattern does not compile", e)
 
 # Also check the language-configuration and firstLine patterns.
-for where, pattern in [("languages[0].firstLine",
-                        manifest["contributes"]["languages"][0].get("firstLine", ""))]:
+#
+# Every declared language, resolved by its id rather than by position. `languages[0]` is right
+# today because there is one language; the moment there is a second, the check silently stops
+# covering it while still reporting a pass - and `firstLine` is what decides whether a listing
+# opens as the language that produced it.
+for where, pattern in [("languages[%s].firstLine" % lang["id"], lang.get("firstLine", ""))
+                       for lang in manifest["contributes"]["languages"]]:
     if not pattern:
         continue
     try:
@@ -351,7 +401,13 @@ print("\n4. Manifest wiring")
 
 contributes = manifest["contributes"]
 
-referenced = [manifest["main"], contributes["languages"][0]["configuration"]]
+referenced = [manifest["main"]]
+# Every language's own configuration file, not the first one's. Two languages may legitimately
+# point at the SAME file - which is the recommendation for a second ISA dialect - so this is
+# de-duplicated rather than assumed distinct.
+for lang in contributes["languages"]:
+    if lang.get("configuration") and lang["configuration"] not in referenced:
+        referenced.append(lang["configuration"])
 referenced += [g["path"] for g in contributes["grammars"]]
 referenced += [t["path"] for t in contributes["themes"]]
 for path in referenced:
@@ -374,8 +430,19 @@ sys.path.insert(0, rel("tools"))
 package_vsix = __import__("package_vsix")
 shipped = {arc[len("extension/"):] for arc, _ in package_vsix.collect()}
 missing_ship = []
-for src_name in sorted(os.listdir(rel("src"))) + ["extension.js"]:
-    src_path = rel("src", src_name) if src_name != "extension.js" else rel("extension.js")
+# `os.walk`, not `os.listdir`: the latter never descends, so a module in a subdirectory was
+# checked as a require TARGET and never as a require SOURCE. `src/vendor/fzstd.js` is exactly
+# that - `zstd.js:24` pulls it in, so its existence was proven, but anything it required itself
+# was invisible to this check.
+walked = sorted(
+    os.path.relpath(os.path.join(where, name), rel("src")).replace(os.sep, "/")
+    for where, _dirs, names in os.walk(rel("src"))
+    for name in names
+    if name.endswith(".js")
+)
+for src_name in walked + ["extension.js"]:
+    src_path = rel("src", *src_name.split("/")) if src_name != "extension.js" \
+        else rel("extension.js")
     if not src_path.endswith(".js"):
         continue
     base = os.path.dirname(src_path)
@@ -457,12 +524,21 @@ else:
 # Settings are read by string. A rename on one side only is silent: the code keeps reading
 # the old name and quietly gets the default forever.
 declared_settings = set(contributes.get("configuration", {}).get("properties", {}))
-JS_SOURCES = ("extension.js", "src/pipeline.js", "src/output.js", "src/doctor.js",
-              "src/semantic.js", "src/hover.js", "src/blobstore.js", "src/tree.js",
-              "src/browser.js", "src/review.js", "src/scoreboard.js", "src/highlight.js",
-              "src/symbols.js", "src/stats.js", "src/nvcache.js", "src/compile.js",
-              "src/compileview.js", "src/cubin.js", "src/correlate.js")
-JS_SOURCES = tuple(s for s in JS_SOURCES if os.path.exists(rel(*s.split("/"))))
+# Discovered rather than listed. A hand-maintained tuple silently omits a new module - and it
+# was worse than that: the `os.path.exists` filter that used to follow dropped a misspelt entry
+# without a word, so a module could be renamed and its settings would stop being checked while
+# the suite still reported a pass. `src/vendor/` is excluded because it is third-party code
+# that reads none of this extension's settings.
+JS_SOURCES = tuple(
+    ["extension.js"] +
+    sorted(
+        os.path.relpath(os.path.join(where, name), ROOT).replace(os.sep, "/")
+        for where, _dirs, names in os.walk(rel("src"))
+        if "vendor" not in os.path.relpath(where, ROOT).split(os.sep)
+        for name in names
+        if name.endswith(".js")
+    )
+)
 
 # A configuration section is reached either directly (`getConfiguration('x').get('y')`) or
 # through a local (`const s = getConfiguration('x'); ... s.get('y')`). Both forms are in use,
@@ -622,19 +698,33 @@ else:
     bad("semantic token modifiers emitted but not declared in package.json",
         " ".join(sorted(js_mods - declared_mods)))
 
-scope_map = contributes["semanticTokenScopes"][0]["scopes"]
-scope_types = {selector.split(".")[0] for selector in scope_map}
-undeclared = scope_types - declared_types
-if undeclared:
-    bad("semanticTokenScopes names an undeclared type", " ".join(sorted(undeclared)))
-else:
-    ok("semanticTokenScopes only names declared types")
+# One entry per language, each checked. This used to read `semanticTokenScopes[0]`, which is
+# the only entry today - but these scopes are what give every semantic token a colour in themes
+# that do not opt into semantic highlighting, so a second language whose entry went unchecked
+# would lose its fallbacks silently, in exactly the themes least able to survive it.
+semantic_scope_entries = contributes["semanticTokenScopes"]
+scope_types = set()
+scope_map = {}
+for entry in semantic_scope_entries:
+    entry_map = entry["scopes"]
+    where = entry.get("language", "(no language)")
+    entry_types = {selector.split(".")[0] for selector in entry_map}
+    scope_types |= entry_types
+    scope_map.update(entry_map)
 
-unmapped = declared_types - scope_types
-if unmapped:
-    warn("declared semantic types with no TextMate fallback scope", " ".join(sorted(unmapped)))
-else:
-    ok("every semantic type has a TextMate fallback scope")
+    undeclared = entry_types - declared_types
+    if undeclared:
+        bad("semanticTokenScopes[%s] names an undeclared type" % where,
+            " ".join(sorted(undeclared)))
+    else:
+        ok("semanticTokenScopes[%s] only names declared types" % where)
+
+    unmapped = declared_types - entry_types
+    if unmapped:
+        warn("declared semantic types with no TextMate fallback scope in %s" % where,
+             " ".join(sorted(unmapped)))
+    else:
+        ok("every semantic type has a TextMate fallback scope in %s" % where)
 
 required_fallbacks = {
     "sassModifier.tier1",
@@ -659,11 +749,17 @@ fallback_scopes = sorted({scope for scopes in scope_map.values() for scope in sc
 
 print("\n5. Theme coverage")
 
+# Every declared grammar, not the one file this used to name. The themes have to cover the
+# scopes of all of them - and the stock-Dark+ fall-through check below, which HANDOFF.md records
+# as having caught a real bug, is only worth having if it sees a second grammar when there is
+# one.
 grammar_scopes = set()
-for node_scopes in re.findall(r'"(?:name|contentName)"\s*:\s*"([^"]+)"',
-                              open(rel("syntaxes", "sass.tmLanguage.json"), encoding="utf-8").read()):
-    if "." in node_scopes:                        # skip the grammar's own display name
-        grammar_scopes.add(node_scopes)
+for entry in contributes["grammars"]:
+    grammar_path = rel(*entry["path"].lstrip("./").split("/"))
+    for node_scopes in re.findall(r'"(?:name|contentName)"\s*:\s*"([^"]+)"',
+                                  open(grammar_path, encoding="utf-8").read()):
+        if "." in node_scopes:                    # skip the grammar's own display name
+            grammar_scopes.add(node_scopes)
 
 
 def covered_by(scope, rules):

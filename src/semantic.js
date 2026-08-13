@@ -2,7 +2,6 @@
 
 const vscode = require('vscode');
 const { parseLine } = require('./parse');
-const data = require('./data');
 
 /**
  * Semantic highlighting pass.
