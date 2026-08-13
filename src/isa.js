@@ -26,12 +26,13 @@
  */
 
 const nvidia = require('./isa_nvidia');
+const amd = require('./isa_amd');
 
-const TARGETS = { nvidia: nvidia.target };
-const DIALECTS = { 'nvidia-sass': nvidia.dialect };
+const TARGETS = { nvidia: nvidia.target, amd: amd.target };
+const DIALECTS = { 'nvidia-sass': nvidia.dialect, 'amd-rdna-isa': amd.dialect };
 
 /** Presentation order: the default first. Not alphabetical, and not insertion order by luck. */
-const ORDER = ['nvidia'];
+const ORDER = ['nvidia', 'amd'];
 
 const DEFAULT_TARGET = 'nvidia';
 
@@ -100,27 +101,65 @@ function isListingPath(file) {
 /**
  * Which target should compile this.
  *
- * One target, so one answer - but it is asked through here rather than assumed, so that the
- * call sites are already in place when there is a second. The signature takes what the
- * decision will need rather than what it needs today, because changing a signature later means
- * revisiting every call site, which is the thing this is trying to avoid.
+ * `auto` is resolved PER ROAD, not per machine, and the distinction is the whole of the
+ * design here:
+ *
+ *   compute        NVIDIA whenever ptxas resolves, unconditionally. ptxas cross-compiles for
+ *                  any architecture from a machine with no GPU at all, so making the installed
+ *                  adapter the discriminator would silently change what an existing machine
+ *                  does - a laptop with a Radeon in it would stop producing the SASS it
+ *                  produced yesterday.
+ *
+ *   a graphics     NVIDIA only when the Vulkan probe finds an NVIDIA device, because that road
+ *   stage         IS the local driver. Otherwise AMD, when RGA resolves. Without this split, a
+ *                  machine with the CUDA Toolkit installed and a Radeon fitted resolves NVIDIA,
+ *                  walks into vk_compile.py against a driver that enumerates no NVIDIA device,
+ *                  and fails - while the RGA road that would have worked is never considered.
+ *
+ * Neither branch asks about AMD hardware, because neither RGA mode needs any.
  *
  * @param {object} [request]
- * @param {string} [request.stage]     the shader stage, where one is known
- * @param {string} [request.requested] an explicit target id from a setting or a directive
- * @returns {{target, from: string}}
+ * @param {string} [request.stage]      the shader stage, where one is known
+ * @param {string} [request.requested]  an explicit id from the setting or the file's directive
+ * @param {object} [request.available]  {nvidia: bool, amd: bool} - what actually resolves here.
+ *   Passed in rather than probed, because probing costs process launches and the caller has
+ *   already done it. Absent means "do not consider availability", which is what keeps this
+ *   callable from a test with no toolchain at all.
+ * @returns {{target, from: string, alternative: ?object}}
  */
-function resolveTarget({ stage, requested } = {}) {
-  void stage;
+function resolveTarget({ stage, requested, available } = {}) {
   if (requested && requested !== 'auto') {
     const chosen = get(requested);
     if (!chosen) {
       throw new Error(
         `${requested} is not a target this can compile for. Available: ${ORDER.join(', ')}.`);
     }
-    return { target: chosen, from: 'the target setting' };
+    return { target: chosen, from: 'the compile.target setting', alternative: null };
   }
-  return { target: TARGETS[DEFAULT_TARGET], from: 'the only target installed' };
+
+  const can = id => !available || available[id] !== false;
+  const road = stage ? (TARGETS.nvidia.roadFor(stage) || null) : null;
+
+  // Compute, or a stage nobody named: hardware-blind, because ptxas is.
+  if (!stage || road === 'cuda') {
+    if (can('nvidia')) {
+      return { target: TARGETS.nvidia, from: 'the compute road cross-compiles from anywhere',
+        alternative: can('amd') ? TARGETS.amd : null };
+    }
+    if (can('amd')) return { target: TARGETS.amd, from: 'no CUDA toolchain here', alternative: null };
+  } else if (available && available.nvidiaDevice === false && can('amd')) {
+    // A graphics stage on a machine whose Vulkan probe finds no NVIDIA device. The NVIDIA road
+    // cannot work here and RGA can.
+    return { target: TARGETS.amd, from: 'no NVIDIA device for the driver road',
+      alternative: can('nvidia') ? TARGETS.nvidia : null };
+  } else if (can('nvidia')) {
+    return { target: TARGETS.nvidia, from: 'the local driver compiles graphics stages',
+      alternative: can('amd') ? TARGETS.amd : null };
+  } else if (can('amd')) {
+    return { target: TARGETS.amd, from: 'no NVIDIA toolchain here', alternative: null };
+  }
+
+  return { target: TARGETS[DEFAULT_TARGET], from: 'the default', alternative: null };
 }
 
 module.exports = {

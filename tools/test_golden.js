@@ -544,5 +544,73 @@ check(nvidiaTarget.refusalFor('compute') === null,
 check(typeof nvidiaTarget.refusalFor('nonesuch') === 'string',
   'a stage that is not gets one');
 
+section('8. The second target is a row, and says what it cannot do');
+
+const amd = isa.get('amd');
+check(amd !== null, 'the registry has an AMD row');
+check(isa.DIALECTS['amd-rdna-isa'] !== undefined, 'and a dialect to read its listings');
+check(isa.LISTING_EXTS.has('.rdnaisa'),
+  'whose extension joins the set every listing consumer filters on',
+  [...isa.LISTING_EXTS].join(' '));
+check(isa.dialectForFile('x.deadbeef.gfx1201.rdnaisa') === isa.DIALECTS['amd-rdna-isa'],
+  'so an AMD listing on disk resolves to the AMD dialect, not the NVIDIA one');
+
+// The eight stages RGA's Vulkan modes reach, measured from `rga -h -s <mode>`.
+const amdStages = compile.stagesFor('amd');
+check(amdStages.length === 8, 'AMD reaches eight stages', amdStages.join(', '));
+check(!amdStages.includes('raygeneration'),
+  'and not raytracing, which RGA\'s Vulkan modes have no stage option for');
+check(amdStages.includes('mesh') && amdStages.includes('amplification'),
+  'mesh and amplification ARE reached - offline mode only, contrary to RGA\'s GUI manual');
+
+// The refusal has to name the alternative rather than just decline.
+const rtRefusal = amd.refusalFor('raygeneration');
+check(typeof rtRefusal === 'string' && /-s dxr/.test(rtRefusal),
+  'a raytracing stage is refused by name, and the refusal names the mode that does exist',
+  rtRefusal);
+check(amd.refusalFor('fragment') === null, 'a stage it CAN compile has no refusal');
+
+// Absence is declared, not discovered.
+check(amd.controlColumn === null && isa.strideFor(amd) === null,
+  'RDNA declares no fixed instruction width, so nothing may step by one');
+check(isa.DIALECTS['amd-rdna-isa'].dependency === null,
+  'and no dependency model yet, so the highlighter stands down rather than guessing');
+check(typeof amd.absences.controlColumn === 'string' &&
+  typeof amd.absences.correlation === 'string',
+  'each absence carries the reason in words, for the banner to print once');
+
+section('9. `auto` resolves per road, not per machine');
+
+// Compute is hardware-blind because ptxas is: a Radeon in the machine must not change what
+// the compute road produces.
+const computeHere = isa.resolveTarget({ stage: 'compute', available: { nvidia: true, amd: true } });
+check(computeHere.target.id === 'nvidia',
+  'compute goes to NVIDIA when ptxas resolves, whatever else is installed', computeHere.from);
+
+// A graphics stage is the opposite: that road IS the local driver, so the device decides.
+const gfxNoNvidia = isa.resolveTarget({
+  stage: 'fragment', available: { nvidia: true, amd: true, nvidiaDevice: false } });
+check(gfxNoNvidia.target.id === 'amd',
+  'a graphics stage goes to AMD when the Vulkan probe finds no NVIDIA device',
+  gfxNoNvidia.from);
+
+const gfxWithNvidia = isa.resolveTarget({
+  stage: 'fragment', available: { nvidia: true, amd: true, nvidiaDevice: true } });
+check(gfxWithNvidia.target.id === 'nvidia',
+  'and to NVIDIA when it does', gfxWithNvidia.from);
+check(gfxWithNvidia.alternative && gfxWithNvidia.alternative.id === 'amd',
+  'with the other target named, so the banner can say what else was available');
+
+const onlyAmd = isa.resolveTarget({ stage: 'compute', available: { nvidia: false, amd: true } });
+check(onlyAmd.target.id === 'amd',
+  'a machine with no CUDA toolchain still compiles compute, through RGA', onlyAmd.from);
+
+check(isa.resolveTarget({ requested: 'amd' }).target.id === 'amd',
+  'an explicit request wins over any of it');
+let badTarget = null;
+try { isa.resolveTarget({ requested: 'intel' }); } catch (e) { badTarget = e.message; }
+check(badTarget !== null && /not a target/.test(badTarget),
+  'and an unknown one is refused by name', badTarget);
+
 console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);

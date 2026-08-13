@@ -507,19 +507,22 @@ function stageFromName(file) {
  * field to gain a word is not worth breaking either.
  */
 const STAGES = {
-  compute: { lineage: 'cuda', road: { nvidia: 'cuda' } },
-  vertex: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'vs' },
-  hull: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'hs', producer: 'vertex', pair: 'domain', patch: true },
-  domain: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'ds', producer: 'vertex', pair: 'hull', patch: true },
-  geometry: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'gs', producer: 'vertex' },
-  fragment: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'fs', producer: 'vertex' },
+  // Compute is the one stage whose two targets take structurally different roads: NVIDIA
+  // lowers it to CUDA and gets a line table out of the cubin, AMD sends it through SPIR-V like
+  // every other stage and gets none. That asymmetry is why `road` is keyed by target.
+  compute: { lineage: 'cuda', road: { nvidia: 'cuda', amd: 'rga' } },
+  vertex: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'vs' },
+  hull: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'hs', producer: 'vertex', pair: 'domain', patch: true },
+  domain: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'ds', producer: 'vertex', pair: 'hull', patch: true },
+  geometry: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'gs', producer: 'vertex' },
+  fragment: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'fs', producer: 'vertex' },
   // A mesh shader replaces the whole vertex stage, so it stands alone. An amplification shader
   // exists only to dispatch one, so it never does.
   // A mesh shader stands alone, but it reads a payload when a task shader supplies one -
   // and that changes its code, measured: 79fc9202f25d alone against 815104fa01b4 paired.
   // So the pair is used when the file has one and not required when it does not.
-  mesh: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'ms', pair: 'amplification', pairOptional: true },
-  amplification: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'ts', pair: 'mesh' },
+  mesh: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'ms', pair: 'amplification', pairOptional: true },
+  amplification: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'ts', pair: 'mesh' },
   // The raytracing stages are one pipeline between them, not a chain: a raygeneration
   // shader reaches the others through the shader groups rather than by feeding them, so
   // `group` means "compile every raytracing entry point in this file together", which is
@@ -874,7 +877,9 @@ function article(word) {
 // the second half of a sentence first.
 const ROAD_PROSE = [
   ['cuda', 'compute goes through CUDA and carries source correlation'],
-  ['graphics', 'the rest are compiled by asking the display driver to build a pipeline around them']
+  ['graphics', 'the rest are compiled by asking the display driver to build a pipeline around them'],
+  ['rga', 'all of them go through SPIR-V and the Radeon GPU Analyzer, which cross-compiles ' +
+    'for any listed target without needing that GPU present']
 ];
 
 /**
