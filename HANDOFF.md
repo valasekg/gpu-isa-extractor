@@ -37,17 +37,25 @@ TypeScript, no `vsce`. Plain CommonJS that the extension host runs directly.
 
 - Python is `py` (3.12). It drives verification (`tools/verify.py`) and packaging
   (`tools/package_vsix.py`, which writes the VSIX by hand).
-- The JavaScript test suites run under **VS Code's own Electron in Node mode** -
-  `ELECTRON_RUN_AS_NODE=1` against `Code.exe`. `find_node()` in `verify.py` locates it and
-  reports a skip rather than a pass if it cannot.
-- VS Code CLI: `D:\Development\Programs\Microsoft VS Code\bin\code.cmd`.
-- CUDA is at `D:\Development\Programs\CUDA`; `nvdisasm` and `ptxas` work. MSVC 14.44 is now
+- The JavaScript test suites run under **a real Node if there is one, otherwise VS Code's own
+  Electron in Node mode** - `ELECTRON_RUN_AS_NODE=1` against `Code.exe`. `find_node()` in
+  `verify.py` prefers `which("node")` and reports a skip rather than a pass if it finds
+  neither. A machine with neither runs 60 of the checks and skips the 14 JS suites, which is a
+  warning, not a pass.
+- CUDA is at `D:\Development\Programs\CUDA\v12.8`; `nvdisasm` and `ptxas` work. MSVC 14.44 is
   installed at `D:\Development\VisualStudio2022`, so `nvcc` and `tools/vk_abi_freeze.py` can
   run - but nothing in the shipped extension needs a C compiler, and that must stay true.
-- The Vulkan SDK is at `%VULKAN_SDK%` (1.3.296.0) and supplies `slangc`. The *loader* the
-  graphics road actually uses ships with the display driver; the SDK is a dev-time convenience
-  for `spirv-reflect` and the validation layers.
-- The GPU is an RTX A4500 (SM86). The graphics road needs it present; the compute road does not.
+- The Vulkan SDK is at `%VULKAN_SDK%` and supplies `slangc`. The *loader* the graphics road
+  actually uses ships with the display driver; the SDK is a dev-time convenience for
+  `spirv-reflect` and the validation layers.
+
+**The machine this was last verified on is not the machine most of the recorded numbers came
+from,** and the difference is load-bearing rather than trivia. The digests throughout this file
+and in `test_gfx.js` were recorded on an **RTX A4500 (SM86)** under **Vulkan SDK 1.3.296.0**.
+The current machine is an **RTX 3500 Ada Generation Laptop GPU (SM89)** with **SDK 1.4.341.1**
+and **CUDA 12.8**, and there is no VS Code installed. Anything that compares against a recorded
+digest therefore skips here rather than passing, and says so - which is correct, and is not the
+same as working.
 
 Do not introduce an npm-only workflow without first making the offline packaging story
 explicit. The current one has no network dependency at all.
@@ -61,12 +69,36 @@ py tools\oracle_compare.py --full     # release gate; minutes
 ```
 
 `verify.py` is the single entry point: JSON shape, every grammar regex, manifest wiring
-(commands, menus, settings, packaged modules), theme coverage, and the JavaScript suites.
-Expect `PASS 73 passed, 0 failed, 0 warnings`.
+(commands, menus, settings, packaged modules), theme coverage, and the 14 JavaScript suites.
 
-`test_gfx.js` is the one suite that can legitimately report skips: its second half needs an
-NVIDIA GPU, a working Vulkan driver and `slangc`, and skips rather than fails without them.
-Its first half - the struct ABI and the SPIR-V reflector - needs only Python and runs anywhere.
+On the machine described above, expect `FAIL 72 passed, 2 failed, 0 warnings, 1 skipped`, and
+**both failures are known, pre-existing, and unrelated to the extension's own logic.** They are
+recorded here rather than fixed in passing, because each needs evidence from more than one
+toolchain before it can be fixed rather than guessed at:
+
+- `test_endtoend.js` - "the cubin reports the architecture it was built for" gets `SM5`.
+  `cubin.arch()` reads bits [8,16) of the ELF `e_flags`, which is where CUDA used to put the SM
+  number. CUDA 12.8 puts it in the **low byte**: `ptxas -arch sm_86` gives `e_flags 0x00560556`
+  and `sm_89` gives `0x00560559`, and the byte the existing comment dismisses as "4 on every
+  cubin seen here" is now the answer. The whole CUDA compile road fails on this machine as a
+  result - `nvdisasm --binary SM5` is rejected outright. Fixing it needs `e_flags` from more
+  toolkit versions than one, or the two layouts cannot be told apart safely.
+- `test_gfx.js` section 9 - geometry, tessellation and mesh build pipelines the validation
+  layer rejects with *"Invalid explicit layout decorations on type ... the Function storage
+  class has a explicit layout from the ArrayStride decoration"*. The checked-in `.spv` fixtures
+  were produced by the older SDK; 1.4.341.1's `spirv-val` rejects what 1.3.296.0 accepted. The
+  driver still builds the pipelines and the microcode is probably right, which is precisely why
+  `vk_compile.py` treats the layer's verdict as fatal - do not weaken that to make this pass.
+
+`test_gfx.js` is the suite that can legitimately report skips: its second half needs an NVIDIA
+GPU, a working Vulkan driver and `slangc`, and skips rather than fails without them. Its first
+half - the struct ABI and the SPIR-V reflector - needs only Python and runs anywhere. Here it
+also skips 11 checks whose recorded microcode came from the A4500.
+
+`test_golden.js` is the refactor gate: it pins the whole listing, banner and body, and builds
+its own instruction stream so it needs no CUDA, no driver and no GPU. It should never skip. If
+a change is *meant* to move the listing, re-record with `node tools/test_golden.js --record`
+and read the diff - that is the step it exists to stop anyone skipping.
 
 **Python `re` only approximates Oniguruma**, which is what VS Code actually runs grammars
 under. A regex change involving lookbehind or heavy nesting needs a live check:
