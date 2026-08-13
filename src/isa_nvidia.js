@@ -202,6 +202,16 @@ const target = {
   resolveTool: () => pipeline.resolveNvdisasm(),
   resolveArch: options => pipeline.resolveArch(options),
 
+  /**
+   * Which of this target's roads a stage takes, or null where it has none.
+   *
+   * Read out of the STAGES table rather than duplicated here, so the whole stage-by-target
+   * matrix stays in the one place that already has to be complete.
+   */
+  roadFor(stage) {
+    return require('./compile').roadOf(stage, this.id);
+  },
+
   async available() {
     try {
       await pipeline.resolveNvdisasm();

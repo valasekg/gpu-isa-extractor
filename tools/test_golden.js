@@ -411,5 +411,24 @@ check(/this target states dependencies as instructions/.test(withoutColumn),
 check(/^\/\/ stage\s+: compute/m.test(withoutColumn),
   'everything the layout owns is still printed');
 
+section('7. Every stage has a road, and the two spellings agree');
+
+// `lineage` and `road.nvidia` say the same thing, which is the whole risk of keeping both. A
+// stage added with one and not the other would route correctly today and be invisible to the
+// target the moment there is a second one, so the invariant is asserted rather than trusted.
+const compile = require(path.join(ROOT, 'src', 'compile.js'));
+const nvidiaTarget = isa.get('nvidia');
+const drifted = Object.keys(compile.STAGES).filter(
+  stage => compile.STAGES[stage].lineage !== compile.roadOf(stage, 'nvidia'));
+check(drifted.length === 0,
+  'every stage\'s lineage matches its NVIDIA road', drifted.join(', '));
+check(Object.keys(compile.STAGES).every(s => nvidiaTarget.roadFor(s)),
+  'the target can name a road for every stage in the table');
+check(nvidiaTarget.roadFor('compute') === 'cuda' &&
+  nvidiaTarget.roadFor('fragment') === 'graphics',
+  'the roads are the ones the two compile paths actually take');
+check(nvidiaTarget.roadFor('nonesuch') === null,
+  'a stage the table does not know has no road rather than a wrong one');
+
 console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);

@@ -492,32 +492,59 @@ function stageFromName(file) {
  * the generated domain reads every output the hull declares where a real one may read fewer,
  * so the driver eliminates less. `graphicsCompile` reports the second as an upper bound.
  */
+/**
+ * `road` is the same idea `lineage` was, said once per target instead of once.
+ *
+ * The table's own comment above explains why one row per stage beat three tables that had to
+ * agree with each other. A second target is the fourth table that argument was about: which
+ * road a stage takes is not a property of the stage alone, it is a property of the stage AND
+ * the toolchain being asked. Putting it here keeps the whole matrix visible in one place -
+ * you can read down a column and see what one target does with every stage, which is exactly
+ * the check that catches a stage nobody thought about.
+ *
+ * `lineage` stays, spelled from `road.nvidia`, so there is still one description of the thing.
+ * It is what `chooseSlangEntry` returns and what `test_compile.js` asserts on, and renaming a
+ * field to gain a word is not worth breaking either.
+ */
 const STAGES = {
-  compute: { lineage: 'cuda' },
-  vertex: { lineage: 'graphics', slot: 'vs' },
-  hull: { lineage: 'graphics', slot: 'hs', producer: 'vertex', pair: 'domain', patch: true },
-  domain: { lineage: 'graphics', slot: 'ds', producer: 'vertex', pair: 'hull', patch: true },
-  geometry: { lineage: 'graphics', slot: 'gs', producer: 'vertex' },
-  fragment: { lineage: 'graphics', slot: 'fs', producer: 'vertex' },
+  compute: { lineage: 'cuda', road: { nvidia: 'cuda' } },
+  vertex: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'vs' },
+  hull: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'hs', producer: 'vertex', pair: 'domain', patch: true },
+  domain: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'ds', producer: 'vertex', pair: 'hull', patch: true },
+  geometry: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'gs', producer: 'vertex' },
+  fragment: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'fs', producer: 'vertex' },
   // A mesh shader replaces the whole vertex stage, so it stands alone. An amplification shader
   // exists only to dispatch one, so it never does.
   // A mesh shader stands alone, but it reads a payload when a task shader supplies one -
   // and that changes its code, measured: 79fc9202f25d alone against 815104fa01b4 paired.
   // So the pair is used when the file has one and not required when it does not.
-  mesh: { lineage: 'graphics', slot: 'ms', pair: 'amplification', pairOptional: true },
-  amplification: { lineage: 'graphics', slot: 'ts', pair: 'mesh' },
+  mesh: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'ms', pair: 'amplification', pairOptional: true },
+  amplification: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'ts', pair: 'mesh' },
   // The raytracing stages are one pipeline between them, not a chain: a raygeneration
   // shader reaches the others through the shader groups rather than by feeding them, so
   // `group` means "compile every raytracing entry point in this file together", which is
   // what a real pipeline holds. A raygeneration shader is mandatory in one; every other
   // raytracing stage is reached from one, and alone is not a pipeline.
-  raygeneration: { lineage: 'graphics', slot: 'rgen', group: 'raytracing' },
-  miss: { lineage: 'graphics', slot: 'miss', group: 'raytracing' },
-  closesthit: { lineage: 'graphics', slot: 'chit', group: 'raytracing' },
-  anyhit: { lineage: 'graphics', slot: 'ahit', group: 'raytracing' },
-  intersection: { lineage: 'graphics', slot: 'sect', group: 'raytracing' },
-  callable: { lineage: 'graphics', slot: 'call', group: 'raytracing' }
+  raygeneration: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'rgen', group: 'raytracing' },
+  miss: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'miss', group: 'raytracing' },
+  closesthit: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'chit', group: 'raytracing' },
+  anyhit: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'ahit', group: 'raytracing' },
+  intersection: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'sect', group: 'raytracing' },
+  callable: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'call', group: 'raytracing' }
 };
+
+/**
+ * The road a stage takes on one target, or null where that target cannot compile it.
+ *
+ * `null` is an answer, not a gap: it is what `stageRefusal` turns into a sentence naming what
+ * this target does instead. A stage this table does not know at all returns null too, and the
+ * two are told apart by whether `STAGES[stage]` exists.
+ */
+function roadOf(stage, targetId) {
+  const row = STAGES[stage];
+  if (!row) return null;
+  return (row.road && row.road[targetId]) || null;
+}
 
 /** The road a stage takes, or undefined for one with no road at all. */
 const lineageOf = stage => (STAGES[stage] || {}).lineage;
@@ -1637,6 +1664,7 @@ module.exports = {
   stageRefusal,
   STAGES,
   lineageOf,
+  roadOf,
   languageOf,
   parsePtxasInfo,
   quote,
