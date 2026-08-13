@@ -430,5 +430,21 @@ check(nvidiaTarget.roadFor('compute') === 'cuda' &&
 check(nvidiaTarget.roadFor('nonesuch') === null,
   'a stage the table does not know has no road rather than a wrong one');
 
+// The refusal is prose, and prose assembled from a table is where sentences come out backwards
+// or with an empty list rendered as though it were an answer. Both happened; both are checked.
+const refusal = compile.stageRefusal('nvidia');
+check(refusal.indexOf('compute goes through CUDA') < refusal.indexOf('the rest are compiled'),
+  'the refusal says what "the rest" is the rest of, before saying "the rest"', refusal);
+check(/compiled: amplification, .*vertex\./.test(refusal),
+  'the refusal lists the stages this target really compiles');
+check(!/compiled: \./.test(compile.stageRefusal('nosuch')) &&
+  /No stage can be compiled for nosuch/.test(compile.stageRefusal('nosuch')),
+  'a target that compiles nothing says so rather than printing an empty list',
+  compile.stageRefusal('nosuch'));
+check(nvidiaTarget.refusalFor('compute') === null,
+  'a stage that IS compilable has no refusal');
+check(typeof nvidiaTarget.refusalFor('nonesuch') === 'string',
+  'a stage that is not gets one');
+
 console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);

@@ -679,7 +679,7 @@ function chooseSlangEntry(text, wanted, file, stated, targetId = 'nvidia') {
   const compute = found.filter(e => e.stage === COMPUTE_STAGE);
 
   const refuse = e => {
-    throw new CompileError(`${e.name} is a ${e.stage} entry point. ${stageRefusal()}`);
+    throw new CompileError(`${e.name} is a ${e.stage} entry point. ${stageRefusal(targetId)}`);
   };
   // A raytracing pipeline is built around its raygeneration shader: it is the only stage the
   // driver will start, and every other one is reached from it through the shader groups. A
@@ -730,7 +730,7 @@ function chooseSlangEntry(text, wanted, file, stated, targetId = 'nvidia') {
   const forcedStage = stated && stated.stage ? String(stated.stage).toLowerCase() : null;
   if (forcedStage && !STAGES[forcedStage]) {
     throw new CompileError(
-      `-stage ${stated.stage} is not a stage this compiles. ${stageRefusal()}`);
+      `-stage ${stated.stage} is not a stage this compiles. ${stageRefusal(targetId)}`);
   }
   const named = wanted || (stated && stated.entry) || null;
   if (forcedStage) {
@@ -769,7 +769,7 @@ function chooseSlangEntry(text, wanted, file, stated, targetId = 'nvidia') {
   if (found.length && !supported.length) {
     const stages = [...new Set(found.map(e => e.stage))].sort().join(', ');
     throw new CompileError(
-      `this file declares only ${stages} entry point(s). ${stageRefusal()}`);
+      `this file declares only ${stages} entry point(s). ${stageRefusal(targetId)}`);
   }
 
   // Compute keeps its old behaviour exactly: a file that declares only compute entry points
@@ -852,16 +852,53 @@ function article(word) {
   return /^[aeiou]/i.test(word || '') ? 'an' : 'a';
 }
 
-function stageRefusal() {
-  // Every stage Slang declares has a road now, so this is what is said about a stage that is
-  // not one of them - a name from a newer Slang than this table knows about. Listing the
-  // stages that DO work is the useful half of that: it says whether the stage was misspelled
-  // or is genuinely new.
-  return `Stages that can be compiled to SASS: ${Object.keys(STAGES).sort().join(', ')}. ` +
-    'Compute goes through CUDA and carries source correlation; the rest are compiled by ' +
-    'asking the display driver to build a pipeline around them. If the stage is real and ' +
-    'newer than this list, open the driver\'s cache file instead - the SASS in it is what ' +
-    'the GPU really ran.';
+/**
+ * What each road is, in one sentence, for a refusal to quote.
+ *
+ * Keyed by road rather than by target because a road is this module's own vocabulary - it is
+ * the thing `STAGES` records and `compile` forks on - and describing one needs nothing from
+ * the registry. A target that adds a road adds a row here, next to the table that names it.
+ */
+// An array rather than an object, because the order is part of the sentence: "the rest" has to
+// come after whatever it is the rest OF. Keyed off the stage list's sort order instead, this
+// read "the rest are compiled by the display driver; compute goes through CUDA", which says
+// the second half of a sentence first.
+const ROAD_PROSE = [
+  ['cuda', 'compute goes through CUDA and carries source correlation'],
+  ['graphics', 'the rest are compiled by asking the display driver to build a pipeline around them']
+];
+
+/**
+ * The stages one target can compile, sorted.
+ *
+ * Not `Object.keys(STAGES)`: a stage in the table with no road on this target is a stage this
+ * target cannot compile, and listing it would send the reader to try something that will be
+ * refused again for a different reason.
+ */
+function stagesFor(targetId) {
+  return Object.keys(STAGES).filter(stage => roadOf(stage, targetId)).sort();
+}
+
+function stageRefusal(targetId = 'nvidia') {
+  // Said about a stage that has no road on this target - a name from a newer Slang than this
+  // table knows about, or a stage this particular toolchain cannot reach. Listing the stages
+  // that DO work is the useful half of that: it says whether the stage was misspelled, is
+  // genuinely new, or is simply not something this target compiles.
+  const stages = stagesFor(targetId);
+  // A target that compiles nothing is a real state - an id nobody registered, or a target
+  // whose roads are all unavailable - and "Stages that can be compiled: ." is not a sentence.
+  // Saying so plainly beats rendering an empty list as though it were an answer.
+  if (!stages.length) {
+    return `No stage can be compiled for ${targetId}. Open the driver's cache file instead - ` +
+      'the machine code in it is what the GPU really ran.';
+  }
+
+  const taken = new Set(stages.map(stage => roadOf(stage, targetId)));
+  const roads = ROAD_PROSE.filter(([road]) => taken.has(road)).map(([, prose]) => prose);
+  return `Stages that can be compiled: ${stages.join(', ')}. ` +
+    (roads.length ? `${roads.join('; ')}. ` : '') +
+    'If the stage is real and newer than this list, open the driver\'s cache file instead - ' +
+    'the machine code in it is what the GPU really ran.';
 }
 
 // --------------------------------------------------------------------------- running
@@ -1688,6 +1725,7 @@ module.exports = {
   stageFromName,
   chooseSlangEntry,
   stageRefusal,
+  stagesFor,
   STAGES,
   lineageOf,
   roadOf,

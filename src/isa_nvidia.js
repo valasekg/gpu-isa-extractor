@@ -212,6 +212,20 @@ const target = {
     return require('./compile').roadOf(stage, this.id);
   },
 
+  /**
+   * Why this target will not compile a stage, and what to do instead.
+   *
+   * A function rather than a string because the useful alternative differs per stage: a
+   * misspelt stage wants the list of ones that work, and a stage this toolchain genuinely
+   * cannot reach wants to be told which road does reach it. Null when the stage IS compilable,
+   * so a caller can use this as the test.
+   */
+  refusalFor(stage) {
+    const compile = require('./compile');
+    if (compile.roadOf(stage, this.id)) return null;
+    return compile.stageRefusal(this.id);
+  },
+
   async available() {
     try {
       await pipeline.resolveNvdisasm();
