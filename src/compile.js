@@ -732,6 +732,15 @@ function chooseSlangEntry(text, wanted, file, stated, targetId = 'nvidia') {
     throw new CompileError(
       `-stage ${stated.stage} is not a stage this compiles. ${stageRefusal(targetId)}`);
   }
+  // Membership in STAGES is not the same question as "can this target compile it". A stage
+  // the table knows but this target has no road for returns `road: null`, and `compile()`
+  // forks on `road === 'graphics'` - so null fell through to the CUDA road, which for a
+  // graphics stage means `slangc -target cuda`, which crashes with exit 0xC0000005 and no
+  // diagnostic. Refusing here is the whole reason this decision happens before slangc runs.
+  if (forcedStage && !roadFor(forcedStage)) {
+    throw new CompileError(
+      `-stage ${stated.stage} is a stage this target cannot compile. ${stageRefusal(targetId)}`);
+  }
   const named = wanted || (stated && stated.entry) || null;
   if (forcedStage) {
     const entry = named || (found.find(e => e.stage === forcedStage) || {}).name ||
@@ -895,8 +904,15 @@ function stageRefusal(targetId = 'nvidia') {
 
   const taken = new Set(stages.map(stage => roadOf(stage, targetId)));
   const roads = ROAD_PROSE.filter(([road]) => taken.has(road)).map(([, prose]) => prose);
-  return `Stages that can be compiled: ${stages.join(', ')}. ` +
-    (roads.length ? `${roads.join('; ')}. ` : '') +
+  // Capitalised on the way out. The clauses are stored as fragments because they are joined
+  // with semicolons, but the first one follows a full stop and so begins a sentence - which is
+  // how this came to read "... vertex. compute goes through CUDA", where it used to read
+  // "Compute goes through CUDA". Capitalising at the join keeps the table storing fragments
+  // and the sentence reading as one.
+  const sentence = roads.length
+    ? `${roads.join('; ').replace(/^./, c => c.toUpperCase())}. `
+    : '';
+  return `Stages that can be compiled: ${stages.join(', ')}. ` + sentence +
     'If the stage is real and newer than this list, open the driver\'s cache file instead - ' +
     'the machine code in it is what the GPU really ran.';
 }
@@ -1646,6 +1662,21 @@ async function compile(tools, file, options = {}) {
     // A vertex or fragment entry point leaves the CUDA road entirely - there is no `.cu`, no
     // PTX and no cubin on the other route, so this returns rather than falling through to the
     // stages below.
+    //
+    // Every road is named explicitly and anything else refuses. Written as `!== 'graphics'
+    // means CUDA` this silently sent a null road - a stage this target has no road for - down
+    // the CUDA path, where slangc crashes rather than declining.
+    if (chosen.road && chosen.road !== 'graphics' && chosen.road !== 'cuda') {
+      throw new CompileError(
+        `${chosen.entry || 'this shader'} takes the ${chosen.road} road, which this build ` +
+        `does not know how to walk. ${stageRefusal(options.targetId)}`);
+    }
+    if (!chosen.road) {
+      throw new CompileError(
+        `${chosen.entry || 'this shader'} is ${article(chosen.stage || 'shader')} ` +
+        `${chosen.stage || 'shader'} shader, which this target cannot compile. ` +
+        stageRefusal(options.targetId));
+    }
     if (chosen.road === 'graphics') {
       return graphicsCompile(tools, file, {
         ...options, outDir, home, flags, chosen, steps, notes, sources

@@ -519,6 +519,20 @@ check(cudaAt >= 0 && restAt >= 0 && cudaAt < restAt,
 // A clause following a full stop starts a sentence, and ROAD_PROSE stores fragments.
 check(/\.\s+[A-Z]/.test(refusal.slice(refusal.indexOf('. ') )),
   'the clause after the stage list starts a sentence, not a fragment', refusal);
+
+// A stage the table knows but this target has no road for must refuse, not fall through. It
+// used to reach `compile()`'s fork as `road: null`, and anything that is not 'graphics' went
+// down the CUDA road - where slangc crashes with no diagnostic for a graphics stage.
+let refusedNullRoad = null;
+try {
+  compile.chooseSlangEntry('[shader("mesh")] void m(){}', undefined, 'a.slang',
+    { stage: 'mesh' }, 'nosuch');
+} catch (e) {
+  refusedNullRoad = e.message;
+}
+check(refusedNullRoad !== null && /cannot compile/.test(refusedNullRoad),
+  'a stage with no road on this target is refused rather than routed to CUDA',
+  refusedNullRoad === null ? 'it returned instead of throwing' : refusedNullRoad);
 check(/compiled: amplification, .*vertex\./.test(refusal),
   'the refusal lists the stages this target really compiles');
 check(!/compiled: \./.test(compile.stageRefusal('nosuch')) &&
