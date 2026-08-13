@@ -71,8 +71,17 @@ py tools\oracle_compare.py --full     # release gate; minutes
 `verify.py` is the single entry point: JSON shape, every grammar regex, manifest wiring
 (commands, menus, settings, packaged modules), theme coverage, and the 14 JavaScript suites.
 
-On the machine described above, expect `FAIL 72 passed, 2 failed, 0 warnings, 1 skipped`, and
-**both failures are known, pre-existing, and unrelated to the extension's own logic.** They are
+**Read the failure detail, not the count.** `verify.py` records one result per JS *script*, so
+a suite that dies at its third check and a suite that dies at its fortieth produce an identical
+summary line. That is not hypothetical: a syntax error in `compileview.js` once survived ten
+commits behind an unchanged count of 2, because the count was checked and the reason was not.
+The count agreeing with what is written below is necessary and nowhere near sufficient.
+
+With a JS runtime on `PATH`, expect `FAIL 73 passed, 2 failed, 0 warnings, 1 skipped`. Without
+one, expect `PARTIAL 60 passed` - the word is `PARTIAL` rather than `PASS` because no
+JavaScript ran at all, so nothing checked whether the extension so much as parses.
+
+The two failures are **known, pre-existing, and unrelated to the extension's own logic.** They are
 recorded here rather than fixed in passing, because each needs evidence from more than one
 toolchain before it can be fixed rather than guessed at:
 
@@ -95,7 +104,14 @@ GPU, a working Vulkan driver and `slangc`, and skips rather than fails without t
 half - the struct ABI and the SPIR-V reflector - needs only Python and runs anywhere. Here it
 also skips 11 checks whose recorded microcode came from the A4500.
 
-`test_golden.js` is the refactor gate: it pins the whole listing, banner and body, and builds
+`test_golden.js` is the refactor gate, **and its limits are worth knowing before you trust it**.
+It pins the banner and the body of one *cache-origin* listing built from a synthetic
+instruction stream. It never loads `compileview.js`, so it says nothing about the compile road;
+it never exercises the `compiled` or `driver` provenance rows; and it passed cleanly across the
+exact refactor that left `compileview.js` unable to parse. A green golden run means the listing
+layout did not move, not that the extension works.
+
+It pins the whole listing, banner and body, and builds
 its own instruction stream so it needs no CUDA, no driver and no GPU. It should never skip. If
 a change is *meant* to move the listing, re-record with `node tools/test_golden.js --record`
 and read the diff - that is the step it exists to stop anyone skipping.
