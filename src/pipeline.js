@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
 
+const isa = require('./isa');
 const nvcache = require('./nvcache');
 const spawn = require('./spawn');
 const ctrl = require('./ctrl');
@@ -334,6 +335,12 @@ async function disassemble(source, chosen, { token, log, scratchDir } = {}) {
   return {
     text,
     object,
+    // Stamped, not left to `output.targetOf` to guess. The compile road sets this; without it
+    // here the two roads disagreed, and the banner's fallback would describe a cache object
+    // from any container using this target's provenance rows - printing `frame at offset N`,
+    // a fact about an NVuc container, and the `EF_CUDA_<arch>` token that this extension's own
+    // hover architecture detection reads back out of the listing.
+    target: isa.get(isa.DEFAULT_TARGET),
     arch,
     archFrom: archInfo.from,
     nvdisasm: exe,

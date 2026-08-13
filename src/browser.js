@@ -9,6 +9,7 @@
 const path = require('path');
 const vscode = require('vscode');
 
+const isa = require('./isa');
 const blobstore = require('./blobstore');
 const pipeline = require('./pipeline');
 const output = require('./output');
@@ -531,8 +532,11 @@ function implicitNodes() {
 
 /** The sha1 prefix a generated listing carries in its filename, or null. */
 function listingSha1(filePath) {
-  const m = /\.([0-9a-f]{8})\.[^.]+\.nvsass$/i.exec(path.basename(filePath));
-  return m ? m[1].toLowerCase() : null;
+  // The same pattern `tree.js` matches names with - see `isa.LISTING_NAME_RE`. Both files used
+  // to carry their own `.nvsass` literal, so a second dialect's listings would have been
+  // indexed by `output.listingIndex` and then unrecognisable to everything that reads the index.
+  const m = isa.LISTING_NAME_RE.exec(path.basename(filePath));
+  return m ? m[2].toLowerCase() : null;
 }
 
 async function toggleReviewed(node, selection) {

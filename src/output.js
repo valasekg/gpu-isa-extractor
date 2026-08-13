@@ -43,8 +43,20 @@ function sanitize(name, fallback = 'object') {
   return cleaned;
 }
 
-function listingName(object, arch) {
-  return `${sanitize(object.name)}.${object.sha1.slice(0, 8)}.${sanitize(arch, 'sm')}${LISTING_EXT}`;
+/**
+ * `<entry>.<sha1[0:8]>.<arch><ext>` - the browse road's name for a listing.
+ *
+ * The dialect supplies the extension and the arch fallback, as it already does on the compile
+ * road. Hardcoding them here meant the browse road could only ever write `.nvsass` and could
+ * only fall back to `sm`, while the READ side - `listingIndex`, `pruneListings`, `showListing`
+ * - had been generalised to accept every dialect. A second target's browsed listing would then
+ * be written with the first target's extension and opened as the first target's language:
+ * highlighted by the wrong grammar and hovered out of the wrong opcode table, which is exactly
+ * what generalising the read side was meant to prevent.
+ */
+function listingName(object, arch, dialect = isa.DIALECTS[LANGUAGE_ID]) {
+  return `${sanitize(object.name)}.${object.sha1.slice(0, 8)}.` +
+    `${sanitize(arch, dialect.archFallback)}${dialect.listingExt}`;
 }
 
 /**
@@ -225,8 +237,8 @@ function banner(result, sweepResult) {
 }
 
 /** Where a listing for this object would live, whether or not it has been generated. */
-function listingPathFor(context, object, arch) {
-  return path.join(listingDir(context), listingName(object, arch));
+function listingPathFor(context, object, arch, dialect) {
+  return path.join(listingDir(context), listingName(object, arch, dialect));
 }
 
 /**
@@ -260,7 +272,8 @@ async function writeListing(context, result, sourceRecord) {
   const dir = listingDir(context);
   await fs.promises.mkdir(dir, { recursive: true });
 
-  const file = path.join(dir, listingName(result.object, result.arch));
+  const file = path.join(dir, listingName(result.object, result.arch,
+    isa.DIALECTS[targetOf(result).dialectId]));
   // Collisions are content-identical by construction - the sha1 is in the name. The compiled
   // path is the exception and does not come through here twice for the same bytes; see
   // `compileview.js`, which writes its own listings because their content depends on source

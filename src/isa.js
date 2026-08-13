@@ -45,6 +45,22 @@ const DEFAULT_TARGET = 'nvidia';
  */
 const LISTING_EXTS = new Set(ORDER.map(id => DIALECTS[TARGETS[id].dialectId].listingExt));
 
+/**
+ * `<entry>.<sha1[0:8]>.<arch><ext>` - the shape `output.listingName` writes, as a pattern.
+ *
+ * Here rather than in its two readers because it is derived from `LISTING_EXTS`, and the two
+ * readers had a hardcoded `.nvsass` each. `listingIndex` admits every dialect's listings, so a
+ * reader that recognises only one means a second dialect's listings are indexed and pruned and
+ * then never matched - `hasListing` is permanently false, the browser shows every object as
+ * not disassembled, and the shortcut that opens an existing listing instead of re-running
+ * nvdisasm re-disassembles on every visit.
+ *
+ * Capturing groups: 1 the entry name, 2 the sha1 prefix, 3 the architecture.
+ */
+const LISTING_NAME_RE = new RegExp(
+  '^(.*)\\.([0-9a-f]{8})\\.([^.]+)(?:' +
+  [...LISTING_EXTS].map(ext => ext.replace(/\./g, '\\.')).join('|') + ')$', 'i');
+
 function get(id) {
   return TARGETS[id] || null;
 }
@@ -113,6 +129,7 @@ module.exports = {
   ORDER,
   DEFAULT_TARGET,
   LISTING_EXTS,
+  LISTING_NAME_RE,
   get,
   strideFor,
   list,

@@ -30,6 +30,8 @@
 const path = require('path');
 const vscode = require('vscode');
 
+const isa = require('./isa');
+
 const blobstore = require('./blobstore');
 const review = require('./review');
 const nvcache = require('./nvcache');
@@ -45,8 +47,13 @@ const BUCKETS = [
   { key: 'xs', min: 0, label: 'under 8 KB' }
 ];
 
-/** Split a generated listing's filename into its sha1 and architecture fields, or null. */
-const LISTING_NAME_RE = /^(.*)\.([0-9a-f]{8})\.([^.]+)\.nvsass$/i;
+/**
+ * Split a generated listing's filename into its sha1 and architecture fields, or null.
+ *
+ * From `isa`, because it is derived from the set of listing extensions and `browser.js` needs
+ * the same pattern. Both used to hardcode `.nvsass` separately.
+ */
+const LISTING_NAME_RE = isa.LISTING_NAME_RE;
 
 /**
  * The listing on disk for this shader, or null.
