@@ -9,6 +9,8 @@ const {
   ScoreboardHighlighter, ScoreboardDefinitionProvider
 } = require('./src/highlight');
 
+const isa = require('./src/isa');
+
 const blobstore = require('./src/blobstore');
 const browser = require('./src/browser');
 const compileview = require('./src/compileview');
@@ -18,7 +20,16 @@ const pipeline = require('./src/pipeline');
 const review = require('./src/review');
 const tree = require('./src/tree');
 
-const SELECTOR = { language: 'nvidia-sass' };
+/**
+ * Every listing dialect, as a document selector.
+ *
+ * Not a single language id. The providers below are what give a listing its hovers, semantic
+ * colours, outline and F12 - so a dialect that `output.showListing` correctly opens as its own
+ * language, but that no provider was registered for, gets none of them. That is not degraded
+ * output, it is no provider invoked at all, which reads as the extension being broken rather
+ * than as a target being unsupported.
+ */
+const SELECTOR = isa.ORDER.map(id => ({ language: isa.get(id).dialectId }));
 
 let channel = null;
 
