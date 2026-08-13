@@ -474,6 +474,19 @@ check(isa.strideFor(columnless) === null,
 check(isa.strideFor(undefined) === null,
   'and neither does asking about no target at all');
 
+// The whole banner speaks for one target. `metadataLines` used to resolve the registry default
+// internally while `banner` honoured `result.target`, so the registers line and the provenance
+// block could describe two different toolchains in one file.
+const twoVoiced = {
+  ...isa.get(isa.DEFAULT_TARGET),
+  registerSource: { cache: 'VGPRs allocated', compiled: 'VGPRs allocated', driver: 'VGPRs allocated' }
+};
+const oneVoice = output.banner(
+  { ...reference, target: twoVoiced }, { label: 'GLCache blob', scanned: false });
+check(/registers\s+: 8 VGPRs allocated/.test(oneVoice),
+  'the registers line speaks for the result\'s target, not the registry default',
+  oneVoice.split('\n').find(l => l.includes('registers')));
+
 section('7. Every stage has a road, and the two spellings agree');
 
 // `lineage` and `road.nvidia` say the same thing, which is the whole risk of keeping both. A

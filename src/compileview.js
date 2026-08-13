@@ -334,7 +334,7 @@ async function run(sourceUri, progress, token) {
       await fs.promises.writeFile(source, text, 'utf8');
     }
     await build({ file, source, tools, flags, archInfo, outDir, backend, directive,
-      configured, progress, token, road: chosen.road, entry,
+      configured, progress, token, road: chosen.road, entry, target,
       controls: compile.pipelineControls(flags.vk, path.dirname(file)) });
   } finally {
     inFlight.delete(tag);
@@ -343,7 +343,7 @@ async function run(sourceUri, progress, token) {
 
 /** The compile itself, once the scratch directory is claimed. */
 async function build({ file, source, tools, flags, archInfo, outDir, backend, directive,
-  configured, progress, token, road, controls, entry: named }) {
+  configured, progress, token, road, controls, entry: named, target }) {
   progress.report({ message: road === 'graphics' ? 'asking the driver' : 'compiling' });
   const started = Date.now();
   const built = await compile.compile(tools, source, {
@@ -357,6 +357,12 @@ async function build({ file, source, tools, flags, archInfo, outDir, backend, di
     // dirty, and every sibling of the file is invisible from there.
     home: path.dirname(file),
     backend: backend === 'auto' ? undefined : backend,
+    // The target `run()` resolved, not the one `compile()` would default to. Without this,
+    // `chooseSlangEntry` inside `compile()` fell back to its own `'nvidia'` default and the
+    // file was routed TWICE by two different answers: `run()`'s decided which tools to require
+    // and whether to probe the architecture, `compile()`'s decided which road was actually
+    // walked. They agree only while there is one target.
+    targetId: target.id,
     // Set only when the user picked something other than the default, so a file with one road
     // is compiled exactly as it always was - `entry: undefined` is what lets slangc discover a
     // lone compute kernel by itself.
@@ -367,23 +373,22 @@ async function build({ file, source, tools, flags, archInfo, outDir, backend, di
     `${built.entries.length} entry point(s), ${built.arch}`);
   for (const step of built.steps) log(`  ${step.command}`);
 
-  const entry = await chooseEntry(built.entries);
+  const entry = await chooseEntry(built.entries, target);
   if (!entry) throw new Error('cancelled');
 
   progress.report({ message: `disassembling ${entry.name}` });
   await openEntry({
     built, entry, source: file, compiledFrom: source, directive, configured,
-    archInfo, token, outDir
+    archInfo, token, outDir, target
   });
 }
 
 /** One entry point compiles silently; several are worth asking about. */
-async function chooseEntry(entries) {
+async function chooseEntry(entries, target) {
   if (entries.length === 1) return entries[0];
   // The description is the target's to write. These three figures happen to be the ones a
   // cubin carries; a target whose entries record different ones would render "undefined
   // instructions, undefined bytes" here rather than saying what it does know.
-  const target = isa.get(isa.DEFAULT_TARGET);
   const picked = await vscode.window.showQuickPick(
     entries.map(e => ({
       label: e.name,
@@ -403,9 +408,8 @@ async function chooseEntry(entries) {
  * worked here would drift out of step with the path that is used far more often.
  */
 async function openEntry({ built, entry, source, compiledFrom, directive, configured,
-  archInfo, token, outDir }) {
+  archInfo, token, outDir, target }) {
   const graphics = built.road === 'graphics';
-  const target = isa.get(isa.DEFAULT_TARGET);
 
   // The entry decides how it becomes text. Everything below this line works on the text and on
   // what the entry says about itself, and none of it names a disassembler - which is the whole

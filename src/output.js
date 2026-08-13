@@ -105,7 +105,15 @@ function originOf(object, target) {
  * above the highest register the code touches, and quietly "correcting" for that would be
  * inventing precision the format does not offer.
  */
-function metadataLines(object, text) {
+/**
+ * @param {object} [target]  whose `registerSource` names what the count means.
+ *   `banner` always passes the one it resolved; the default is here only so the exported
+ *   signature keeps working for a two-argument caller. It used to resolve the registry default
+ *   INTERNALLY, which meant one banner could be assembled from two targets - the provenance
+ *   block and tail describing the result's target while this line described the default's, and
+ *   `originOf` validating against the wrong table.
+ */
+function metadataLines(object, text, target = isa.get(isa.DEFAULT_TARGET)) {
   const meta = object.metadata;
   if (!meta) return [];
 
@@ -120,7 +128,6 @@ function metadataLines(object, text) {
   lines.push(field('stage') + stage);
 
   if (meta.registers !== null) {
-    const target = isa.get(isa.DEFAULT_TARGET);
     lines.push(field('registers') +
       `${meta.registers} ${target.registerSource[originOf(object, target)]}` +
       (meta.registerCap !== null ? `, cap ${meta.registerCap}` : ''));
@@ -165,7 +172,7 @@ function banner(result, sweepResult) {
     RULE,
     `// ${object.name || '(unnamed)'} - ${stageLabel}`,
     RULE,
-    ...metadataLines(object, text),
+    ...metadataLines(object, text, target),
     ...(measured ? stats.summaryLines(measured, object.metadata) : [])
   ];
 
