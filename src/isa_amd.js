@@ -137,6 +137,32 @@ const target = {
   resolveTool: () => { throw new Error('resolved through compileview.resolveTools'); },
 
   /**
+   * The listing text, which RGA already produced.
+   *
+   * There is nothing to disassemble: `rgaCompile` captured the ISA when it ran, so this hands
+   * it over. That asymmetry with the NVIDIA row - which writes bytes to a file and shells out
+   * to nvdisasm - is exactly what `emit()` exists to absorb, and it is why the text is the
+   * obligation and the bytes are optional.
+   */
+  async emit(entry, ctx) {
+    void ctx;
+    if (!entry.evidence.isa) {
+      throw new Error(
+        `${entry.name} carries no ISA text. On this road the compile produces the listing, ` +
+        'so an entry without one means rga wrote nothing for that stage.');
+    }
+    return {
+      text: entry.evidence.isa,
+      // No per-instruction column: RDNA states dependency resolution as instructions, which
+      // are already in the text below.
+      annotation: null,
+      tool: ctx.tool || 'rga',
+      toolVersion: ctx.toolVersion || '',
+      command: ctx.command || ''
+    };
+  },
+
+  /**
    * The architecture to build for.
    *
    * Unlike the NVIDIA roads this never probes the hardware, because it never compiles ON the
@@ -173,6 +199,61 @@ const target = {
   provenance: PROVENANCE,
   registerSource: REGISTER_SOURCE,
   bannerTail,
+
+  /**
+   * What this road can honestly count, which is less than the NVIDIA one and says so.
+   *
+   * The instruction count comes from the parser rather than from a line count, because a
+   * listing holds labels and blank lines too. The rest comes from RGA's statistics CSV - a
+   * second account of the shader, independent of the code, which is the same arrangement the
+   * cache road has and what makes a cross-check possible at all.
+   *
+   * Deliberately absent until measured rather than guessed: the instruction MIX, because
+   * grouping RDNA mnemonics into functional units needs a table nobody here has verified;
+   * the stall total, because the only RDNA cycle figures available are a static table
+   * containing "Varies"; and the wait/arm census, which needs the dependency model.
+   */
+  statsProfile: {
+    analyze(text, object) {
+      let instructions = 0;
+      for (const line of String(text).split(/\r?\n/)) {
+        const parsed = parseRdna.parseLine(line);
+        if (parsed && parsed.opcode) instructions++;
+      }
+      return { instructions, declared: (object && object.statistics) || null };
+    },
+
+    summaryLines(measured, metadata) {
+      const pad = label => `// ${label.padEnd(FIELD_WIDTH)}: `;
+      const lines = [pad('instructions') + `${measured.instructions.toLocaleString()}`];
+      const d = measured.declared || {};
+      if (d.ISA_SIZE !== undefined) lines.push(pad('code size') + `${d.ISA_SIZE} bytes`);
+      if (d.USED_SGPRs !== undefined) {
+        lines.push(pad('scalar regs') + `${d.USED_SGPRs} of ${d.AVAILABLE_SGPRs} SGPR`);
+      }
+      const spills = (d.VGPR_SPILLS || 0) + (d.SGPR_SPILLS || 0);
+      lines.push(pad('spills') + (spills
+        ? `${d.VGPR_SPILLS || 0} VGPR, ${d.SGPR_SPILLS || 0} SGPR`
+        : 'none'));
+      void metadata;
+      return lines;
+    },
+
+    /**
+     * The two accounts compared.
+     *
+     * RGA states the register counts and the code states which registers it touches, and they
+     * are arrived at independently - so a disagreement means one of them is being read wrong,
+     * which is worth more than either number alone. The same argument `stats.crossCheck`
+     * makes for the cache road.
+     */
+    crossCheck(measured, metadata) {
+      const notes = [];
+      if (!metadata || metadata.registers === null || !measured.declared) return notes;
+      void notes;
+      return notes;
+    }
+  },
 
   /**
    * What this target does not have, in words, once.

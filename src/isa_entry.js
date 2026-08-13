@@ -115,6 +115,15 @@ function normalize(raw, { target, origin } = {}) {
 
     evidence: {
       microcode,
+      /**
+       * The listing text, where the toolchain produced text rather than bytes.
+       *
+       * Exactly one of `microcode` and `isa` is populated on any real entry, and that is the
+       * whole shape of the problem this module exists for: nvdisasm wants bytes and makes
+       * text, RGA makes the text and has no per-stage bytes to give. Both are evidence; the
+       * obligation is `emit()`.
+       */
+      isa: raw.isa || null,
       codeBytes: raw.codeBytes !== undefined ? raw.codeBytes
         : (microcode ? microcode.length : null),
       instructions: raw.instructions !== undefined ? raw.instructions : null
@@ -124,6 +133,9 @@ function normalize(raw, { target, origin } = {}) {
 
     /** The container's own account, where there is one. Shape is the target's business. */
     metadata: raw.metadata || null,
+
+    /** What a TOOL stated - RGA's statistics CSV, ptxas -v - as opposed to the container. */
+    statistics: raw.statistics || null,
 
     warnings: raw.warnings || []
   };
@@ -155,6 +167,10 @@ function asObject(entry, extra = {}) {
     sha1: entry.sha1,
     origin: entry.origin,
     metadata: entry.metadata,
+    // What a tool stated about this shader, where one did. Distinct from `metadata`, which is
+    // what the CONTAINER recorded: keeping them apart is what lets a target compare the two
+    // and report a disagreement rather than merging them into one unchallenged number.
+    statistics: entry.statistics || null,
     warnings: entry.warnings,
     ...extra
   };

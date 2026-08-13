@@ -165,9 +165,13 @@ function banner(result, sweepResult) {
   const { object, text } = result;
   const target = targetOf(result);
 
+  // Counted by the target, because every pattern in `stats.js` is SASS-shaped and would match
+  // nothing in another ISA - returning zero, which the banner would then print as a fact.
   let measured = null;
   try {
-    measured = text ? stats.analyze(text, object.microcode) : null;
+    measured = text && target.statsProfile
+      ? target.statsProfile.analyze(text, object)
+      : null;
   } catch (e) {
     measured = null;                       // a banner is never worth failing a disassembly for
   }
@@ -185,10 +189,11 @@ function banner(result, sweepResult) {
     `// ${object.name || '(unnamed)'} - ${stageLabel}`,
     RULE,
     ...metadataLines(object, text, target),
-    ...(measured ? stats.summaryLines(measured, object.metadata) : [])
+    ...(measured ? target.statsProfile.summaryLines(measured, object.metadata) : [])
   ];
 
-  const disagreements = measured ? stats.crossCheck(measured, object.metadata) : [];
+  const disagreements = measured
+    ? target.statsProfile.crossCheck(measured, object.metadata) : [];
   if (disagreements.length) {
     lines.push('//');
     lines.push('// The cache and the code disagree, so one of them is being read wrong:');

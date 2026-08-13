@@ -289,6 +289,23 @@ const target = {
   bannerTail,
 
   /**
+   * How this target counts what is in a shader.
+   *
+   * A cell rather than a direct `require('./stats')` in the banner, because every regex in
+   * that module is SASS: the instruction pattern wants a leading address comment and an
+   * uppercase mnemonic, the operand pattern wants `R\d+`/`UR\d+`, the families want `LDG`
+   * and `BAR`. Run over another ISA they match nothing and return zero - which the banner
+   * would then print as fact. Zero instructions in a forty-line listing is a worse answer
+   * than no line at all.
+   */
+  statsProfile: {
+    analyze: (text, object) => require('./stats').analyze(text, object.microcode),
+    summaryLines: (measured, metadata) =>
+      require('./stats').summaryLines(measured, metadata),
+    crossCheck: (measured, metadata) => require('./stats').crossCheck(measured, metadata)
+  },
+
+  /**
    * Nothing NVIDIA cannot do, so far.
    *
    * The cell exists rather than being omitted because its emptiness is the claim: every

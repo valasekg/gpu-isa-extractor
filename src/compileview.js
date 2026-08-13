@@ -449,6 +449,9 @@ async function chooseEntry(entries, target) {
 async function openEntry({ built, entry, source, compiledFrom, directive, configured,
   archInfo, token, outDir, target }) {
   const graphics = built.road === 'graphics';
+  // Correlation exists only where a cubin line table does, which is the CUDA road alone.
+  // Gating on "not graphics" would have sent the AMD road looking for one.
+  const correlatable = built.road === 'cuda';
 
   // The entry decides how it becomes text. Everything below this line works on the text and on
   // what the entry says about itself, and none of it names a disassembler - which is the whole
@@ -462,6 +465,10 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
     arch: built.arch,
     token,
     decodeColumn: config().get('decodeControlCodes') !== false,
+    // Echoed back by a target whose compile already produced the listing.
+    tool: built.tool,
+    toolVersion: built.toolVersion || '',
+    command: (built.steps.find(s => s.tool === 'rga') || {}).command || '',
     keepIntermediates: !!config().get('keepRawMicrocode')
   });
   const plain = emission.text;
@@ -480,7 +487,7 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
   let correlation = null;
   let body = plain;
   const style = config().get('compile.correlationStyle') || 'banner';
-  if (style !== 'off' && !graphics) {
+  if (style !== 'off' && correlatable) {
     try {
       const g = await runTool(emission.tool, ['-c', '-g', built.cubinPath], token);
       // An unsaved buffer was compiled from a copy; the line table names the copy, and

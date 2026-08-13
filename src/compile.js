@@ -1432,6 +1432,201 @@ async function graphicsCompile(tools, file, options) {
   };
 }
 
+/**
+ * The AMD road: Slang to SPIR-V, then RGA.
+ *
+ * One step shorter than either NVIDIA road and it ends in TEXT, which is the whole reason the
+ * entry contract makes `emit()` the obligation and the bytes optional.
+ *
+ * What it shares with `graphicsCompile` is not incidental: a fragment shader still needs a
+ * producer, for the same measured reason. RGA accepts a lone `--frag`, exits 0, and returns a
+ * different, larger shader - 84 instructions against 76 for one fixture - because
+ * `--auto-layout-desc` synthesises a different input layout when the previous stage is absent.
+ * So the producer logic is reused rather than skipped, and the banner names which producer fed
+ * the shader.
+ *
+ * What it does NOT share is the pipeline state. RGA's offline mode has no render-state option
+ * at all, and its live-driver mode takes a `.gpso`, which this does not yet synthesise - so the
+ * banner states which road ran and declines to call either one accurate. See `accuracyNote`.
+ */
+async function rgaCompile(tools, file, options) {
+  const rga = require('./rga');
+  const crypto = require('crypto');
+  const { outDir, flags, chosen, steps, notes, sources, token } = options;
+  const stage = chosen.stage;
+
+  const asic = options.gfx || await defaultAsic(tools, rga);
+  if (!asic) {
+    throw new CompileError(
+      'rga lists no targets it can build for, so there is nothing to compile against. ' +
+      '`rga -s vk-spv-offline --list-asics` is what was asked.');
+  }
+
+  // Every module this pipeline needs, compiled to SPIR-V concurrently. `allSettled` for the
+  // reason `graphicsCompile` gives: these children cannot be cancelled, so rejecting early
+  // would leave the rest writing into a scratch directory that outlives the run.
+  const wanted = [{ entry: chosen.entry, stage, name: chosen.entry || stage }];
+  if (STAGES[stage].producer && chosen.producer) {
+    wanted.push({ entry: chosen.producer.name, stage: 'vertex', name: chosen.producer.name });
+  }
+
+  const settled = await Promise.allSettled(wanted.map(w =>
+    slangToSpirv(tools, file, outDir, {
+      flags: flags.slang, entry: w.entry, stage: w.stage, name: w.name
+    })));
+  for (const one of settled) {
+    if (one.status === 'fulfilled') {
+      steps.push({ tool: 'slangc', command: quote(one.value.argv), log: one.value.log });
+    }
+  }
+  const failed = settled.find(one => one.status === 'rejected');
+  if (failed) throw failed.reason;
+
+  const modules = { [stage]: settled[0].value.file };
+  if (wanted.length > 1) {
+    modules.vertex = settled[1].value.file;
+    notes.push(`${chosen.producer.name} is compiled with it as the vertex half, because a ` +
+      'fragment shader compiled alone gets a different input layout - measured, not assumed');
+  } else if (STAGES[stage].producer) {
+    notes.push('no vertex shader was named and none was generated, so RGA synthesised the ' +
+      'input layout itself. A real producer would change the code; this listing is what the ' +
+      'shader compiles to standing alone');
+  }
+
+  const built = await rga.compile({
+    rga: tools.rga, asic, modules, outDir: path.join(outDir, 'rga'), token, run
+  });
+  steps.push({ tool: 'rga', command: quote(built.argv), log: built.log });
+
+  const parseRdna = require('./parse_rdna');
+  const entries = [];
+  for (const [which, text] of Object.entries(built.listings)) {
+    // Only the stage that was asked for becomes a listing. A producer compiled alongside is
+    // part of the pipeline rather than the answer, exactly as on the NVIDIA graphics road.
+    if (which !== stage) continue;
+    const declared = rga.readStatistics(built.statistics[which]) || {};
+    entries.push({
+      name: chosen.entry || stage,
+      stage: which,
+      stages: [which],
+      hardwareStage: parseRdna.entryLabel(text),
+      origin: 'compiled',
+      // No microcode: RGA emits one ELF for the whole pipeline, not one per stage, so there
+      // are no per-entry bytes to hash. The listing is identified by its own text, and the
+      // banner says so rather than printing a digest that looks like the NVIDIA one.
+      sha1: crypto.createHash('sha1').update(text, 'utf8').digest('hex'),
+      identityNote: 'sha1 of the ISA text; RGA emits one ELF per pipeline, not per stage',
+      isa: text,
+      codeBytes: declared.ISA_SIZE !== undefined ? declared.ISA_SIZE : null,
+      instructions: countInstructions(text, parseRdna),
+      declared: {
+        registers: declared.USED_VGPRs !== undefined ? declared.USED_VGPRs : null,
+        sharedBytes: declared.USED_LDS_BYTES !== undefined ? declared.USED_LDS_BYTES : null,
+        localBytes: declared.SCRATCH_MEM !== undefined ? declared.SCRATCH_MEM : null,
+        spillStores: declared.VGPR_SPILLS !== undefined ? declared.VGPR_SPILLS : null,
+        spillLoads: declared.SGPR_SPILLS !== undefined ? declared.SGPR_SPILLS : null
+      },
+      metadata: {
+        stage: which,
+        stageCode: null,
+        registers: declared.USED_VGPRs !== undefined ? declared.USED_VGPRs : null,
+        registerCap: declared.AVAILABLE_VGPRs !== undefined ? declared.AVAILABLE_VGPRs : null,
+        localBytes: declared.SCRATCH_MEM !== undefined ? declared.SCRATCH_MEM : null,
+        sharedBytes: declared.USED_LDS_BYTES !== undefined ? declared.USED_LDS_BYTES : null,
+        killsPixels: null
+      },
+      statistics: declared,
+      warnings: []
+    });
+  }
+
+  if (!entries.length) {
+    throw new CompileError(
+      `rga produced no listing for the ${stage} stage. It writes one file per stage it built, ` +
+      `and it built: ${Object.keys(built.listings).join(', ') || 'nothing'}.`);
+  }
+
+  return {
+    entries,
+    cubinPath: null,
+    arch: asic,
+    asic,
+    road: 'rga',
+    lineage: 'rga',
+    // What produced the listing, carried on the result because `openEntry` has no `tools` and
+    // the banner needs to name the tool that ran.
+    tool: tools.rga,
+    toolVersion: await rga.version(tools.rga, run),
+    stage,
+    pipeline: describePipeline(stage, chosen, built.mode),
+    accuracy: accuracyNote(built.mode),
+    steps,
+    ptxasLog: '',
+    // Nothing here is ptxas, and the cross-check has a better source: RGA's own statistics CSV,
+    // which `declared` already carries.
+    ptxasInfo: () => ({
+      registers: null, localBytes: null, sharedBytes: null, spillStores: null, spillLoads: null
+    }),
+    sources,
+    notes
+  };
+}
+
+/** How many instruction lines a listing holds, by the parser rather than by counting lines. */
+function countInstructions(text, parseRdna) {
+  let n = 0;
+  for (const line of String(text).split(/\r?\n/)) {
+    const parsed = parseRdna.parseLine(line);
+    if (parsed && parsed.opcode) n++;
+  }
+  return n;
+}
+
+/**
+ * The newest target this RGA offers, when the file and the setting name none.
+ *
+ * Asked rather than hardcoded because the list shrinks between releases: 2.14.2 dropped every
+ * gfx9 and gfx10 target an earlier version accepted. A pinned default would stop working on an
+ * upgrade, and an unsupported `-c` is silently ignored rather than refused.
+ */
+async function defaultAsic(tools, rga) {
+  const listed = await rga.targets(tools.rga, run);
+  return listed.length ? listed[listed.length - 1].codename : null;
+}
+
+/** What the listing describes, in the banner's one-line form. */
+function describePipeline(stage, chosen, mode) {
+  const parts = [`${stage} stage`];
+  if (STAGES[stage].producer) {
+    parts.push(chosen.producer
+      ? `producer ${chosen.producer.name} from this file`
+      : 'compiled alone, with RGA synthesising the input layout');
+  }
+  parts.push(mode === 'vulkan' ? 'through the AMD driver' : 'static compiler, no driver');
+  return parts.join(', ');
+}
+
+/**
+ * What this road cannot yet claim about its own accuracy.
+ *
+ * Measured: the same fragment shader gives 87 instructions through the live driver with no
+ * pipeline state and 76 through the offline compiler, and the first divergence is
+ * `s_mov_b64 s[0:1], exec` against `s[2:3]` - user-data SGPRs shifting because the descriptor
+ * layout differs. RGA warns about exactly this. Until a reflected `.gpso` is fed to the live
+ * road and the two compared, NEITHER number is the one a real pipeline gets, and a banner that
+ * picked one would be claiming more than is known.
+ */
+function accuracyNote(mode) {
+  return mode === 'vulkan'
+    ? ['Compiled through the AMD driver with no pipeline state, which RGA warns may be',
+      'inaccurate: the descriptor layout it assumes is not necessarily the one your engine',
+      'binds. Treat the register counts as indicative until a pipeline state file is supplied.']
+    : ['Compiled by the static offline compiler, which needs no driver and no AMD GPU. RGA',
+      'reports this road as less accurate than its live-driver mode; the two were measured to',
+      'differ on one fragment shader by 87 instructions against 76. Neither figure has yet',
+      'been checked against a pipeline built with a matching descriptor layout.'];
+}
+
 /** The render state, named the way the file would have to name it to get this one back. */
 function describeState(state) {
   const format = state.format || 'r8g8b8a8_unorm';
@@ -1672,7 +1867,7 @@ async function compile(tools, file, options = {}) {
     // Every road is named explicitly and anything else refuses. Written as `!== 'graphics'
     // means CUDA` this silently sent a null road - a stage this target has no road for - down
     // the CUDA path, where slangc crashes rather than declining.
-    if (chosen.road && chosen.road !== 'graphics' && chosen.road !== 'cuda') {
+    if (chosen.road && !['graphics', 'cuda', 'rga'].includes(chosen.road)) {
       throw new CompileError(
         `${chosen.entry || 'this shader'} takes the ${chosen.road} road, which this build ` +
         `does not know how to walk. ${stageRefusal(options.targetId)}`);
@@ -1682,6 +1877,12 @@ async function compile(tools, file, options = {}) {
         `${chosen.entry || 'this shader'} is ${article(chosen.stage || 'shader')} ` +
         `${chosen.stage || 'shader'} shader, which this target cannot compile. ` +
         stageRefusal(options.targetId));
+    }
+    if (chosen.road === 'rga') {
+      return rgaCompile(tools, file, {
+        ...options, outDir, home, flags, chosen, steps, notes, sources,
+        gfx: routed.gfx || options.gfx
+      });
     }
     if (chosen.road === 'graphics') {
       return graphicsCompile(tools, file, {
