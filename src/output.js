@@ -15,6 +15,7 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 
+const isa = require('./isa');
 const nvcache = require('./nvcache');
 const stats = require('./stats');
 
@@ -65,110 +66,35 @@ function scratchDir(context) {
 /**
  * Where a listing's code came from, and how that origin describes itself.
  *
- * Two kinds of input now reach this file - a shader carved out of a driver cache, and a
- * kernel compiled from source - and they have nothing in common to say about provenance. A
- * cache object has a file and a byte offset; a compiled one has a source file and a
- * toolchain, and "frame at offset 0" would be a provenance line that reads as fact and is
- * not. Rather than growing an `if` per origin through the middle of the banner, each origin
- * supplies its own lines and `banner` stays origin-blind. A third input - the `.ptx` and
- * `.cubin` entry points `compile.js` already accepts, or a driver round-trip - is a new entry
- * in these two tables and no edit anywhere else.
+ * Two kinds of input reach this file - a shader carved out of a driver cache, and a kernel
+ * compiled from source - and they have nothing in common to say about provenance. A cache
+ * object has a file and a byte offset; a compiled one has a source file and a toolchain, and
+ * "frame at offset 0" would be a provenance line that reads as fact and is not. Rather than
+ * growing an `if` per origin through the middle of the banner, each origin supplies its own
+ * lines and `banner` stays origin-blind.
+ *
+ * Those rows now live on the TARGET rather than here, for the same reason they were rows in
+ * the first place. `frame at offset N` is not merely a fact about a cache object, it is a fact
+ * about an *NVuc* container, and a second vendor reaching this function would have printed it
+ * anyway. The banner keeps the layout - the field column, the rules, the order - and the
+ * target supplies what goes in it.
  */
 const DEFAULT_ORIGIN = 'cache';
 
-function originOf(object) {
-  return object && PROVENANCE[object.origin] ? object.origin : DEFAULT_ORIGIN;
+/**
+ * The target a result describes.
+ *
+ * Results do not carry one yet, and the fallback is not a placeholder for that: a listing
+ * being read back from disk has no compile behind it either, so there will always be a default
+ * here. It is the registry's default rather than a literal so that this file names no vendor.
+ */
+function targetOf(result) {
+  return (result && result.target) || isa.get(isa.DEFAULT_TARGET);
 }
 
-/**
- * What "registers" means for each origin.
- *
- * The cache states a count that sits a little above what the code touches; ptxas states the
- * number it actually allocated. Printing one as the other would merge two different claims
- * under one label, which is exactly what the register-margin note warns against.
- */
-const REGISTER_SOURCE = {
-  cache: 'declared',
-  compiled: 'allocated by ptxas',
-  // Same field, same container, same meaning as the cache path - because it IS the cache
-  // path's field. ptxas never runs on this road, so "allocated by ptxas" would name a tool
-  // that was not involved.
-  driver: 'declared'
-};
-
-const PROVENANCE = {
-  cache(result, sweepResult, field) {
-    const { object } = result;
-    return [
-      field('source') + `${object.source}`,
-      `// ${' '.repeat(FIELD_WIDTH)}  frame at offset ${object.offset}` +
-        (sweepResult
-          ? ` (${sweepResult.label}${sweepResult.scanned ? ', found by magic scan' : ''})`
-          : '')
-    ];
-  },
-
-  compiled(result, sweepResult, field) {
-    return [...toolchainLines(result, field, 'via'), ...flagLines(result, field)];
-  },
-
-  /**
-   * A graphics shader the local driver compiled, for one pipeline this extension described.
-   *
-   * The extra lines are not decoration. A vertex or fragment shader has no SASS of its own -
-   * only SASS for a pipeline - and two parts of that pipeline are things the source file never
-   * said and this tool had to decide. Both were measured to change the generated code without
-   * changing anything a reader could see: substituting UNIFORM_BUFFER_DYNAMIC for
-   * UNIFORM_BUFFER took a shader from 48 instructions to 40, and adding four bindings it never
-   * touches changed the code at the same instruction count. So the layout and the producer are
-   * stated on the face of the listing. A listing that did not say which pipeline it describes
-   * would be claiming more than it knows.
-   */
-  driver(result, sweepResult, field) {
-    const { compile } = result;
-    const lines = toolchainLines(result, field, 'with');
-    if (compile.device) {
-      // Which GPU, because this road needs the hardware present and the answer is that
-      // device's - unlike ptxas, which cross-compiles for any architecture from anywhere.
-      lines.push(field('driver') + `${compile.device}`);
-    }
-    if (compile.pipeline) {
-      lines.push(field('pipeline') + `${compile.pipeline}`);
-    }
-    return [...lines, ...flagLines(result, field)];
-  }
-};
-
-/**
- * The source and the toolchain that ran over it - shared by both compiled origins.
- *
- * `joiner` differs because the extra sources do: the CUDA road records the generated `.cu` a
- * compile went *via*, the driver road the companion shaders it was compiled *with*.
- */
-function toolchainLines(result, field, joiner) {
-  const { object, compile } = result;
-  const lines = [field('source') + `${object.source}`];
-  for (const note of compile.sources.slice(1)) {
-    lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${joiner} ${note}`);
-  }
-  lines.push(field('compiled') + `${compile.steps.map(s => s.tool).join(' -> ')}`);
-  for (const step of compile.steps) {
-    lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${step.command}`);
-  }
-  return lines;
-}
-
-/** Which flags were in force, and where each came from. Last, on both roads. */
-function flagLines(result, field) {
-  const { compile } = result;
-  const lines = [];
-  if (compile.directive) {
-    lines.push(field('flags') + `${compile.directive} (from the file)`);
-  }
-  if (compile.configuredFlags) {
-    lines.push(`// ${' '.repeat(FIELD_WIDTH)}  ${compile.configuredFlags} (from settings)`);
-  }
-  return lines;
+function originOf(object, target) {
+  const rows = (target || isa.get(isa.DEFAULT_TARGET)).provenance;
+  return object && rows[object.origin] ? object.origin : DEFAULT_ORIGIN;
 }
 
 /**
@@ -194,7 +120,9 @@ function metadataLines(object, text) {
   lines.push(field('stage') + stage);
 
   if (meta.registers !== null) {
-    lines.push(field('registers') + `${meta.registers} ${REGISTER_SOURCE[originOf(object)]}` +
+    const target = isa.get(isa.DEFAULT_TARGET);
+    lines.push(field('registers') +
+      `${meta.registers} ${target.registerSource[originOf(object, target)]}` +
       (meta.registerCap !== null ? `, cap ${meta.registerCap}` : ''));
   }
 
@@ -215,8 +143,8 @@ const RULE = `//${'='.repeat(76)}`;
 const THIN_RULE = `//${'-'.repeat(76)}`;
 
 function banner(result, sweepResult) {
-  const { object, arch, nvdisasm, nvdisasmVersion, command, annotation, text } = result;
-  const pkg = require('../package.json');
+  const { object, text } = result;
+  const target = targetOf(result);
 
   let measured = null;
   try {
@@ -249,48 +177,12 @@ function banner(result, sweepResult) {
   }
 
   lines.push(THIN_RULE);
-  lines.push(...PROVENANCE[originOf(object)](result, sweepResult, field));
+  lines.push(...target.provenance[originOf(object, target)](result, sweepResult, field));
 
-  lines.push(
-    field('microcode') + `${object.codeBytes} bytes, sha1 ${object.sha1}`,
-    // The literal EF_CUDA_<arch> token is what this extension's own hovers read to decide
-    // which architecture's instruction set to describe. Keep the spelling.
-    field('arch') + `${arch} (.headerflags @"EF_CUDA_64BIT_ADDRESS EF_CUDA_${arch}")`,
-    field('nvdisasm') + `${nvdisasm}`,
-    `// ${' '.repeat(FIELD_WIDTH)}  ${nvdisasmVersion}`,
-    `// ${' '.repeat(FIELD_WIDTH)}  ${command}`,
-    field('tool') + `${pkg.displayName} ${pkg.version}`
-  );
-
-  if (annotation) {
-    lines.push(
-      '//',
-      '// Control codes decoded from bits [105,126) of each instruction and printed as',
-      '//   [B<wait 0-5>:R<read>:W<write>:<yield>:S<stall>]',
-      '// Scoreboards are positional and numbered 0-5 exactly as encoded - this is NOT the',
-      '// hex mask over barriers 1-6 that Maxwell-era listings use. Hover any field for detail.');
-    if (annotation.suspect) {
-      lines.push(
-        '//',
-        `// WARNING: on ${annotation.mismatchTotal} of ${annotation.annotated} instructions the`,
-        '// decoded reuse flags disagree with the .reuse flags nvdisasm printed from the same',
-        `// instruction word (${annotation.missing} where nvdisasm found a flag this did not).`,
-        '// The control-field layout may differ on this architecture, so the columns below may',
-        '// be wrong. Everything else in this listing is nvdisasm\'s own output and is unaffected.');
-      for (const m of annotation.mismatches.slice(0, 5)) {
-        lines.push(`//   /*${m.address}*/ decoded ${m.decoded} reuse bit(s), printed ${m.printed}`);
-      }
-    } else if (annotation.mismatchTotal) {
-      // Benign, and common enough on graphics shaders to be worth explaining rather than
-      // hiding: a reuse bit whose operand-collector slot holds no plain register has nothing
-      // for nvdisasm to attach a .reuse suffix to.
-      lines.push(
-        '//',
-        `// Note: ${annotation.mismatchTotal} of ${annotation.annotated} instructions carry a reuse`,
-        '// bit that nvdisasm did not print - normal where the reused slot is not a plain',
-        '// register (IPA reading attribute space, TEX). The scheduling columns are unaffected.');
-    }
-  }
+  // How this target's code was identified and disassembled, and what its per-instruction
+  // column means. One call rather than a block, because every line of it names a tool, a
+  // container field or an encoding that belongs to the target rather than to the layout.
+  lines.push(...target.bannerTail(result, field));
 
   // The source map is what makes correlation survive the listing being saved and reopened:
   // the markers in the body carry short labels, and this is where a label becomes a path.
@@ -340,7 +232,10 @@ function listingPathFor(context, object, arch) {
 async function listingIndex(context) {
   try {
     const names = await fs.promises.readdir(listingDir(context));
-    return new Set(names.filter(n => n.endsWith(LISTING_EXT)));
+    // Every target's extension, not this one's. All targets write into one directory, and a
+    // single-extension filter here would mean one target's listings are counted as already
+    // generated while another's are invisible - which reads as "not disassembled yet" forever.
+    return new Set(names.filter(n => isa.isListingPath(n)));
   } catch (e) {
     return new Set();
   }
@@ -395,8 +290,13 @@ async function openListing(context, result, sourceRecord, show = { preview: fals
 /** Show a listing that is already on disk. */
 async function showListing(file, show = { preview: false }) {
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
-  if (doc.languageId !== LANGUAGE_ID) {
-    await vscode.languages.setTextDocumentLanguage(doc, LANGUAGE_ID);
+  // Which language a listing opens as is decided by its extension, not by a constant: two
+  // targets write into one directory, and the language id is what every provider dispatches
+  // on. A listing opened as the wrong dialect is highlighted by the wrong grammar and hovered
+  // out of the wrong opcode table, which looks like corrupt output rather than a mix-up.
+  const dialect = isa.dialectForFile(file) || isa.DIALECTS[LANGUAGE_ID];
+  if (doc.languageId !== dialect.id) {
+    await vscode.languages.setTextDocumentLanguage(doc, dialect.id);
   }
   await vscode.window.showTextDocument(doc, show);
   return doc;
@@ -424,7 +324,9 @@ async function pruneListings(context, log) {
   try { names = await fs.promises.readdir(dir); } catch (e) { return 0; }
 
   for (const name of names) {
-    if (!name.endsWith(LISTING_EXT)) continue;
+    // Same set the index uses. A listing this did not recognise would never be pruned, so the
+    // retention setting would quietly stop applying to one target's output.
+    if (!isa.isListingPath(name)) continue;
     const file = path.join(dir, name);
     if (open.has(path.normalize(file).toLowerCase())) continue;
     try {

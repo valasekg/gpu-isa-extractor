@@ -26,6 +26,7 @@ const vscode = require('vscode');
 const compile = require('./compile');
 const correlate = require('./correlate');
 const ctrl = require('./ctrl');
+const isa = require('./isa');
 const output = require('./output');
 const pipeline = require('./pipeline');
 const spawn = require('./spawn');
@@ -362,11 +363,14 @@ async function build({ file, source, tools, flags, archInfo, outDir, backend, di
 /** One entry point compiles silently; several are worth asking about. */
 async function chooseEntry(entries) {
   if (entries.length === 1) return entries[0];
+  // The description is the target's to write. These three figures happen to be the ones a
+  // cubin carries; a target whose entries record different ones would render "undefined
+  // instructions, undefined bytes" here rather than saying what it does know.
+  const target = isa.get(isa.DEFAULT_TARGET);
   const picked = await vscode.window.showQuickPick(
     entries.map(e => ({
       label: e.name,
-      description: `${e.instructions} instructions, ${e.codeBytes} bytes` +
-        (e.registers ? `, ${e.registers} registers` : ''),
+      description: target.describeEntry(e),
       entry: e
     })),
     { title: 'Which entry point?', matchOnDescription: true });

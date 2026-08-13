@@ -4,6 +4,7 @@ const vscode = require('vscode');
 const { parseLine } = require('./parse');
 const { explainOpcode } = require('./explain');
 const data = require('./data');
+const isa = require('./isa');
 const scoreboard = require('./scoreboard');
 
 const DOC_URL = 'https://docs.nvidia.com/cuda/cuda-binary-utilities/index.html#instruction-set-reference';
@@ -122,7 +123,11 @@ function architectureFor(document) {
   const configured = vscode.workspace.getConfiguration('nvidiaSass').get('hover.architecture', 'auto');
   if (configured && configured !== 'auto' && configured !== 'any') return configured;
   if (configured === 'any') return null;
-  return data.detectArchitecture(i => document.lineAt(i).text, document.lineCount);
+  // Read through the dialect rather than from `data` directly. Which token names the
+  // architecture is a property of the listing's ISA - `EF_CUDA_SM86` is meaningless in another
+  // one - so the document's own language id is what decides how to look for it.
+  const dialect = isa.dialectFor(document) || isa.DIALECTS['nvidia-sass'];
+  return dialect.detectArchitecture(i => document.lineAt(i).text, document.lineCount);
 }
 
 function hoverDetail() {
