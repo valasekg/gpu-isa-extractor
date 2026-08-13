@@ -456,17 +456,29 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
         // source position are those before it. Counting them does not need the per-address
         // Map expanded - which for a large kernel is one entry per instruction, built here
         // only to be thrown away in `banner` style.
-        const unattributed = records[0].address / ctrl.INSTRUCTION_BYTES;
+        // The stride, from the target rather than from this module's own ctrl import - and
+        // NULLABLE, because a fixed bytes-per-instruction is a property of the encoding rather
+        // than of disassembly in general. `correlate.byAddress` walks a run by stepping, which
+        // lands between instructions on a variable-length ISA and attributes a run to
+        // addresses that do not exist, so a target without one does not get an expanded map at
+        // all. Both figures below take it from the same place: reading the stride two ways in
+        // one block is how they come to disagree.
+        const stride = isa.strideFor(target);
+        const unattributed = stride ? records[0].address / stride : null;
 
         // `banner` keeps the instruction stream clean and puts the map in the header;
         // `inline` is the older form, which travels better into a plain-text paste.
         // The per-address expansion is built only for the form that needs it.
-        if (style === 'inline') {
+        if (style === 'inline' && stride) {
           body = correlate.annotate(
             plain,
-            correlate.byAddress(records, compiled.evidence.codeBytes,
-              target.controlColumn.INSTRUCTION_BYTES),
+            correlate.byAddress(records, compiled.evidence.codeBytes, stride),
             { labels }).text;
+        } else if (style === 'inline') {
+          // Said rather than silently falling back to the banner form, because the setting was
+          // set deliberately and the reason it cannot be honoured is a property of the ISA.
+          log(`inline correlation needs a fixed instruction width, which ${target.vendor} ` +
+            `${target.isa} does not have; the map is in the banner instead`);
         }
         correlation = {
           marked: records.length,

@@ -21,13 +21,13 @@
 // attributes    : 1 slot(s), a[0x80]-a[0x80]
 // guarded       : 1 instructions carry a guard predicate (5.9% of 17)
 //----------------------------------------------------------------------------
-// source        : <path>
+// source        : <dir>\0123456789abcdef.bin
 //                 frame at offset 265348 (GLCache blob)
 // microcode     : 272 bytes, sha1 <sha1>
 // arch          : SM86 (.headerflags @"EF_CUDA_64BIT_ADDRESS EF_CUDA_SM86")
-// nvdisasm      : <path>
+// nvdisasm      : <dir>\nvdisasm.exe
 //                 <nvdisasm version>
-//                 "<path>" --binary SM86 --no-dataflow "<path>"
+//                 "<dir>\nvdisasm.exe" --binary SM86 --no-dataflow "<dir>\a.bin"
 // tool          : NVIDIA ISA Extractor <version>
 //
 // Control codes decoded from bits [105,126) of each instruction and printed as

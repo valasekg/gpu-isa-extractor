@@ -49,6 +49,19 @@ function get(id) {
   return TARGETS[id] || null;
 }
 
+/**
+ * Bytes per instruction for this target, or null where that is not a fixed number.
+ *
+ * A single helper because the alternative is every caller writing
+ * `target.controlColumn && target.controlColumn.INSTRUCTION_BYTES`, and the one caller that
+ * forgets the guard gets a TypeError swallowed by whatever try block it sits in. `null` is a
+ * real answer: a variable-length encoding has no stride, and code that steps by one must not
+ * run at all rather than step by a plausible-looking wrong number.
+ */
+function strideFor(target) {
+  return (target && target.controlColumn && target.controlColumn.INSTRUCTION_BYTES) || null;
+}
+
 function list() {
   return ORDER.map(id => TARGETS[id]);
 }
@@ -101,6 +114,7 @@ module.exports = {
   DEFAULT_TARGET,
   LISTING_EXTS,
   get,
+  strideFor,
   list,
   dialectFor,
   dialectForFile,

@@ -35,6 +35,21 @@
  * it runs identically on a machine with no CUDA, no driver and no NVIDIA hardware - which is
  * also what makes it a usable gate for a refactor rather than a hardware test.
  *
+ * ## What this does NOT cover
+ *
+ * Worth knowing before trusting a green run, because the gaps are structural rather than
+ * accidental:
+ *
+ *   - It pins ONE listing, of `cache` origin. The `compiled` and `driver` provenance rows,
+ *     `toolchainLines` and `flagLines` are never rendered here.
+ *   - It never loads `compileview.js`, so it says nothing about the compile road. It passed
+ *     cleanly across the refactor that left that module unable to parse; the parse sweep in
+ *     `verify.py` is what covers that now.
+ *   - The banner's tool paths, versions and command line are LITERALS in `goldenResult`, not
+ *     values produced by `pipeline.js`. That is what lets this run with no CUDA installed, and
+ *     it means a change to how the command is built - a dropped `--no-dataflow`, say - is
+ *     invisible here. `test_endtoend.js` is where that is covered, on a machine with a toolkit.
+ *
  * Recording, after a change that is *meant* to move the listing:
  *
  *   node tools/test_golden.js --record
@@ -222,9 +237,6 @@ function goldenResult(program) {
 const REDACTIONS = [
   // The extension's own version, from package.json. Bumped every release.
   [/\b\d+\.\d+\.\d+\b/g, '<version>'],
-  // Absolute paths, Windows or POSIX. Differ per machine, per toolkit and per scratch tag.
-  [/[A-Za-z]:\\[^\s"]*/g, '<path>'],
-  [/(?<=\s)\/(?:[\w.-]+\/)+[\w.-]+/g, '<path>'],
   // The nvdisasm banner line, which carries the CUDA release.
   [/Cuda compilation tools.*/g, '<nvdisasm version>'],
   // sha1 of the microcode. Deterministic here, but a fixture edit changes it, and the point of
@@ -232,11 +244,38 @@ const REDACTIONS = [
   [/\b[0-9a-f]{40}\b/g, '<sha1>']
 ];
 
+/**
+ * Paths, with the DIRECTORY redacted and the filename kept.
+ *
+ * The directory is the machine-dependent half - a CUDA install root, a scratch tag, a home
+ * directory - and the filename is not: `nvdisasm.exe` is `nvdisasm.exe` everywhere, and a
+ * carved object's `.bin` is named from a content hash.
+ *
+ * Replacing the WHOLE path with one token, which is what this did first, makes every absolute
+ * path interchangeable: pointing the `nvdisasm` field at the cache `.bin` - a banner naming
+ * the wrong file as the tool that produced it - passed. Replacing it with a token naming the
+ * FIELD does not fix that either, because the token then describes the label rather than the
+ * value, and a swapped value still lands on its own field's token. Keeping the basename is
+ * what makes the two distinguishable, and it costs nothing in portability.
+ *
+ * The pattern also no longer stops at the first space. `C:\Program Files\...` is the DEFAULT
+ * Windows CUDA location, and the old `[^\s"]*` left everything after `Program` in the skeleton
+ * while the section-4 guard still passed, because only the drive letter had gone.
+ */
+const WINDOWS_PATH = /[A-Za-z]:\\[^"\n]*?(?=\s{2,}|"|$)/g;
+const POSIX_PATH = /\/(?:[\w.-]+\/)+[\w.-]+/g;
+
+/** `C:\CUDA\v12.8\bin\nvdisasm.exe` -> `<dir>\nvdisasm.exe`. */
+function redactDirectory(match) {
+  const cut = Math.max(match.lastIndexOf('\\'), match.lastIndexOf('/'));
+  return cut < 0 ? '<dir>' : `<dir>${match[cut]}${match.slice(cut + 1)}`;
+}
+
 function canonicalise(banner) {
   return banner.split('\n').map(line => {
     let out = line;
     for (const [pattern, token] of REDACTIONS) out = out.replace(pattern, token);
-    return out;
+    return out.replace(WINDOWS_PATH, redactDirectory).replace(POSIX_PATH, redactDirectory);
   }).join('\n');
 }
 
@@ -340,6 +379,10 @@ const skeleton = canonicalise(banner);
 check(!/\d+\.\d+\.\d+/.test(skeleton.replace(/<version>/g, '')),
   'no bare version number survives canonicalisation');
 check(!/[A-Za-z]:\\/.test(skeleton), 'no absolute Windows path survives canonicalisation');
+// The half that matters is what SURVIVES: a skeleton that redacted filenames too would pass
+// every comparison while being unable to tell one file from another.
+check(/<dir>[\\/]nvdisasm\.exe/.test(skeleton),
+  'the filename survives redaction, so two paths are still distinguishable', skeleton);
 check(/^\/\/ arch\s+:/m.test(banner),
   'the banner still carries the arch field the hovers read');
 check(/EF_CUDA_SM86/.test(banner),
@@ -369,8 +412,15 @@ const normalised = isaEntry.normalize({
 
 check(normalised.evidence.microcode === program.microcode,
   'the microcode survives as evidence rather than as the interface');
+// Derived from a raw entry that genuinely omits it. The previous version of this check was fed
+// an entry that stated codeBytes, so it asserted the caller's own value back at itself:
+// replacing the derivation in isa_entry.js with `null` left the suite green.
+const derived = isaEntry.normalize({ name: 'x', microcode: program.microcode },
+  { target: isa.get(isa.DEFAULT_TARGET) });
+check(derived.evidence.codeBytes === program.microcode.length,
+  'codeBytes is derived when the caller does not state it', derived.evidence.codeBytes);
 check(normalised.evidence.codeBytes === program.microcode.length,
-  'codeBytes is derived when the caller does not state it', normalised.evidence.codeBytes);
+  'codeBytes is kept when the caller does state it', normalised.evidence.codeBytes);
 check(normalised.sha1 === reference.object.sha1,
   'identity is computed the same way it was', normalised.sha1);
 check(typeof normalised.emit === 'function', 'the entry knows how to become text');
@@ -411,6 +461,19 @@ check(/this target states dependencies as instructions/.test(withoutColumn),
 check(/^\/\/ stage\s+: compute/m.test(withoutColumn),
   'everything the layout owns is still printed');
 
+// The three above prove the BANNER honours the target's tail - which is real, but is a claim
+// about bannerTail, not about `controlColumn`. output.js never reads that cell, so overriding
+// it alone changes nothing and the section used to be asserting its own stub back at itself.
+// The cell's actual consumer is the instruction stride, so that is what gets checked.
+check(isa.strideFor(isa.get(isa.DEFAULT_TARGET)) === 16,
+  'a target with a control column reports its instruction width',
+  isa.strideFor(isa.get(isa.DEFAULT_TARGET)));
+check(isa.strideFor(columnless) === null,
+  'a target without one reports no width, rather than throwing or guessing',
+  isa.strideFor(columnless));
+check(isa.strideFor(undefined) === null,
+  'and neither does asking about no target at all');
+
 section('7. Every stage has a road, and the two spellings agree');
 
 // `lineage` and `road.nvidia` say the same thing, which is the whole risk of keeping both. A
@@ -433,8 +496,16 @@ check(nvidiaTarget.roadFor('nonesuch') === null,
 // The refusal is prose, and prose assembled from a table is where sentences come out backwards
 // or with an empty list rendered as though it were an answer. Both happened; both are checked.
 const refusal = compile.stageRefusal('nvidia');
-check(refusal.indexOf('compute goes through CUDA') < refusal.indexOf('the rest are compiled'),
+// Both indices guarded. `indexOf` returns -1, and -1 is less than any found index, so the
+// unguarded form passed whenever the FIRST clause was missing - which is precisely the
+// regression it was written for after that clause once came out second.
+const cudaAt = refusal.indexOf('ompute goes through CUDA');
+const restAt = refusal.indexOf('the rest are compiled');
+check(cudaAt >= 0 && restAt >= 0 && cudaAt < restAt,
   'the refusal says what "the rest" is the rest of, before saying "the rest"', refusal);
+// A clause following a full stop starts a sentence, and ROAD_PROSE stores fragments.
+check(/\.\s+[A-Z]/.test(refusal.slice(refusal.indexOf('. ') )),
+  'the clause after the stage list starts a sentence, not a fragment', refusal);
 check(/compiled: amplification, .*vertex\./.test(refusal),
   'the refusal lists the stages this target really compiles');
 check(!/compiled: \./.test(compile.stageRefusal('nosuch')) &&
