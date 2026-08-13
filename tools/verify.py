@@ -333,8 +333,19 @@ for dialect in DIALECT_GRAMMARS:
         ok("the %s instruction rule keeps the opcode in capture %d across all %d line prefixes"
            % (label, capture, len(dialect["prefix_forms"])))
 
-    sample = next(form for form in dialect["prefix_forms"]
-                  if form[0] == dialect["column_sample"])
+    # `next(..., None)` and an explicit refusal. A bare `next()` raises StopIteration out of
+    # module-level code, which is not a failed check - it is a traceback that kills the run
+    # before sections 4, 5 and 6, so the manifest wiring, the theme coverage and all fourteen
+    # JS suites report nothing at all and no summary line is printed. This file's own comment
+    # elsewhere warns against exactly that ("aborts this whole script instead of failing a
+    # check"); a mistyped `column_sample` is the obvious way to reach it.
+    sample = next((form for form in dialect["prefix_forms"]
+                   if form[0] == dialect["column_sample"]), None)
+    if sample is None:
+        bad("%s names a column sample that is not one of its prefix forms" % label,
+            "column_sample=%r, prefix forms: %s"
+            % (dialect["column_sample"], ", ".join(f[0] for f in dialect["prefix_forms"])))
+        continue
     column_match = instruction_re.match(sample[1])
     wrong = []
     for group, (expected_scope, text) in dialect["column_captures"].items():
@@ -406,7 +417,17 @@ referenced = [manifest["main"]]
 # point at the SAME file - which is the recommendation for a second ISA dialect - so this is
 # de-duplicated rather than assumed distinct.
 for lang in contributes["languages"]:
-    if lang.get("configuration") and lang["configuration"] not in referenced:
+    # A language with no `configuration` is reported, not skipped. The previous `[0]` indexing
+    # raised KeyError here - loudly, and for the right reason: a language with no
+    # language-configuration has no comment syntax, no brackets and no word pattern, and the
+    # word pattern is what makes ctrl+click and double-click work on a lone scoreboard digit.
+    # Rewriting the lookup as `.get()` turned that noisy failure into silence.
+    if not lang.get("configuration"):
+        bad("language %s declares no configuration file" % lang.get("id", "(unnamed)"),
+            "without one it has no wordPattern, so cursor features that resolve a word - "
+            "ctrl+click, double-click, the occurrence highlighter - stop working inside a "
+            "control column.")
+    elif lang["configuration"] not in referenced:
         referenced.append(lang["configuration"])
 referenced += [g["path"] for g in contributes["grammars"]]
 referenced += [t["path"] for t in contributes["themes"]]
@@ -702,15 +723,37 @@ else:
 # the only entry today - but these scopes are what give every semantic token a colour in themes
 # that do not opt into semantic highlighting, so a second language whose entry went unchecked
 # would lose its fallbacks silently, in exactly the themes least able to survive it.
+# The modifier combinations the semantic provider emits, which every language it serves has to
+# give a TextMate fallback for. Defined before the loop because it is checked INSIDE it: these
+# scopes are what colour a token in a theme that never opts into semantic highlighting, so a
+# language missing them loses its colours in exactly the themes least able to survive it.
+required_fallbacks = {
+    "sassModifier.tier1",
+    "sassModifier.tier2",
+    "sassModifier.tier3",
+}
+for token_type in ("sassVectorReg", "sassUniformReg", "sassPredicate",
+                   "sassUniformPredicate"):
+    required_fallbacks.update("%s.%s" % (token_type, role)
+                              for role in ("dst", "src", "discard"))
+required_fallbacks.update(("sassBarrier.dst", "sassBarrier.src"))
+
 semantic_scope_entries = contributes["semanticTokenScopes"]
 scope_types = set()
-scope_map = {}
+# A SET of scopes, not a merged selector->scopes dict. `scope_map.update(entry_map)` let a
+# later entry overwrite an earlier one's mapping for the same selector, and `fallback_scopes`
+# was derived from the survivor - so the stock-Dark+ orphan check below, the one HANDOFF.md
+# credits with catching the `constant.other` bug, silently stopped examining the scopes that
+# were overwritten. Every scope every language declares has to be checked, so every scope is
+# collected.
+fallback_scope_set = set()
 for entry in semantic_scope_entries:
     entry_map = entry["scopes"]
     where = entry.get("language", "(no language)")
     entry_types = {selector.split(".")[0] for selector in entry_map}
     scope_types |= entry_types
-    scope_map.update(entry_map)
+    for scopes in entry_map.values():
+        fallback_scope_set.update([scopes] if isinstance(scopes, str) else scopes)
 
     undeclared = entry_types - declared_types
     if undeclared:
@@ -726,24 +769,17 @@ for entry in semantic_scope_entries:
     else:
         ok("every semantic type has a TextMate fallback scope in %s" % where)
 
-required_fallbacks = {
-    "sassModifier.tier1",
-    "sassModifier.tier2",
-    "sassModifier.tier3",
-}
-for token_type in ("sassVectorReg", "sassUniformReg", "sassPredicate",
-                   "sassUniformPredicate"):
-    required_fallbacks.update("%s.%s" % (token_type, role)
-                              for role in ("dst", "src", "discard"))
-required_fallbacks.update(("sassBarrier.dst", "sassBarrier.src"))
-missing_fallbacks = required_fallbacks - set(scope_map)
-if missing_fallbacks:
-    bad("semantic token modifier combinations lack TextMate fallbacks",
-        " ".join(sorted(missing_fallbacks)))
-else:
-    ok("every emitted semantic modifier combination has a TextMate fallback")
+    # Per entry, not against the union. Checked against a merged map, a second language
+    # declaring NONE of these passed because the first language's entries were still in the
+    # dict - which is the precise failure the per-language loop was introduced to prevent.
+    missing_fallbacks = required_fallbacks - set(entry_map)
+    if missing_fallbacks:
+        bad("semanticTokenScopes[%s] lacks TextMate fallbacks for emitted modifier "
+            "combinations" % where, " ".join(sorted(missing_fallbacks)))
+    else:
+        ok("every emitted semantic modifier combination has a TextMate fallback in %s" % where)
 
-fallback_scopes = sorted({scope for scopes in scope_map.values() for scope in scopes})
+fallback_scopes = sorted(fallback_scope_set)
 
 # ------------------------------------------------------------- 5. theme cover
 
