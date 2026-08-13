@@ -157,11 +157,21 @@ function parse(text, entryName) {
  *
  * @param {Array<{address, file, line}>} records
  * @param {number} codeBytes  so the last run can be closed at the end of the code
+ * @param {number} [stride]   bytes per instruction.
+ *
+ * The stride is a parameter rather than a constant because it is only universal within one
+ * ISA. A SASS instruction is 16 bytes and every address in a listing is a multiple of it,
+ * which is what lets a run be walked by stepping. Where instructions vary in length - RDNA
+ * encodes in 4, 8 or 12 - stepping by a fixed amount lands between instructions and attributes
+ * a run to addresses that do not exist, so such a target must expand its runs from the
+ * addresses it actually parsed rather than call this at all. Keeping the 16 here as a default
+ * rather than deleting it is deliberate: the NVIDIA road is the caller, and its stride is a
+ * fact about the encoding rather than a value worth threading through five frames.
  */
-function byAddress(records, codeBytes) {
+function byAddress(records, codeBytes, stride = 16) {
   const map = new Map();
   if (!records || !records.length) return map;
-  const STRIDE = 16;
+  const STRIDE = stride;
   for (let i = 0; i < records.length; i++) {
     const start = records[i].address;
     const stop = i + 1 < records.length ? records[i + 1].address : codeBytes;

@@ -350,5 +350,66 @@ check(skeleton.split('\n').filter(l => l.includes('<path>')).length < skeleton.s
   `${skeleton.split('\n').filter(l => l.includes('<path>')).length} of ` +
   `${skeleton.split('\n').length} lines mention a path`);
 
+section('5. The entry contract carries the same listing as a hand-built object');
+
+// The strongest check available for the entry refactor: `openEntry` used to assemble a flat
+// object literal and hand it to the banner. It now normalises an entry and flattens it back.
+// If those two produce different banners, the refactor changed the listing - which is exactly
+// what it promised not to do, and what no other suite here would notice.
+const isaEntry = require(path.join(ROOT, 'src', 'isa_entry.js'));
+const isa = require(path.join(ROOT, 'src', 'isa.js'));
+
+const reference = goldenResult(program);
+const normalised = isaEntry.normalize({
+  name: 'goldenKernel',
+  microcode: program.microcode,
+  codeBytes: program.microcode.length,
+  metadata: reference.object.metadata
+}, { target: isa.get(isa.DEFAULT_TARGET), origin: 'cache' });
+
+check(normalised.evidence.microcode === program.microcode,
+  'the microcode survives as evidence rather than as the interface');
+check(normalised.evidence.codeBytes === program.microcode.length,
+  'codeBytes is derived when the caller does not state it', normalised.evidence.codeBytes);
+check(normalised.sha1 === reference.object.sha1,
+  'identity is computed the same way it was', normalised.sha1);
+check(typeof normalised.emit === 'function', 'the entry knows how to become text');
+check(normalised.stages.length === 0,
+  'an entry that names no stage claims no stages', JSON.stringify(normalised.stages));
+check(normalised.declared.registers === null && normalised.declared.spillLoads === null,
+  'what a tool declared starts empty rather than borrowing from the code');
+
+const throughContract = output.banner(
+  { ...reference, object: isaEntry.asObject(normalised, {
+    source: reference.object.source, offset: reference.object.offset }) },
+  { label: 'GLCache blob', scanned: false });
+check(throughContract === output.banner(reference, { label: 'GLCache blob', scanned: false }),
+  'a banner built through the entry contract is identical to one built by hand',
+  firstDifference(output.banner(reference, { label: 'GLCache blob', scanned: false }),
+    throughContract));
+
+section('6. A target with no per-instruction column says so by omission');
+
+// `absences` and the nullable capability cells are the mechanism the whole design rests on: a
+// target that has no control column must produce a banner with no legend, rather than an empty
+// legend or a crash. Checked with a stand-in row rather than a real second target, because the
+// claim is about the mechanism and there is no second target yet.
+const columnless = {
+  ...isa.get(isa.DEFAULT_TARGET),
+  controlColumn: null,
+  bannerTail: (result, field) => [
+    field('microcode') + `${result.object.codeBytes} bytes, sha1 ${result.object.sha1}`,
+    field('note') + 'this target states dependencies as instructions, not as a column'
+  ]
+};
+const withoutColumn = output.banner(
+  { ...reference, target: columnless }, { label: 'GLCache blob', scanned: false });
+check(!/Control codes decoded from bits/.test(withoutColumn),
+  'no control-column legend is printed for a target that has none');
+check(/this target states dependencies as instructions/.test(withoutColumn),
+  'the target got to say what it has instead');
+check(/^\/\/ stage\s+: compute/m.test(withoutColumn),
+  'everything the layout owns is still printed');
+
 console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);

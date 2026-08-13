@@ -22,9 +22,34 @@
 
 const vscode = require('vscode');
 
-const scoreboard = require('./scoreboard');
+// `scoreboard.js` is no longer required directly: it is reached through the dialect's
+// dependency model, which is the thing that varies per ISA. The analysis still lives there.
+const isa = require('./isa');
 
-const LANGUAGE_ID = 'nvidia-sass';
+/**
+ * Whether this editor's document is one whose dependencies can be followed.
+ *
+ * Two conditions, not one. It has to be a listing this extension understands, and its dialect
+ * has to have a dependency relation to follow at all - an ISA that states no such thing gets
+ * no highlighter rather than a highlighter that scans every line for a column that is never
+ * there.
+ *
+ * This is the EDITOR's gate, and it is deliberately not applied inside `analyze`. A document
+ * with no language id is not a document in an unrecognised language, it is a document whose
+ * language nobody stated - which is exactly what `decorationsFor`'s callers hand it, since
+ * that function exists to be tested without an editor at all. Gating the analysis on a field
+ * only VS Code sets would have made the pure half untestable to buy nothing.
+ */
+function followable(document) {
+  const dialect = isa.dialectFor(document);
+  return dialect && dialect.dependency ? dialect : null;
+}
+
+/** The model to read a document with: its own, or the default when it does not say. */
+function modelFor(document) {
+  const dialect = isa.dialectFor(document) || isa.DIALECTS[isa.get(isa.DEFAULT_TARGET).dialectId];
+  return dialect.dependency || null;
+}
 
 /**
  * How the two ends are drawn. Built on construction rather than at module load: touching the
@@ -58,8 +83,13 @@ function contentRange(document, line) {
 }
 
 function analyze(document, position) {
+  // Through the dialect, so the answer comes from the model that matches the ISA in front of
+  // the cursor. `scoreboard.analyzeAt` is still what answers for a SASS listing - it is
+  // reached by a lookup rather than by being the only thing there is.
+  const model = modelFor(document);
+  if (!model) return null;
   try {
-    return scoreboard.analyzeAt(document, position.line, position.character);
+    return model.analyzeAt(document, position.line, position.character);
   } catch (e) {
     return null;
   }
@@ -123,7 +153,7 @@ class ScoreboardHighlighter {
   }
 
   update(editor) {
-    if (!editor || !editor.document || editor.document.languageId !== LANGUAGE_ID) return;
+    if (!editor || !followable(editor.document)) return;
     if (!this.enabled()) return this.clear(editor);
 
     const at = editor.selection.active;
@@ -158,6 +188,10 @@ class ScoreboardDefinitionProvider {
    * it is the wait that drains it.
    */
   provideDefinition(document, position) {
+    // The same editor gate `update` applies. Registered per language selector today, so this
+    // is belt and braces - but a dialect with no dependency model would otherwise answer F12
+    // out of another ISA's reader.
+    if (!followable(document)) return null;
     const hit = analyze(document, position);
     if (!hit || hit.sb === null || !hit.related.length) return null;
 

@@ -27,6 +27,7 @@ const compile = require('./compile');
 const correlate = require('./correlate');
 const ctrl = require('./ctrl');
 const isa = require('./isa');
+const isaEntry = require('./isa_entry');
 const output = require('./output');
 const pipeline = require('./pipeline');
 const spawn = require('./spawn');
@@ -387,25 +388,25 @@ async function chooseEntry(entries) {
  */
 async function openEntry({ built, entry, source, compiledFrom, directive, configured,
   archInfo, token, outDir }) {
-  const { path: nvdisasm } = await pipeline.resolveNvdisasm();
+  const graphics = built.lineage === 'graphics';
+  const target = isa.get(isa.DEFAULT_TARGET);
 
-  const rawPath = path.join(outDir, `${entry.name}.raw`);
-  await fs.promises.writeFile(rawPath, entry.microcode);
-
-  // The browse path's call, not a second spelling of it: it returns the command it really
-  // ran, properly quoted.
-  const disassembled = await pipeline.runNvdisasm(nvdisasm, built.arch, rawPath, token);
-  const sass = disassembled.text;
-  const annotation = config().get('decodeControlCodes') !== false
-    ? ctrl.annotate(sass, entry.microcode)
-    : null;
-  const plain = annotation ? annotation.text : sass;
-
-  // Same lifetime the browse path gives it - the setting means the same thing on both roads,
-  // and without this every compiled entry left a .raw in the scratch directory.
-  if (!config().get('keepRawMicrocode')) {
-    fs.promises.unlink(rawPath).catch(() => {});
-  }
+  // The entry decides how it becomes text. Everything below this line works on the text and on
+  // what the entry says about itself, and none of it names a disassembler - which is the whole
+  // of what this restructuring buys.
+  const compiled = isaEntry.normalize(entry, {
+    target,
+    origin: graphics ? 'driver' : 'compiled'
+  });
+  const emission = await compiled.emit({
+    outDir,
+    arch: built.arch,
+    token,
+    decodeColumn: config().get('decodeControlCodes') !== false,
+    keepIntermediates: !!config().get('keepRawMicrocode')
+  });
+  const plain = emission.text;
+  const annotation = emission.annotation;
 
   // Correlation comes from a second pass over the cubin, because line info lives in the ELF
   // and `--binary` has no ELF to read it from.
@@ -417,13 +418,12 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
   // strips it. So the block is skipped outright rather than allowed to fail into its catch,
   // which would log "source correlation unavailable" on every graphics compile and read as a
   // fault rather than as a property of the route.
-  const graphics = built.lineage === 'graphics';
   let correlation = null;
   let body = plain;
   const style = config().get('compile.correlationStyle') || 'banner';
   if (style !== 'off' && !graphics) {
     try {
-      const g = await runTool(nvdisasm, ['-c', '-g', built.cubinPath], token);
+      const g = await runTool(emission.tool, ['-c', '-g', built.cubinPath], token);
       // An unsaved buffer was compiled from a copy; the line table names the copy, and
       // everything downstream must name the file the user actually has open.
       const parsed = correlate.rewriteSource(
@@ -447,7 +447,10 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
         // The per-address expansion is built only for the form that needs it.
         if (style === 'inline') {
           body = correlate.annotate(
-            plain, correlate.byAddress(records, entry.codeBytes), { labels }).text;
+            plain,
+            correlate.byAddress(records, compiled.evidence.codeBytes,
+              target.controlColumn.INSTRUCTION_BYTES),
+            { labels }).text;
         }
         correlation = {
           marked: records.length,
@@ -470,45 +473,42 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
   }
 
   const info = built.ptxasInfo(entry.name);
-  const object = {
-    name: entry.name,
-    source,
-    offset: 0,
-    codeBytes: entry.codeBytes,
-    microcode: entry.microcode,
-    // The carve already knows what this is; only the CUDA road, whose entries come out of a
-    // cubin rather than a cache container, has no identity to forward.
-    sha1: entry.sha1 || sha1(entry.microcode),
-    origin: graphics ? 'driver' : 'compiled',
-    warnings: [],
-    // The CUDA road has to state these, because a cubin records almost none of them and
-    // `stage: 'compute'` is true there by construction. The graphics road does not have to
-    // state anything: its bytes came out of a real cache container, so the driver's own
-    // account of the shader travels with them - the stage as a code rather than an assumption,
-    // and `killsPixels`, which is meaningful for a fragment shader and meaningless for a
-    // kernel. Hardcoding `compute` here would have quietly labelled every pixel shader wrong.
-    metadata: graphics ? entry.metadata : {
-      stage: 'compute',
-      stageCode: null,
-      // ptxas's own account of the kernel, which the banner then cross-checks against what
-      // the code is measured to use - the same two-source comparison the cache path makes.
-      registers: info.registers !== null ? info.registers : entry.registers,
-      registerCap: null,
-      localBytes: info.localBytes,
-      sharedBytes: info.sharedBytes,
-      killsPixels: null
-    }
+  // The CUDA road has to state these, because a cubin records almost none of them and
+  // `stage: 'compute'` is true there by construction. The graphics road does not have to state
+  // anything: its bytes came out of a real cache container, so the driver's own account of the
+  // shader travels with them - the stage as a code rather than an assumption, and
+  // `killsPixels`, which is meaningful for a fragment shader and meaningless for a kernel.
+  // Hardcoding `compute` here would have quietly labelled every pixel shader wrong.
+  compiled.metadata = graphics ? entry.metadata : {
+    stage: 'compute',
+    stageCode: null,
+    // ptxas's own account of the kernel, which the banner then cross-checks against what the
+    // code is measured to use - the same two-source comparison the cache path makes.
+    registers: info.registers !== null ? info.registers : entry.registers,
+    registerCap: null,
+    localBytes: info.localBytes,
+    sharedBytes: info.sharedBytes,
+    killsPixels: null
   };
+
+  // Flattened back to the shape `output.banner` and `stats` still read. That flattening is the
+  // seam that disappears when they move onto the entry themselves; until then it lives in one
+  // function rather than being open-coded here.
+  const object = isaEntry.asObject(compiled, { source });
 
   const result = {
     text: plain,                       // banner and statistics read this: no markers in it
     correlated: body,                  // what gets written as the listing body
     object,
+    target,
     arch: built.arch,
     archFrom: archInfo.from,
-    nvdisasm,
-    nvdisasmVersion: await pipeline.nvdisasmVersion(nvdisasm),
-    command: disassembled.command,
+    // What produced the text, as the emission reported it. The field names still say
+    // `nvdisasm` because that is what `output.banner`'s NVIDIA row reads; they become the
+    // target's business when a second row needs different ones.
+    nvdisasm: emission.tool,
+    nvdisasmVersion: emission.toolVersion,
+    command: emission.command,
     annotation,
     correlation,
     compile: {
@@ -549,9 +549,14 @@ async function writeCompiledListing(result) {
   const dir = output.listingDir(context);
   await fs.promises.mkdir(dir, { recursive: true });
 
+  // The extension and the arch fallback both come from the dialect this target writes. They
+  // are what decide whether the listing opens as the right language and what it is called when
+  // the architecture is unusable as a filename component - `sm` is not a sensible stand-in for
+  // a target whose architectures are named `gfx1201`.
+  const dialect = isa.DIALECTS[(result.target || isa.get(isa.DEFAULT_TARGET)).dialectId];
   const tag = sha1(Buffer.from(path.resolve(result.object.source).toLowerCase())).slice(0, 6);
   const name = `${output.sanitize(result.object.name)}.${tag}.` +
-    `${output.sanitize(result.arch, 'sm')}${output.LISTING_EXT}`;
+    `${output.sanitize(result.arch, dialect.archFallback)}${dialect.listingExt}`;
   const file = path.join(dir, name);
   await fs.promises.writeFile(
     file, output.banner(result, null) + result.correlated, 'utf8');
@@ -620,8 +625,15 @@ function markersFor(doc) {
   return entry;
 }
 
+/**
+ * Is this document one of our listings, in any dialect?
+ *
+ * A language-id lookup rather than a comparison against one constant. The correlation UI reads
+ * markers back out of the document text, so what matters is that the document is a listing at
+ * all - not which ISA it holds.
+ */
 function isListing(doc) {
-  return doc && doc.languageId === output.LANGUAGE_ID;
+  return isa.dialectFor(doc) !== null;
 }
 
 /**

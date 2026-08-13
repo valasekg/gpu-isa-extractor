@@ -28,6 +28,7 @@ const path = require('path');
 const ctrl = require('./ctrl');
 const data = require('./data');
 const pipeline = require('./pipeline');
+const scoreboard = require('./scoreboard');
 const { parseLine } = require('./parse');
 
 /** Banner label column. Shared with `output.js`, which owns the layout. */
@@ -214,6 +215,51 @@ const target = {
   // this to null, and `output.banner` then prints no legend rather than an empty one.
   controlColumn: { annotate: ctrl.annotate, INSTRUCTION_BYTES: ctrl.INSTRUCTION_BYTES },
 
+  /**
+   * Compiled code to listing text.
+   *
+   * Moved out of `compileview.openEntry` unchanged, including the reason it was written that
+   * way: the disassembly is deliberately the same two calls the cache path makes -
+   * `nvdisasm --binary` over raw microcode, then `ctrl.annotate` over the result - because the
+   * `.text` section of a cubin is the same kind of thing a carve produces. Anything that only
+   * worked on the compile road would drift out of step with the path used far more often.
+   *
+   * That it needs a file on disk at all is the part that does not generalise: nvdisasm takes
+   * bytes, so the bytes are written out and handed over. A target whose disassembler emits
+   * text has nothing to write and no `--binary` to call, which is why this is a cell rather
+   * than a step in a shared sequence.
+   *
+   * @param {object} entry           a normalised entry; reads `evidence.microcode`
+   * @param {import('./isa_entry').EmitContext} ctx
+   * @returns {Promise<import('./isa_entry').Emission>}
+   */
+  async emit(entry, ctx) {
+    const fs = require('fs');
+    const { path: nvdisasm } = await pipeline.resolveNvdisasm();
+
+    const rawPath = path.join(ctx.outDir, `${entry.name}.raw`);
+    await fs.promises.writeFile(rawPath, entry.evidence.microcode);
+
+    // The browse path's call, not a second spelling of it: it returns the command it really
+    // ran, properly quoted.
+    const disassembled = await pipeline.runNvdisasm(nvdisasm, ctx.arch, rawPath, ctx.token);
+    const annotation = ctx.decodeColumn
+      ? ctrl.annotate(disassembled.text, entry.evidence.microcode)
+      : null;
+
+    // Same lifetime the browse path gives it - the setting means the same thing on both roads,
+    // and without this every compiled entry left a .raw in the scratch directory.
+    if (!ctx.keepIntermediates) fs.promises.unlink(rawPath).catch(() => {});
+
+    return {
+      text: annotation ? annotation.text : disassembled.text,
+      annotation,
+      tool: nvdisasm,
+      toolVersion: await pipeline.nvdisasmVersion(nvdisasm),
+      command: disassembled.command
+    };
+  },
+
   provenance: PROVENANCE,
   registerSource: REGISTER_SOURCE,
   bannerTail,
@@ -262,6 +308,29 @@ const dialect = {
     registerClass: data.registerClass,
     ARCH_LABELS: data.ARCH_LABELS
   }
+};
+
+/**
+ * How this ISA expresses "wait for that", and how to follow it.
+ *
+ * The abstraction is not "parse a control column". NVIDIA states dependencies in a bitfield
+ * inside every instruction; another ISA may state them as separate instructions between them.
+ * What both express is one relation - some instructions arm something, a later one waits on
+ * it, and the question worth answering is which arms a given wait covers.
+ *
+ * `analyzeAt` returns exactly what `scoreboard.js` returns, fields and all, because
+ * `highlight.js` and `hover.js` read `hit.sb` and `hit.field.start/end` off it. A model that
+ * renamed them would make the decorations empty and the F12 provider return null - a feature
+ * that looks implemented and does nothing.
+ *
+ * A dialect that sets this to null is saying its listings have no such relation to follow, and
+ * the highlighter then stays out of the way rather than scanning for a column that is not
+ * there.
+ */
+dialect.dependency = {
+  analyzeAt: scoreboard.analyzeAt,
+  armsFor: scoreboard.armsFor,
+  waitFor: scoreboard.waitFor
 };
 
 /** Does this path look like one of this dialect's listings? */
