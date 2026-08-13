@@ -303,16 +303,22 @@ async function run(target, progress, token) {
   // basename, so a single shared directory means a/kernel.cu and b/kernel.cu overwrite
   // each other's .ptx and .cubin - and the banner's recorded command lines then point at
   // bytes belonging to the other file.
-  const tag = sha1(Buffer.from(path.resolve(file).toLowerCase())).slice(0, 8);
+  // Tagged by target as well as by file. One source compiled for two targets writes two sets
+  // of intermediates under the same basenames, so a shared directory would have each run
+  // overwriting the other's - and the banner's recorded command lines would then name bytes
+  // belonging to the other target. Separate directories also mean the two can run at once,
+  // which is the reasonable thing to want when comparing them.
+  const tag = `${target.id}-${sha1(Buffer.from(path.resolve(file).toLowerCase())).slice(0, 8)}`;
   const outDir = path.join(output.scratchDir(context), 'compile', tag);
 
-  // Two compiles of the *same* file collide inside that directory, and the loser would be
-  // disassembled from the winner's bytes. Claimed before anything is written, including the
-  // copy of a dirty buffer below. Refused rather than serialised: the second request is
-  // nearly always an impatient repeat of the first.
+  // Two compiles of the *same* file for the same target collide inside that directory, and the
+  // loser would be disassembled from the winner's bytes. Claimed before anything is written,
+  // including the copy of a dirty buffer below. Refused rather than serialised: the second
+  // request is nearly always an impatient repeat of the first.
   if (inFlight.has(tag)) {
     throw new Error(
-      `${path.basename(file)} is already being compiled. Wait for that run to finish.`);
+      `${path.basename(file)} is already being compiled for ${target.vendor}. ` +
+      'Wait for that run to finish.');
   }
   inFlight.add(tag);
   try {
