@@ -1,0 +1,19 @@
+_amdgpu_cs_main:
+	s_getpc_b64 s[2:3]                                         // 000000000000: BE824700
+	s_mov_b32 s0, s1                                           // 000000000004: BE800001
+	s_sext_i32_i16 s3, s3                                      // 000000000008: BE830F03
+	v_lshlrev_b32_e32 v0, 2, v0                                // 00000000000C: 30000082
+	s_mov_b32 s1, s3                                           // 000000000010: BE810003
+	s_load_b128 s[0:3], s[0:1], 0x0                            // 000000000014: F4004000 F8000000
+	s_delay_alu instid0(VALU_DEP_1) | instskip(NEXT) | instid1(VALU_DEP_1)// 00000000001C: BF870091
+	v_and_b32_e32 v0, 0xffc, v0                                // 000000000020: 360000FF 00000FFC
+	v_lshl_add_u32 v0, ttmp9, 8, v0                            // 000000000028: D6460000 04011075
+	s_wait_kmcnt 0x0                                           // 000000000030: BFC70000
+	buffer_load_b32 v1, v0, s[0:3], null offen                 // 000000000034: C405007C 40800001 00000000
+	s_wait_loadcnt 0x0                                         // 000000000040: BFC00000
+	v_sqrt_f32_e64 v2, |v1|                                    // 000000000044: D5B30102 00000101
+	v_mul_f32_e32 v1, v1, v1                                   // 00000000004C: 10020301
+	s_delay_alu instid0(TRANS32_DEP_1) | instid1(VALU_DEP_1)   // 000000000050: BF870085
+	v_fmac_f32_e32 v1, 0.5, v2                                 // 000000000054: 560204F0
+	buffer_store_b32 v1, v0, s[0:3], null offen                // 000000000058: C406807C 40800001 00000000
+	s_endpgm                                                   // 000000000064: BFB00000
