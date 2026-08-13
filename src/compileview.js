@@ -207,9 +207,14 @@ function resolveTarget(uri) {
 /**
  * The whole command: compile, disassemble, correlate, open.
  */
+// `sourceUri`, not `target`. This function and `run` below used to call the file being
+// compiled "the target", which was fine while it was the only thing that word could mean. It
+// is not any more: a target is now a row in the ISA registry, and the two collided badly
+// enough to be a parse error rather than a shadowed variable. The file keeps the name that
+// says what it is.
 async function compileCommand(uri) {
-  const target = resolveTarget(uri);
-  if (!target) {
+  const sourceUri = resolveTarget(uri);
+  if (!sourceUri) {
     vscode.window.showErrorMessage(
       'Open a .slang, .cu, .ptx or .cubin file first - this command compiles the file you ' +
       'are looking at.');
@@ -219,22 +224,22 @@ async function compileCommand(uri) {
   try {
     await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
-      title: `Compiling ${path.basename(target.fsPath)}`,
+      title: `Compiling ${path.basename(sourceUri.fsPath)}`,
       cancellable: true
-    }, (progress, token) => run(target, progress, token));
+    }, (progress, token) => run(sourceUri, progress, token));
   } catch (e) {
     if (e && e.message === 'cancelled') return;
     log(`compile failed: ${e && e.message}`);
     if (e && e.log) log(e.log);
     const choice = await vscode.window.showErrorMessage(
-      `${path.basename(target.fsPath)}: ${(e && e.message) || e}`.split('\n').slice(0, 3).join(' '),
+      `${path.basename(sourceUri.fsPath)}: ${(e && e.message) || e}`.split('\n').slice(0, 3).join(' '),
       'Show Output');
     if (choice === 'Show Output') showLog();
   }
 }
 
-async function run(target, progress, token) {
-  const file = target.fsPath;
+async function run(sourceUri, progress, token) {
+  const file = sourceUri.fsPath;
   const settings = config();
 
   // The document as the editor has it, not as it is on disk: compiling what is on screen is
