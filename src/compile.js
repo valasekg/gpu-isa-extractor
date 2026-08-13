@@ -655,15 +655,27 @@ function functionAfter(text, at) {
  * slangc crashes rather than declining, and a gate placed afterwards would report a segfault
  * instead of a route.
  *
- * @returns {{entry: string|undefined, stage: string|null, lineage: string,
+ * @param {string} [targetId]  which target's roads to route on.
+ *   A plain id rather than a target object, so this module keeps requiring nothing: `isa`
+ *   requires `isa_nvidia`, which would require this file back, and a load-time cycle between
+ *   the routing table and the registry that reads it is not worth the convenience. The id is
+ *   data, and `roadOf` is already here.
+ *
+ * @returns {{entry: string|undefined, stage: string|null, road: string, lineage: string,
  *            producer: {entry: string}|null, note: string|null}}
  *   `producer` names a vertex entry point *in this same file* that can feed a fragment one.
  *   That is strictly better than a generated producer: it is the pairing the author actually
  *   wrote, so the varyings the fragment shader reads are the ones a real draw would supply.
+ *
+ *   `lineage` is `road` under its old name, still returned because `test_compile.js` and
+ *   `compileview` both read it. They mean the same thing for as long as there is one target.
  */
-function chooseSlangEntry(text, wanted, file, stated) {
+function chooseSlangEntry(text, wanted, file, stated, targetId = 'nvidia') {
   const found = slangEntryPoints(text);
-  const supported = found.filter(e => lineageOf(e.stage));
+  // "Can this target compile this stage at all" - which is what the old `lineageOf` truthiness
+  // test meant when there was only one target for it to be true of.
+  const roadFor = stage => roadOf(stage, targetId);
+  const supported = found.filter(e => roadFor(e.stage));
   const compute = found.filter(e => e.stage === COMPUTE_STAGE);
 
   const refuse = e => {
@@ -688,6 +700,7 @@ function chooseSlangEntry(text, wanted, file, stated) {
     return {
       entry: chosen.name,
       stage: chosen.stage,
+      road: roadFor(chosen.stage),
       lineage: spec.lineage,
       producer: spec.producer
         ? (found.find(e => e.stage === spec.producer) || null)
@@ -726,6 +739,7 @@ function chooseSlangEntry(text, wanted, file, stated) {
     return {
       entry,
       stage: forcedStage,
+      road: roadFor(forcedStage),
       lineage: lineageOf(forcedStage),
       producer: found.find(e => e.stage === (STAGES[forcedStage].producer)) || null,
       counterpart: STAGES[forcedStage].pair
@@ -742,10 +756,13 @@ function chooseSlangEntry(text, wanted, file, stated) {
 
   if (wanted) {
     const match = found.find(e => e.name === wanted);
-    if (match && !lineageOf(match.stage)) refuse(match);
+    if (match && !roadFor(match.stage)) refuse(match);
     // An entry the scan did not see is still handed to slangc, which knows better than a
     // regex does; with no stage to route on it takes the compute road, as it always did.
-    if (!match) return { entry: wanted, stage: null, lineage: 'cuda', producer: null, note: null };
+    if (!match) {
+      return { entry: wanted, stage: null, road: roadOf(COMPUTE_STAGE, targetId),
+        lineage: 'cuda', producer: null, note: null };
+    }
     return withProducer(match);
   }
 
@@ -766,6 +783,7 @@ function chooseSlangEntry(text, wanted, file, stated) {
       return {
         entry: FILENAME_ENTRY,
         stage: named,
+        road: roadFor(named),
         lineage: lineageOf(named),
         producer: null,
         counterpart: null,
@@ -785,7 +803,8 @@ function chooseSlangEntry(text, wanted, file, stated) {
   }
 
   if (compute.length === found.length) {
-    return { entry: undefined, stage: COMPUTE_STAGE, lineage: 'cuda', producer: null, note: null };
+    return { entry: undefined, stage: COMPUTE_STAGE, road: roadOf(COMPUTE_STAGE, targetId),
+      lineage: 'cuda', producer: null, note: null };
   }
 
   // A mixed file has to name one, because the two roads cannot be walked at once - and
@@ -1337,6 +1356,7 @@ async function graphicsCompile(tools, file, options) {
     cubinPath: null,
     cacheDir,
     arch: options.arch ? `SM${String(options.arch).replace(/^sm_?/i, '')}` : null,
+    road: 'graphics',
     lineage: 'graphics',
     stage,
     pipeline: describe,
@@ -1581,13 +1601,15 @@ async function compile(tools, file, options = {}) {
     // `file` may be a scratch copy of a dirty buffer, but it keeps the original basename,
     // which is the only part the name convention reads.
     const chosen = chooseSlangEntry(
-      await fs.promises.readFile(file, 'utf8'), options.entry, file, routed);
+      await fs.promises.readFile(file, 'utf8'), options.entry, file, routed, options.targetId);
     if (chosen.note) notes.push(chosen.note);
 
-    // The fork. A vertex or fragment entry point leaves the CUDA road entirely - there is no
-    // `.cu`, no PTX and no cubin on the other route, so this returns rather than falling
-    // through to the stages below.
-    if (chosen.lineage === 'graphics') {
+    // The fork, on the road rather than on the lineage. Same decision, named so that a target
+    // with a third road is a new case here rather than a second meaning for `graphics`.
+    // A vertex or fragment entry point leaves the CUDA road entirely - there is no `.cu`, no
+    // PTX and no cubin on the other route, so this returns rather than falling through to the
+    // stages below.
+    if (chosen.road === 'graphics') {
       return graphicsCompile(tools, file, {
         ...options, outDir, home, flags, chosen, steps, notes, sources
       });
@@ -1634,6 +1656,10 @@ async function compile(tools, file, options = {}) {
     entries,
     cubinPath: current,
     arch: cubin.arch(buf) || `SM${arch}`,
+    // Stated rather than inferred from the absence of anything else. `openEntry` asks the
+    // result which road it came down to decide whether to look for a line table, and "not
+    // graphics" is a weaker thing to know than "cuda".
+    road: 'cuda',
     steps,
     ptxasLog,
     ptxasInfo: entry => parsePtxasInfo(ptxasLog, entry),

@@ -168,13 +168,13 @@ const WHERE_FROM = {
 /**
  * Refuse, naming what to install.
  *
- * `lineage` picks between two explanations of the same missing interpreter: see WHERE_FROM.
+ * `road` picks between two explanations of the same missing interpreter: see WHERE_FROM.
  */
-function requireTools(tools, needed, lineage) {
+function requireTools(tools, needed, road) {
   const missing = needed.filter(name => !tools[name]);
   if (!missing.length) return;
   const why = name =>
-    WHERE_FROM[name === 'python' && lineage === 'graphics' ? 'pythonGraphics' : name];
+    WHERE_FROM[name === 'python' && road === 'graphics' ? 'pythonGraphics' : name];
   throw new compile.CompileError(
     `${missing.join(' and ')} could not be found.\n` +
     missing.map(why).filter(Boolean).join('\n'));
@@ -257,9 +257,13 @@ async function run(target, progress, token) {
   // in its extension. A fragment `.slang` never touches ptxas or NVRTC, so demanding them
   // would refuse to compile it on a machine that could - naming two tools it does not want.
   // The routing decision therefore has to happen before the tools are required, not after.
+  // Which target compiles this. One answer today, asked through the registry so the call site
+  // is already in place when there is a second - and so that the road below is this target's
+  // road rather than the only one there is.
+  const { target } = isa.resolveTarget({});
   let chosen = language === 'slang'
-    ? compile.chooseSlangEntry(text, undefined, file, flags)
-    : { lineage: 'cuda' };
+    ? compile.chooseSlangEntry(text, undefined, file, flags, target.id)
+    : { road: target.roadFor(compile.COMPUTE_STAGE), lineage: 'cuda' };
 
   // A file holding entry points on both roads compiles one of them, and until now the other
   // was unreachable: the banner said to "name one with the entry-point argument" and no
@@ -275,25 +279,26 @@ async function run(target, progress, token) {
     if (!picked) return;                              // dismissed: not an error
     if (picked.name !== chosen.entry) {
       entry = picked.name;
-      chosen = compile.chooseSlangEntry(text, entry, file, flags);
+      chosen = compile.chooseSlangEntry(text, entry, file, flags, target.id);
     }
   }
 
   const needed = [];
   if (language === 'slang') needed.push('slangc');
-  if (chosen.lineage === 'graphics') {
+  if (chosen.road === 'graphics') {
     needed.push('python');                       // the Vulkan helper, and the reflector
   } else {
     if (language !== 'cubin') needed.push('ptxas');
     if ((language === 'slang' || language === 'cuda') && backend !== 'nvcc') needed.push('python');
   }
-  requireTools(tools, needed, chosen.lineage);
+  requireTools(tools, needed, chosen.road);
 
-  // The graphics lineage compiles on THIS machine's driver, so its bytes are this device's
+  // The graphics road compiles on THIS machine's driver, so its bytes are this device's
   // architecture by construction and the `arch` setting must not speak for them. That setting
   // is for reading a cache written by a GPU that is not present - a use it still has for
-  // every other path.
-  const archInfo = await pipeline.resolveArch({ probed: chosen.lineage === 'graphics' });
+  // every other path. A road that cross-compiles for a named architecture, as ptxas does, must
+  // not probe: it would refuse to work on a machine with no GPU, which is the point of it.
+  const archInfo = await target.resolveArch({ probed: chosen.road === 'graphics' });
   // One directory per source file. Every intermediate is named after the source's
   // basename, so a single shared directory means a/kernel.cu and b/kernel.cu overwrite
   // each other's .ptx and .cubin - and the banner's recorded command lines then point at
@@ -318,7 +323,7 @@ async function run(target, progress, token) {
       await fs.promises.writeFile(source, text, 'utf8');
     }
     await build({ file, source, tools, flags, archInfo, outDir, backend, directive,
-      configured, progress, token, lineage: chosen.lineage, entry,
+      configured, progress, token, road: chosen.road, entry,
       controls: compile.pipelineControls(flags.vk, path.dirname(file)) });
   } finally {
     inFlight.delete(tag);
@@ -327,8 +332,8 @@ async function run(target, progress, token) {
 
 /** The compile itself, once the scratch directory is claimed. */
 async function build({ file, source, tools, flags, archInfo, outDir, backend, directive,
-  configured, progress, token, lineage, controls, entry: named }) {
-  progress.report({ message: lineage === 'graphics' ? 'asking the driver' : 'compiling' });
+  configured, progress, token, road, controls, entry: named }) {
+  progress.report({ message: road === 'graphics' ? 'asking the driver' : 'compiling' });
   const started = Date.now();
   const built = await compile.compile(tools, source, {
     arch: archInfo.arch,
@@ -388,7 +393,7 @@ async function chooseEntry(entries) {
  */
 async function openEntry({ built, entry, source, compiledFrom, directive, configured,
   archInfo, token, outDir }) {
-  const graphics = built.lineage === 'graphics';
+  const graphics = built.road === 'graphics';
   const target = isa.get(isa.DEFAULT_TARGET);
 
   // The entry decides how it becomes text. Everything below this line works on the text and on
@@ -411,7 +416,7 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
   // Correlation comes from a second pass over the cubin, because line info lives in the ELF
   // and `--binary` has no ELF to read it from.
   //
-  // The graphics lineage has no cubin and no line table to read one out of, and this is
+  // The graphics road has no cubin and no line table to read one out of, and this is
   // measured rather than assumed: across 3,340 cache objects the container carries no debug
   // section at all, and SPIR-V built with `slangc -g` - `OpLine`, `OpSource`, the whole source
   // text embedded - produced a byte-identical object of exactly the same size. The driver
