@@ -897,7 +897,12 @@ def find_node():
     from shutil import which
     node = which("node")
     if node:
-        return [node], {}
+        # `None`, not `{}`. An empty dict is not "no changes", it is an empty environment -
+        # and a Windows process started without SystemRoot or PATH aborts during startup,
+        # before it runs a line of the script. Every suite then failed with exit 134 and a V8
+        # stack trace, on precisely the machines that had a real Node to run them with. The
+        # Electron branch below copies os.environ for the same reason; this one inherits it.
+        return [node], None
     candidates = [
         os.environ.get("VSCODE_EXE"),
         r"D:\Development\Programs\Microsoft VS Code\Code.exe",
