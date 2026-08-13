@@ -920,8 +920,40 @@ def find_node():
 cmd, env = find_node()
 if not cmd:
     warn("no JS runtime found - skipped",
-         "Set VSCODE_EXE to a Code.exe, or install Node, to run the JavaScript suites.")
+         "Set VSCODE_EXE to a Code.exe, or install Node, to run the JavaScript suites.\n"
+         "This also means NOTHING here has checked that the shipped modules parse. A module "
+         "that does not parse takes the whole extension down at activation, and every check "
+         "above it passes because they all read the source as text.")
 else:
+    # Does every shipped module parse?
+    #
+    # This is first because it is the cheapest check in the file and the most catastrophic
+    # failure it can find: a module that does not parse takes the entire extension down at
+    # activation - every command, every view, every provider - not just the feature it belongs
+    # to. Everything above this point reads JavaScript as TEXT (scraping requires, settings
+    # names, token types), so all of it passes happily on a file the engine would refuse.
+    #
+    # It exists because that happened. `const { target } = ...` was added to a function whose
+    # parameter was already named `target`, which is an early error rather than a shadow, and
+    # ten commits went by: `test_endtoend.js` caught it immediately, but this file reports one
+    # result per SCRIPT, so a suite dying at its third check and a suite dying at its fortieth
+    # look identical in the summary. Naming the unparseable file directly is the difference
+    # between a five-second fix and a bisect.
+    unparseable = []
+    for src_name in walked + ["extension.js"]:
+        src_path = rel("src", *src_name.split("/")) if src_name != "extension.js" \
+            else rel("extension.js")
+        proc = subprocess.run(cmd + ["--check", src_path],
+                              env=env, cwd=ROOT, capture_output=True, text=True)
+        if proc.returncode != 0:
+            first = (proc.stderr or proc.stdout or "").strip().split("\n")
+            detail = next((line.strip() for line in first if "Error" in line), first[0] if first else "")
+            unparseable.append("%s: %s" % (src_name, detail))
+    if unparseable:
+        bad("some shipped modules do not parse", "\n".join(unparseable))
+    else:
+        ok("every shipped module parses (%d files)" % (len(walked) + 1))
+
     # Roughly unit first, then integration. `test_golden.js` sits at the boundary: it pins the
     # whole listing - banner and body - but builds its own instruction stream, so it needs no
     # CUDA, no driver and no GPU and belongs with the suites that always run rather than with
@@ -944,10 +976,19 @@ else:
 # ------------------------------------------------------------------ summary
 
 print("\n" + "-" * 70)
+
+# "PASS" on a run that never executed a line of JavaScript is a true statement about what ran
+# and a false impression of what was checked. On a machine with no runtime this file verifies
+# manifests, JSON shape and regexes - none of which can tell whether the extension loads - and
+# it printed the same word as a full run. It now says which, because the difference between
+# "this is good" and "this is as good as I could tell from here" is the whole value of a gate.
+verdict = "FAIL" if failures else ("PASS" if cmd else "PARTIAL")
 print("%s   %d passed, %d failed, %d warnings%s"
-      % ("PASS" if not failures else "FAIL", passes, len(failures), len(warnings),
+      % (verdict, passes, len(failures), len(warnings),
          ", %d skipped" % len(skipped) if skipped else ""))
 if failures:
     for f in failures:
         print("  - %s" % f)
+if not cmd:
+    print("  no JavaScript ran: the suites and the parse check were both skipped.")
 sys.exit(1 if failures else 0)
