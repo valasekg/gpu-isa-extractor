@@ -28,7 +28,7 @@
 // nvdisasm      : <dir>\nvdisasm.exe
 //                 <nvdisasm version>
 //                 "<dir>\nvdisasm.exe" --binary SM86 --no-dataflow "<dir>\a.bin"
-// tool          : NVIDIA ISA Extractor <version>
+// tool          : GPU ISA Extractor <version>
 //
 // Control codes decoded from bits [105,126) of each instruction and printed as
 //   [B<wait 0-5>:R<read>:W<write>:<yield>:S<stall>]

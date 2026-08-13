@@ -1,0 +1,189 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "AMD RDNA ISA",
+  "scopeName": "source.amd-rdna-isa",
+  "_comment": [
+    "Every scope here ends in `.sass`, deliberately, and that is not a copy-paste slip.",
+    "TextMate matches by dotted prefix, so reusing the suffix makes the two bundled themes",
+    "cover this grammar with no edit, and inherits the property `verify.py` checks against",
+    "VS Code's own Dark+ - that every scope roots at a prefix stock themes already style.",
+    "The suffix reads as a family name, the way `source.c` covers C++ dialects. If per-vendor",
+    "theming is ever wanted the escape hatch is free: `keyword.other.opcode.sass.rdna` is",
+    "still matched by every existing `...opcode.sass` rule while being separately targetable."
+  ],
+  "patterns": [
+    { "include": "#banner" },
+    { "include": "#label" },
+    { "include": "#instruction" }
+  ],
+  "repository": {
+    "banner": {
+      "_comment": "The header this extension writes above RGA's output.",
+      "match": "^//.*$",
+      "name": "comment.line.banner.sass"
+    },
+
+    "label": {
+      "_comment": "`_amdgpu_ps_main:` and the `_L0:` a branch names.",
+      "match": "^\\s*([A-Za-z_.$][\\w.$]*)\\s*(:)\\s*$",
+      "captures": {
+        "1": { "name": "entity.name.function.label.sass" },
+        "2": { "name": "punctuation.separator.label.sass" }
+      }
+    },
+
+    "instruction": {
+      "_comment": [
+        "An RGA line is `<tab>mnemonic operands // <address>: <encoding>`. The mnemonic is",
+        "captured on its own so the opcode colour lands on it and not on the encoding suffix,",
+        "which is part of the name: v_mul_f32_e32 and v_mul_f32_e64 are two encodings."
+      ],
+      "begin": "^(?=\\s+[a-z])",
+      "end": "$",
+      "patterns": [
+        { "include": "#encodingComment" },
+        { "include": "#opcode" },
+        { "include": "#operand" }
+      ]
+    },
+
+    "opcode": {
+      "match": "\\G\\s*([a-z][a-z0-9_]*)",
+      "captures": { "1": { "name": "keyword.other.opcode.sass" } }
+    },
+
+    "encodingComment": {
+      "_comment": "The trailing `// 000000000200: BE80017E`, which carries the address and the words.",
+      "match": "(//)\\s*([0-9A-Fa-f]{8,16})\\s*(:)\\s*([0-9A-Fa-f ]+)$",
+      "captures": {
+        "1": { "name": "punctuation.definition.comment.sass" },
+        "2": { "name": "comment.block.address.sass" },
+        "3": { "name": "punctuation.accessor.sass" },
+        "4": { "name": "comment.block.control-word.sass" }
+      }
+    },
+
+    "operand": {
+      "patterns": [
+        { "include": "#registerRange" },
+        { "include": "#specialRegister" },
+        { "include": "#exportTarget" },
+        { "include": "#attribute" },
+        { "include": "#vectorRegister" },
+        { "include": "#scalarRegister" },
+        { "include": "#labelReference" },
+        { "include": "#namedModifier" },
+        { "include": "#delayArgument" },
+        { "include": "#number" },
+        { "include": "#modifier" },
+        { "include": "#punctuation" }
+      ]
+    },
+
+    "registerRange": {
+      "_comment": "`v[2:3]`, `s[0:3]` - one operand naming several registers.",
+      "match": "\\b(v)(\\[)([0-9]+)(:)([0-9]+)(\\])|\\b(s)(\\[)([0-9]+)(:)([0-9]+)(\\])",
+      "captures": {
+        "1": { "name": "variable.other.register.vector.sass" },
+        "2": { "name": "punctuation.section.brackets.begin.sass" },
+        "3": { "name": "variable.other.register.vector.sass" },
+        "4": { "name": "punctuation.accessor.sass" },
+        "5": { "name": "variable.other.register.vector.sass" },
+        "6": { "name": "punctuation.section.brackets.end.sass" },
+        "7": { "name": "variable.other.register.uniform.sass" },
+        "8": { "name": "punctuation.section.brackets.begin.sass" },
+        "9": { "name": "variable.other.register.uniform.sass" },
+        "10": { "name": "punctuation.accessor.sass" },
+        "11": { "name": "variable.other.register.uniform.sass" },
+        "12": { "name": "punctuation.section.brackets.end.sass" }
+      }
+    },
+
+    "vectorRegister": {
+      "match": "\\bv[0-9]+\\b",
+      "name": "variable.other.register.vector.sass"
+    },
+
+    "scalarRegister": {
+      "_comment": "An SGPR is the scalar file - the uniform datapath, so it takes that colour.",
+      "match": "\\bs[0-9]+\\b",
+      "name": "variable.other.register.uniform.sass"
+    },
+
+    "specialRegister": {
+      "_comment": "`null` is the discard destination, so it takes the dimmed zero-register scope.",
+      "patterns": [
+        { "match": "\\bnull\\b", "name": "variable.other.register.vector.zero.sass" },
+        {
+          "match": "\\b(?:exec_lo|exec_hi|exec|vcc_lo|vcc_hi|vcc|scc|m0|flat_scratch(?:_lo|_hi)?|xnack_mask(?:_lo|_hi)?|ttmp[0-9]+|shared_base|shared_limit)\\b",
+          "name": "variable.language.register.special.sass"
+        }
+      ]
+    },
+
+    "exportTarget": {
+      "match": "\\b(?:mrtz|mrt[0-9]+|pos[0-9]+|param[0-9]+|prim|dual_src_blend[0-9]+)\\b",
+      "name": "variable.language.register.special.sass"
+    },
+
+    "attribute": {
+      "match": "\\b(attr[0-9]+)(?:(\\.)([xyzw]))?",
+      "captures": {
+        "1": { "name": "variable.other.attribute-space.sass" },
+        "2": { "name": "punctuation.accessor.sass" },
+        "3": { "name": "variable.other.attribute-space.offset.sass" }
+      }
+    },
+
+    "labelReference": {
+      "match": "\\b_L[0-9]+\\b|\\b_amdgpu_\\w+\\b",
+      "name": "entity.name.function.label.reference.sass"
+    },
+
+    "namedModifier": {
+      "_comment": "`wait_exp:5`, `offset:16` - a modifier carrying a value.",
+      "match": "\\b([a-z][a-z0-9_]*)(:)(-?\\w+)",
+      "captures": {
+        "1": { "name": "storage.modifier.postfix.tier1.sass" },
+        "2": { "name": "punctuation.accessor.sass" },
+        "3": { "name": "constant.numeric.integer.sass" }
+      }
+    },
+
+    "delayArgument": {
+      "_comment": "`instid0(VALU_DEP_2)` - s_delay_alu's scheduling hint.",
+      "match": "\\b(instid0|instid1|instskip)(\\()([A-Z0-9_]+)(\\))",
+      "captures": {
+        "1": { "name": "storage.modifier.postfix.tier1.sass" },
+        "2": { "name": "punctuation.section.parens.begin.sass" },
+        "3": { "name": "constant.language.control-code.yield.sass" },
+        "4": { "name": "punctuation.section.parens.end.sass" }
+      }
+    },
+
+    "number": {
+      "patterns": [
+        { "match": "[-+]?\\b0[xX][0-9a-fA-F]+\\b", "name": "constant.numeric.hex.sass" },
+        { "match": "[-+]?\\b[0-9]+\\.[0-9]+\\b", "name": "constant.numeric.float.sass" },
+        { "match": "[-+]?\\b[0-9]+\\b", "name": "constant.numeric.integer.sass" }
+      ]
+    },
+
+    "modifier": {
+      "_comment": "A bare trailing word: clamp, done, offen, idxen, glc, nt, mul:2 already handled.",
+      "match": "\\b[a-z][a-z0-9_]*\\b",
+      "name": "storage.modifier.operand.sass"
+    },
+
+    "punctuation": {
+      "patterns": [
+        { "match": ",", "name": "punctuation.separator.operand.sass" },
+        { "match": "\\|", "name": "punctuation.separator.operand.sass" },
+        { "match": "\\[", "name": "punctuation.section.brackets.begin.sass" },
+        { "match": "\\]", "name": "punctuation.section.brackets.end.sass" },
+        { "match": "\\(", "name": "punctuation.section.parens.begin.sass" },
+        { "match": "\\)", "name": "punctuation.section.parens.end.sass" }
+      ]
+    }
+  }
+}

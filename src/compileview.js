@@ -29,6 +29,7 @@ const ctrl = require('./ctrl');
 const isa = require('./isa');
 const isaEntry = require('./isa_entry');
 const output = require('./output');
+const rga = require('./rga');
 const pipeline = require('./pipeline');
 const spawn = require('./spawn');
 const stats = require('./stats');
@@ -138,12 +139,37 @@ async function resolveTools() {
       await onPath(process.platform === 'win32' ? 'py' : 'python3', ['--version']) ||
       await onPath('python', ['--version']),
     nvrtc: configured.nvrtc || null,
+    // The AMD road's only tool. Located through `rga.js` so the search order and the "not
+    // bundled, here is where to get it" message live beside everything else about RGA.
+    rga: await rga.resolve((settings.get('compile.rgaPath') || '').trim(), compile.run)
+      .then(found => found.path, () => null),
+    gfx: (settings.get('compile.gfx') || '').trim() || null,
     nvrtcHelper: path.join(__dirname, 'nvrtc_compile.py'),
     vkHelper: path.join(__dirname, 'vk_compile.py'),
     reflectHelper: path.join(__dirname, 'spirv_reflect.py')
   };
   toolCache = tools;
   return tools;
+}
+
+/**
+ * What each target could actually do here, for `isa.resolveTarget` to choose between.
+ *
+ * Passed in rather than probed inside the registry, because probing costs process launches and
+ * this has already paid for them. `nvidiaDevice` is the Vulkan probe's answer and is only
+ * consulted for a graphics stage - the road that IS the local driver. It is left undefined
+ * rather than false when nothing has asked, so "not probed" and "probed, found nothing" stay
+ * different answers.
+ */
+async function targetAvailability(tools) {
+  return {
+    nvidia: !!tools.ptxas || !!tools.python,
+    amd: !!tools.rga,
+    // Undefined unless the doctor's Vulkan probe has run. Resolving a graphics stage on a
+    // machine with no NVIDIA device is the case this exists for, and guessing it from the
+    // absence of a tool would get it wrong in both directions.
+    nvidiaDevice: tools.nvidiaDevice
+  };
 }
 
 /** A tool that is missing, phrased so the message says what to install. */
@@ -262,10 +288,23 @@ async function run(sourceUri, progress, token) {
   // in its extension. A fragment `.slang` never touches ptxas or NVRTC, so demanding them
   // would refuse to compile it on a machine that could - naming two tools it does not want.
   // The routing decision therefore has to happen before the tools are required, not after.
-  // Which target compiles this. One answer today, asked through the registry so the call site
-  // is already in place when there is a second - and so that the road below is this target's
-  // road rather than the only one there is.
-  const { target } = isa.resolveTarget({});
+  // Which target compiles this. The stage is read first, unrouted, because `auto` decides per
+  // ROAD - and the road a stage takes is the thing being decided. The file's own directive
+  // outranks the setting, which outranks the automatic answer, for the reason every other
+  // compile flag works that way: a shader compiled for a particular ISA is a different
+  // artefact, and keeping that in the file means the listing can be reproduced by anyone who
+  // has the file.
+  const declaredStage = language === 'slang'
+    ? (compile.chooseSlangEntry(text, undefined, file, flags, isa.DEFAULT_TARGET) || {}).stage
+    : compile.COMPUTE_STAGE;
+  const { target, from: targetFrom, alternative } = isa.resolveTarget({
+    stage: declaredStage,
+    requested: flags.target || settings.get('compile.target') || 'auto',
+    available: await targetAvailability(tools)
+  });
+  log(`target ${target.vendor} ${target.isa}: ${targetFrom}` +
+    (alternative ? ` (${alternative.vendor} also available)` : ''));
+
   let chosen = language === 'slang'
     ? compile.chooseSlangEntry(text, undefined, file, flags, target.id)
     : { road: target.roadFor(compile.COMPUTE_STAGE), lineage: 'cuda' };

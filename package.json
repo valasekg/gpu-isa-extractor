@@ -1,7 +1,7 @@
 {
   "name": "nv-isa-extractor",
-  "displayName": "NVIDIA ISA Extractor",
-  "description": "Turn NVIDIA driver shader-cache blobs into readable SASS with decoded scheduling control codes, syntax highlighting and tooltips.",
+  "displayName": "GPU ISA Extractor",
+  "description": "Read the machine code your shaders really compile to - NVIDIA SASS and AMD RDNA ISA - inside VS Code.",
   "version": "0.12.1",
   "publisher": "gvalasek",
   "license": "MIT",
@@ -20,14 +20,19 @@
     "nvdisasm",
     "gpu",
     "disassembly",
-    "shader cache"
+    "shader cache",
+    "amd",
+    "rdna",
+    "rga",
+    "radeon"
   ],
   "main": "./extension.js",
   "activationEvents": [
     "onLanguage:nvidia-sass",
     "onLanguage:slang",
     "onLanguage:cuda-cpp",
-    "onLanguage:cpp"
+    "onLanguage:cpp",
+    "onLanguage:amd-rdna-isa"
   ],
   "contributes": {
     "viewsContainers": {
@@ -73,104 +78,104 @@
       {
         "command": "nvIsaExtractor.disassemble",
         "title": "Open Shader-Cache File",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(circuit-board)"
       },
       {
         "command": "nvIsaExtractor.openBlobDialog",
         "title": "Open Shader-Cache File (Choose File)...",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(go-to-file)"
       },
       {
         "command": "nvIsaExtractor.refreshBlob",
         "title": "Rescan",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(refresh)"
       },
       {
         "command": "nvIsaExtractor.closeBlob",
         "title": "Remove from the List",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(close)"
       },
       {
         "command": "nvIsaExtractor.filter",
         "title": "Filter Shader Objects...",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(filter)"
       },
       {
         "command": "nvIsaExtractor.openObject",
         "title": "Open Listing",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(go-to-file)"
       },
       {
         "command": "nvIsaExtractor.disassembleObject",
         "title": "Disassemble",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(play)"
       },
       {
         "command": "nvIsaExtractor.toggleReviewed",
         "title": "Toggle Reviewed",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(check)"
       },
       {
         "command": "nvIsaExtractor.clearReviewed",
         "title": "Clear Review Marks",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(clear-all)"
       },
       {
         "command": "nvIsaExtractor.nextObject",
         "title": "Next Shader Object",
-        "category": "NVIDIA ISA"
+        "category": "GPU ISA"
       },
       {
         "command": "nvIsaExtractor.previousObject",
         "title": "Previous Shader Object",
-        "category": "NVIDIA ISA"
+        "category": "GPU ISA"
       },
       {
         "command": "nvIsaExtractor.nextUnreviewed",
         "title": "Next Unreviewed Shader Object",
-        "category": "NVIDIA ISA"
+        "category": "GPU ISA"
       },
       {
         "command": "nvIsaExtractor.loadMore",
         "title": "Load More",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(ellipsis)"
       },
       {
         "command": "nvIsaExtractor.openSettings",
         "title": "Open Settings",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(settings-gear)"
       },
       {
         "command": "nvIsaExtractor.doctor",
         "title": "Doctor (Check Environment)",
-        "category": "NVIDIA ISA"
+        "category": "GPU ISA"
       },
       {
         "command": "nvIsaExtractor.clearOutput",
         "title": "Clear Generated Listings",
-        "category": "NVIDIA ISA"
+        "category": "GPU ISA"
       },
       {
         "command": "nvIsaExtractor.compileSource",
         "title": "Compile and Disassemble",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(gear)"
       },
       {
         "command": "nvIsaExtractor.revealSource",
         "title": "Go to the Source Line for This Instruction",
-        "category": "NVIDIA ISA",
+        "category": "GPU ISA",
         "icon": "$(go-to-file)"
       }
     ],
@@ -398,6 +403,20 @@
         ],
         "configuration": "./language-configuration.json",
         "firstLine": "^(?:\\s*\\.headerflags\\s+@\"EF_CUDA|\\s*(?:code|Function)\\s*(?:for|:)\\s|\\s*//-+\\s*\\.text\\.|\\s*/\\*[0-9a-fA-F]{4,}\\*/\\s+(?:@!?U?P[T0-9]\\s+)?[A-Z][A-Z0-9_]*)"
+      },
+      {
+        "id": "amd-rdna-isa",
+        "aliases": [
+          "AMD RDNA ISA",
+          "rdna-isa",
+          "rdnaisa"
+        ],
+        "extensions": [
+          ".rdnaisa",
+          ".isa"
+        ],
+        "configuration": "./language-configuration.json",
+        "firstLine": "^(?:_amdgpu_\\w+_main\\s*:|\\s+[a-z][a-z0-9_]*\\s.*//\\s*[0-9A-Fa-f]{8,16}\\s*:)"
       }
     ],
     "grammars": [
@@ -405,6 +424,11 @@
         "language": "nvidia-sass",
         "scopeName": "source.nvidia-sass",
         "path": "./syntaxes/sass.tmLanguage.json"
+      },
+      {
+        "language": "amd-rdna-isa",
+        "scopeName": "source.amd-rdna-isa",
+        "path": "./syntaxes/rdna.tmLanguage.json"
       }
     ],
     "themes": [
@@ -506,6 +530,101 @@
     "semanticTokenScopes": [
       {
         "language": "nvidia-sass",
+        "scopes": {
+          "sassOpcode": [
+            "keyword.other.opcode.sass"
+          ],
+          "sassModifier": [
+            "storage.modifier.postfix.sass"
+          ],
+          "sassModifier.tier1": [
+            "storage.modifier.postfix.tier1.sass"
+          ],
+          "sassModifier.tier2": [
+            "storage.modifier.postfix.tier2.sass"
+          ],
+          "sassModifier.tier3": [
+            "storage.modifier.postfix.tier3.sass"
+          ],
+          "sassVectorReg": [
+            "variable.other.register.vector.sass"
+          ],
+          "sassVectorReg.dst": [
+            "variable.other.register.vector.sass"
+          ],
+          "sassVectorReg.src": [
+            "variable.other.register.vector.sass"
+          ],
+          "sassVectorReg.discard": [
+            "variable.other.register.vector.zero.sass"
+          ],
+          "sassUniformReg": [
+            "variable.other.register.uniform.sass"
+          ],
+          "sassUniformReg.dst": [
+            "variable.other.register.uniform.sass"
+          ],
+          "sassUniformReg.src": [
+            "variable.other.register.uniform.sass"
+          ],
+          "sassUniformReg.discard": [
+            "variable.other.register.uniform.zero.sass"
+          ],
+          "sassPredicate": [
+            "variable.other.register.predicate.sass"
+          ],
+          "sassPredicate.dst": [
+            "variable.other.register.predicate.sass"
+          ],
+          "sassPredicate.src": [
+            "variable.other.register.predicate.sass"
+          ],
+          "sassPredicate.discard": [
+            "variable.other.register.predicate.true.sass"
+          ],
+          "sassUniformPredicate": [
+            "variable.other.register.uniform-predicate.sass"
+          ],
+          "sassUniformPredicate.dst": [
+            "variable.other.register.uniform-predicate.sass"
+          ],
+          "sassUniformPredicate.src": [
+            "variable.other.register.uniform-predicate.sass"
+          ],
+          "sassUniformPredicate.discard": [
+            "variable.other.register.uniform-predicate.true.sass"
+          ],
+          "sassSpecialReg": [
+            "variable.language.register.special.sass"
+          ],
+          "sassBarrier": [
+            "variable.other.register.barrier.sass"
+          ],
+          "sassBarrier.dst": [
+            "variable.other.register.barrier.sass"
+          ],
+          "sassBarrier.src": [
+            "variable.other.register.barrier.sass"
+          ],
+          "sassConstBank": [
+            "variable.other.constant-bank.sass"
+          ],
+          "sassAttribute": [
+            "variable.other.attribute-space.sass"
+          ],
+          "sassImmediate": [
+            "constant.numeric.sass"
+          ],
+          "sassGuard": [
+            "keyword.control.guard.sass"
+          ],
+          "sassLabel": [
+            "entity.name.function.label.sass"
+          ]
+        }
+      },
+      {
+        "language": "amd-rdna-isa",
         "scopes": {
           "sassOpcode": [
             "keyword.other.opcode.sass"
@@ -864,6 +983,26 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Log why a source line highlighted nothing to the NVIDIA ISA Extractor output channel."
+        },
+        "nvIsaExtractor.compile.target": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "nvidia",
+            "amd"
+          ],
+          "default": "auto",
+          "markdownDescription": "Which ISA to compile a shader for. `auto` decides per road rather than per machine: compute goes to NVIDIA whenever `ptxas` resolves, because it cross-compiles from a machine with no GPU; a graphics stage goes to NVIDIA only when the Vulkan probe finds an NVIDIA device, because that road is the local driver, and to AMD otherwise. The file's own `// gpu-isa-extractor -target` line wins over this."
+        },
+        "nvIsaExtractor.compile.rgaPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Explicit `rga` path; empty auto-locates. The Radeon GPU Analyzer is a free download and is not bundled - it is 227 MB, most of it back ends this road never uses."
+        },
+        "nvIsaExtractor.compile.gfx": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Which AMD target to compile for, e.g. `gfx1201`. Empty asks `rga --list-asics` and takes the newest it offers. The supported list shrinks between RGA releases, so a pinned value can stop working on an upgrade and is checked against the live list."
         }
       }
     }

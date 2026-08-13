@@ -165,13 +165,14 @@ function readDirective(text) {
  * accepted rather than rejected so that a directive can be moved between files unchanged.
  */
 function routeFlags(flags) {
-  const out = { primary: [], nvrtc: [], ptxas: [], vk: [], stage: null, entry: null };
+  const out = { primary: [], nvrtc: [], ptxas: [], vk: [], rga: [], stage: null, entry: null,
+    target: null, gfx: null };
   const forward = {
-    '-Xptxas': 'ptxas', '-Xnvrtc': 'nvrtc', '-Xslang': 'primary', '-Xvk': 'vk'
+    '-Xptxas': 'ptxas', '-Xnvrtc': 'nvrtc', '-Xslang': 'primary', '-Xvk': 'vk', '-Xrga': 'rga'
   };
   // Kept out of `primary`: these decide which road the file takes, so they are read before
   // slangc runs and passed back to it by the compile itself rather than forwarded twice.
-  const mine = { '-stage': 'stage', '-entry': 'entry' };
+  const mine = { '-stage': 'stage', '-entry': 'entry', '-target': 'target', '-gfx': 'gfx' };
 
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i];
