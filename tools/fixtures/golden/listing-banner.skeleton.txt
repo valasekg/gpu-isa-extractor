@@ -1,0 +1,36 @@
+//============================================================================
+// goldenKernel - compute shader
+//============================================================================
+// stage         : compute (code 5)
+// registers     : 8 declared, cap 255
+// local mem     : 0 bytes
+// shared mem    : 0 bytes
+// instructions  : 17, 15 live (2 trailing NOP pad)
+// mix           : Control 29%   Miscellaneous 24%   Load/Store 18%   Integer 12%   Movement 5.9%
+// control flow  : 1 BSSY/BSYNC pair;  1 backward branch (a loop, or lowered control flow)
+// scheduling    : average stall of 1.76 cycles per instruction
+//                 of 17 instructions:
+//                     12%  wait for a scoreboard to drain before issuing
+//                     29%  raise a scoreboard for a later instruction to wait on
+//                     24%  let the scheduler switch to another warp here
+//                    0.0%  re-read an operand from the reuse cache
+//                 30 cycles in total, counted from the control codes - a floor on issue, not a performance figure.
+// registers used: R0-R7 (8 vector)
+// predicates    : P0-P0 (1)
+// const banks   : c[0x0]
+// attributes    : 1 slot(s), a[0x80]-a[0x80]
+// guarded       : 1 instructions carry a guard predicate (5.9% of 17)
+//----------------------------------------------------------------------------
+// source        : <path>
+//                 frame at offset 265348 (GLCache blob)
+// microcode     : 272 bytes, sha1 <sha1>
+// arch          : SM86 (.headerflags @"EF_CUDA_64BIT_ADDRESS EF_CUDA_SM86")
+// nvdisasm      : <path>
+//                 <nvdisasm version>
+//                 "<path>" --binary SM86 --no-dataflow "<path>"
+// tool          : NVIDIA ISA Extractor <version>
+//
+// Control codes decoded from bits [105,126) of each instruction and printed as
+//   [B<wait 0-5>:R<read>:W<write>:<yield>:S<stall>]
+// Scoreboards are positional and numbered 0-5 exactly as encoded - this is NOT the
+// hex mask over barriers 1-6 that Maxwell-era listings use. Hover any field for detail.

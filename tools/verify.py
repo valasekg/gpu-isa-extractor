@@ -922,8 +922,13 @@ if not cmd:
     warn("no JS runtime found - skipped",
          "Set VSCODE_EXE to a Code.exe, or install Node, to run the JavaScript suites.")
 else:
+    # Roughly unit first, then integration. `test_golden.js` sits at the boundary: it pins the
+    # whole listing - banner and body - but builds its own instruction stream, so it needs no
+    # CUDA, no driver and no GPU and belongs with the suites that always run rather than with
+    # the ones that skip.
     for script in ("test_parse.js", "test_hover.js", "test_semantic.js", "test_explain.js",
                    "test_ctrl.js", "test_zstd.js", "test_scoreboard.js", "test_stats.js",
+                   "test_golden.js",
                    "test_blobstore.js", "test_compile.js", "test_gfx.js",
                    "test_browser.js", "test_endtoend.js"):
         proc = subprocess.run(cmd + [rel("tools", script)],

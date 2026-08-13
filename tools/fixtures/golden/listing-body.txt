@@ -1,0 +1,25 @@
+	.headerflags	@"EF_CUDA_TEXMODE_UNIFIED EF_CUDA_64BIT_ADDRESS EF_CUDA_SM86"
+		.elftype	@"ET_EXEC"
+
+//--------------------- .text.goldenKernel --------------------------
+		.headerflags	@"EF_CUDA_SM86"
+		.sectionflags	@"SHF_BARRIERS=1"
+		.sectioninfo	@"SHI_REGISTERS=8"
+
+        /*0000*/ [B------:R-:W0:Y:S04]  S2R R0, SR_CTAID.X ;
+        /*0010*/ [B------:R-:W1:Y:S02]  S2R R3, SR_TID.X ;
+        /*0020*/ [B------:R-:W-:-:S01]  MOV R1, c[0x0][0x28] ;
+        /*0030*/ [B01----:R-:W-:-:S02]  IMAD R0, R0, c[0x0][0x0], R3 ;
+        /*0040*/ [B------:R-:W-:-:S01]  IPA R6, a[0x80], RZ ;
+        /*0050*/ [B------:R-:W-:Y:S04]  ISETP.GE.AND P0, PT, R0, c[0x0][0x170], PT ;
+        /*0060*/ [B------:R-:W-:-:S01]  BSSY B0, 0x90 ;
+        /*0070*/ [B------:R-:W-:-:S01]  @!P0 BRA 0x80 ;
+        /*0080*/ [B------:R-:W2:-:S02]  LDG.E R4, [R2.64] ;
+        /*0090*/ [B------:R-:W2:-:S02]  LDG.E R5, [R2.64+0x4] ;
+        /*00a0*/ [B--2---:R-:W-:Y:S06]  FFMA R7, R4, R5, R6 ;
+        /*00b0*/ [B------:R3:W-:-:S01]  STG.E [R2.64], R7 ;
+        /*00c0*/ [B------:R-:W-:-:S01]  BSYNC B0 ;
+        /*00d0*/ [B------:R-:W-:-:S01]  BRA 0x30 ;
+        /*00e0*/ [B------:R-:W-:-:S01]  EXIT ;
+        /*00f0*/ [B------:R-:W-:-:S00]  NOP ;
+        /*0100*/ [B------:R-:W-:-:S00]  NOP ;
