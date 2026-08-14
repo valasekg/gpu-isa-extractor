@@ -154,17 +154,35 @@ function sectionData(buf, section) {
 /**
  * The architecture the cubin was built for, from the ELF flags.
  *
- * Bits [8,16) of `e_flags` hold the SM number: `0x09005604` is sm_86, which `cuobjdump -elf`
- * prints as `sm=86`. Not the low byte - that is 4 on every cubin seen here and means
- * something else.
- *
  * It is read rather than assumed because a listing that says SM86 while holding SM90 code is
  * worse than one that says nothing: `nvdisasm --binary` decodes to whatever it is told, and
  * decoding the wrong architecture produces plausible-looking wrong instructions.
+ *
+ * ## The field MOVED between CUDA releases
+ *
+ * This used to read bits [8,16) unconditionally, which was right for the toolkit it was
+ * written against - `0x09005604` is sm_86 there, and the low byte was 4 on every cubin seen.
+ * CUDA 12.8 lays it out the other way round. Measured with its own ptxas:
+ *
+ *     sm_86  e_flags=0x00560556      sm_89  e_flags=0x00560559
+ *     sm_90  e_flags=0x0056055a      sm_75  e_flags=0x004b054b
+ *
+ * The SM number is now the LOW byte; bits [8,16) read 5 on all of them, and bits [16,24) hold
+ * the virtual arch the code was compiled from. Reading the old position gave `SM5` for
+ * everything, and `nvdisasm --binary SM5` fails outright - which is how this was caught, and
+ * is a far better outcome than the silent wrong-architecture decode it could have been.
+ *
+ * Rather than key on a toolkit version this cannot see, both positions are read and the one
+ * holding a PLAUSIBLE SM number wins. The two layouts disambiguate themselves: the field that
+ * is not the SM number reads 4 or 5 in either of them, and no real target is below sm_20.
  */
 function arch(buf) {
   if (!isElf(buf)) return null;
-  const sm = (u32(buf, EHDR.flags) >>> 8) & 0xff;
+  const flags = u32(buf, EHDR.flags);
+  const plausible = n => n >= 20 && n <= 200;
+  const low = flags & 0xff;                       // CUDA 12.8 and later
+  const shifted = (flags >>> 8) & 0xff;           // earlier toolkits
+  const sm = plausible(low) ? low : (plausible(shifted) ? shifted : 0);
   return sm ? `SM${sm}` : null;
 }
 
