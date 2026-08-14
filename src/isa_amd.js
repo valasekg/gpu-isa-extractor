@@ -8,12 +8,21 @@
  * ISA rather than an unfinished edge, and `absences` says which in words so the banner can
  * print the reason once instead of every consumer inventing its own.
  *
- * ## What this road is
+ * ## What the roads are
  *
- *     .slang --slangc--> .spv --rga--> RDNA ISA text
+ *     .slang --slangc--> .spv  --rga -s vk-spv-offline--> RDNA ISA text
+ *     .slang --slangc--> .hlsl --rga -s dxr------------> RDNA ISA text   (raytracing)
+ *     an AMD code object ------ --rga -s bin------------> RDNA ISA text   (nothing compiled)
  *
- * One step shorter than either NVIDIA road, and it ends in TEXT rather than in bytes to
- * disassemble - which is the whole reason `isa_entry.emit()` exists.
+ * All three end in TEXT rather than in bytes to disassemble, which is the whole reason
+ * `isa_entry.emit()` exists. The first is one step shorter than either NVIDIA road.
+ *
+ * They are three roads rather than one flag because they disagree about almost everything:
+ * the raytracing road goes through HLSL rather than SPIR-V and needs a state definition
+ * synthesised for it (`dxr_library.js`), and the binary road compiles nothing at all and takes
+ * no target, because the file it reads already names one. Even the list of GPUs differs - RGA
+ * offers 10 targets in the Vulkan offline mode and 27 in the DXR mode, so `targets()` takes
+ * the mode rather than assuming there is one answer.
  *
  * ## What it does not need, and the NVIDIA road does
  *

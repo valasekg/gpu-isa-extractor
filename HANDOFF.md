@@ -48,14 +48,27 @@ TypeScript, no `vsce`. Plain CommonJS that the extension host runs directly.
 - The Vulkan SDK is at `%VULKAN_SDK%` and supplies `slangc`. The *loader* the graphics road
   actually uses ships with the display driver; the SDK is a dev-time convenience for
   `spirv-reflect` and the validation layers.
-- **RGA** (Radeon GPU Analyzer) is the AMD road's third-party tool, on the same footing as
+- **RGA** (Radeon GPU Analyzer) is the AMD target's third-party tool, on the same footing as
   slangc and CUDA: not bundled, free, and resolved at run time. It needs **no AMD GPU** - the
-  offline mode is a static compiler and the live-driver mode falls back to the AMDVLK driver
-  RGA ships with, both measured working on an NVIDIA-only machine. Version measured here is
-  **2.14.2**, which dropped every gfx9 and gfx10 target an earlier release accepted, so digests
-  pinned to a target name skip rather than fail when this RGA cannot build for it.
-  `tools/test_rga.js` takes **`RGA_PATH`** for an unpacked archive, mirroring `VSCODE_EXE`;
-  without it the ten checks needing a real binary skip.
+  offline mode is a static compiler, the live-driver mode falls back to the AMDVLK driver RGA
+  ships with, and the DXR mode takes `--offline` and uses the `amdxc64.dll` it bundles. All
+  three measured working on an NVIDIA-only machine. Version measured here is **2.14.2**.
+  `tools/test_rga.js` and `tools/test_dxr.js` take **`RGA_PATH`** for an unpacked archive,
+  mirroring `VSCODE_EXE`; without it the checks needing a real binary skip.
+
+  Three AMD roads, and they are not variations on one:
+
+  | road | input | target flag | notes |
+  |---|---|---|---|
+  | `-s vk-spv-offline` | SPIR-V | `-c` required | the default; byte-identical to the live driver given any pipeline state |
+  | `-s dxr` | HLSL library | `-c` required | raytracing; needs a state definition synthesised by `src/dxr_library.js` |
+  | `-s bin` | AMD code object | **none** | compiles nothing; reads the target out of the file |
+
+  **The target list is per mode.** Vulkan offline lists 10 codenames, all RDNA3/3.5/4, having
+  dropped every gfx9 and gfx10 target an earlier release accepted; DXR lists 27, reaching back
+  to gfx900 and including RDNA1 and CDNA. Asking one mode about another's targets returns a
+  confident wrong answer, so `rga.targets()` takes the mode. Digests pinned to a target name
+  skip rather than fail when this RGA cannot build for it.
 
 **The machine this was last verified on is not the machine most of the recorded numbers came
 from,** and the difference is load-bearing rather than trivia. The digests throughout this file
