@@ -174,9 +174,12 @@ async function main() {
 
   section('3. Against a real RGA');
 
+  // RGA_PATH for the same reason verify.py takes VSCODE_EXE: an unpacked archive is a
+  // perfectly good RGA, and without this the whole section below skips on any machine that
+  // has one but has not installed it - which is most machines that have one at all.
   let found = null;
   try {
-    found = await rga.resolve('', run);
+    found = await rga.resolve(process.env.RGA_PATH || '', run);
   } catch (e) {
     found = null;
   }
