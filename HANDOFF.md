@@ -70,6 +70,23 @@ TypeScript, no `vsce`. Plain CommonJS that the extension host runs directly.
   confident wrong answer, so `rga.targets()` takes the mode. Digests pinned to a target name
   skip rather than fail when this RGA cannot build for it.
 
+  **Source correlation uses `utils/amdllpc.exe`, not `rga.exe`.** RGA has no line-info flag in
+  any mode and hardcodes debug info off in the amdllpc it drives. Running that same bundled
+  amdllpc directly with `--trim-debug-info=false`, over `slangc -g1` SPIR-V, yields a DWARF 5
+  `.debug_line` table over machine code byte-identical to RGA's. `rga -v` prints RGA's own
+  amdllpc argv, which is where this one came from; it differs by that single flag.
+
+  Three things about it that cost time to learn:
+
+  - **`-g1`, never `-g2`.** `-g2` emits `NonSemantic.Shader.DebugInfo.100`, which crashes
+    amdllpc outright on hull and raygeneration shaders and silently reorders geometry
+    scheduling.
+  - **amdllpc takes its SPIR-V positionally**, where `rga` takes it behind `--vert`/`--frag`.
+    Hand it a pipeline's stages in the wrong order and it compiles a different pipeline.
+  - **No bundled tool can read the result.** amdllpc emits several compile units but one
+    undersized `.debug_str_offsets`, so `llvm-objdump` fails and annotates only the first unit.
+    `src/dwarf_line.js` exists because of this, not for want of looking.
+
 **The machine this was last verified on is not the machine most of the recorded numbers came
 from,** and the difference is load-bearing rather than trivia. The digests throughout this file
 and in `test_gfx.js` were recorded on an **RTX A4500 (SM86)** under **Vulkan SDK 1.3.296.0**.

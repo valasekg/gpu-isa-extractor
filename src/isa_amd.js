@@ -24,6 +24,32 @@
  * offers 10 targets in the Vulkan offline mode and 27 in the DXR mode, so `targets()` takes
  * the mode rather than assuming there is one answer.
  *
+ * ## Source correlation, on the first road only
+ *
+ * RGA offers none in any mode. It drives amdllpc with debug info trimmed and gives no way to
+ * turn that off - so the extension runs RGA's OWN bundled amdllpc a second time with
+ * `--trim-debug-info=false` and reads the DWARF 5 line table out of the result. `compile.js`
+ * `rdnaCorrelation` is the producer and `dwarf_line.js` the reader.
+ *
+ * The two compiles have to be shown to describe the same code before any of it is believed,
+ * and the checks are not ceremony: the `.text` comparison caught the modules being handed to
+ * amdllpc in the wrong order during development, because it takes them positionally where rga
+ * takes them behind `--vert`/`--frag` flags.
+ *
+ * Correlation is deliberately dropped rather than approximated when
+ *
+ *   - the shader spans more than one source file - amdllpc collapses `DIFile`s and keeps the
+ *     INCLUDED one, so the main file's instructions would be labelled with another file's
+ *     name and line numbers, or
+ *   - the machine code does not match RGA's byte for byte, or
+ *   - slangc emitted no `OpLine` at all.
+ *
+ * What it does NOT claim: complete coverage. Attribution is dense on a fragment shader and
+ * sparse on a vertex shader, because Slang lowers a vertex shader into an NGG primitive shader
+ * whose wrapper has no source behind it. Those instructions are reported as having no source
+ * position - a hole, `@addr -` in the banner map - rather than being folded into whichever
+ * line happened to precede them.
+ *
  * ## What it does not need, and the NVIDIA road does
  *
  * An AMD GPU. Neither RGA mode requires one: the offline mode is a static compiler, and the
