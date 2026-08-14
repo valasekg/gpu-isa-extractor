@@ -86,12 +86,75 @@ async function main() {
   check(stats.VGPR_SPILLS === 0 && stats.SGPR_SPILLS === 0, 'spills are read as numbers');
   check(stats.DEVICE === 'gfx1201', 'the device is read as a string', stats && stats.DEVICE);
 
-  // The four OpenCL columns read 0 for every Vulkan shader measured, including a compute
-  // shader with a declared workgroup size. Reporting them as 0 would state a measurement that
-  // was never taken.
+  // The OpenCL columns read 0 for every Vulkan shader measured, including a compute shader
+  // with a declared workgroup size. Reporting them as 0 would state a measurement that was
+  // never taken.
   for (const name of rga.ALWAYS_ZERO) {
     check(!(name in stats), `${name} is absent rather than zero`);
   }
+
+  // The CSV is a contract with a third party, and the reader indexes it BY NAME - so a column
+  // that is renamed or dropped between RGA releases silently turns a banner figure into
+  // nothing, with no error anywhere. Pinning the header is what turns that into one loud
+  // failure naming the column.
+  const header = csv.trim().split(/\r?\n/)[0].split(',').map(s => s.trim());
+  const EXPECTED = [
+    'DEVICE', 'SCRATCH_MEM', 'THREADS_PER_WORKGROUP', 'WAVEFRONT_SIZE',
+    'AVAILABLE_LDS_BYTES', 'USED_LDS_BYTES', 'AVAILABLE_SGPRs', 'USED_SGPRs', 'SGPR_SPILLS',
+    'AVAILABLE_VGPRs', 'USED_VGPRs', 'VGPR_SPILLS',
+    'CL_WORKGROUP_X_DIMENSION', 'CL_WORKGROUP_Y_DIMENSION', 'CL_WORKGROUP_Z_DIMENSION',
+    'ISA_SIZE'
+  ];
+  check(header.length === 16, 'the statistics CSV has exactly 16 columns', header.length);
+  check(header.join(',') === EXPECTED.join(','),
+    'and they are the ones the banner reads, in order',
+    `got:  ${header.join(',')}\nwant: ${EXPECTED.join(',')}`);
+
+  // Every column the banner actually consumes, named here so dropping one from the reader is
+  // as visible as dropping one from RGA.
+  for (const name of ['USED_VGPRs', 'AVAILABLE_VGPRs', 'USED_SGPRs', 'AVAILABLE_SGPRs',
+    'USED_LDS_BYTES', 'AVAILABLE_LDS_BYTES', 'SCRATCH_MEM', 'VGPR_SPILLS', 'SGPR_SPILLS',
+    'ISA_SIZE']) {
+    check(header.includes(name), `the banner's ${name} column exists`);
+  }
+
+  section('1b. The second opinion, and when it should speak');
+
+  const amd = require(path.join(__dirname, '..', 'src', 'isa_amd.js'));
+  const listing = fs.readFileSync(path.join(FIXTURES, 'gfx1201-fragment.isa'), 'utf8');
+  const measured = amd.target.statsProfile.analyze(listing, { statistics: stats });
+
+  check(measured.instructions > 30, 'the listing is measured, not guessed at',
+    measured.instructions);
+  check(measured.registers.maxVector >= 0 && measured.registers.maxVector < stats.USED_VGPRs,
+    'the highest VGPR the code names sits below what RGA allocated',
+    `code reaches v${measured.registers.maxVector}, RGA allocated ${stats.USED_VGPRs}`);
+  check(measured.mix.length > 1, 'the mix has more than one encoding class',
+    measured.mix.map(m => m.category).join(', '));
+
+  // A fragment shader reads its interpolants with `ds_param_load`, out of LDS the RASTERIZER
+  // wrote - so it consumes no LDS allocation, and RGA reporting zero is correct. Counting
+  // those as LDS use made the cross-check fire on an ordinary fragment shader, which is the
+  // crying-wolf failure that gets a check switched off.
+  check(/ds_param_load/.test(listing), 'this fixture does read interpolants through DS');
+  check(measured.usesLds === false,
+    'and that is not counted as using the shader\'s own LDS allocation');
+  check(amd.target.statsProfile.crossCheck(measured, null).length === 0,
+    'so the two accounts agree and the banner says nothing',
+    amd.target.statsProfile.crossCheck(measured, null).join('; '));
+
+  // The cross-check must still fire when it should. `used > allocated` is the impossible
+  // direction; equality is not expected, because an allocation legitimately rounds up.
+  const impossible = amd.target.statsProfile.crossCheck(
+    { ...measured, declared: { ...stats, USED_VGPRs: 1 } }, null);
+  check(impossible.length > 0 && /being read wrong/.test(impossible[0]),
+    'but a code that names more registers than RGA allocated is reported',
+    impossible.join('; '));
+  const rounded = amd.target.statsProfile.crossCheck(
+    { ...measured, declared: { ...stats, USED_VGPRs: 64 } }, null);
+  check(rounded.length === 0,
+    'while an allocation ABOVE what the code touches is ordinary and stays quiet',
+    rounded.join('; '));
 
   section('2. The mode tables say what RGA measurably accepts');
 

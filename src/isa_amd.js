@@ -124,6 +124,102 @@ function bannerTail(result, field) {
   return lines;
 }
 
+// --------------------------------------------------------------------------- measuring
+
+/**
+ * Every register the code names, in one alternation over the whole listing.
+ *
+ * A range writes its high end too - `v[2:3]` means v3 is live - so both spellings are captured
+ * and the range's upper bound is what counts. Getting that wrong understates the maximum by up
+ * to three on exactly the wide loads and stores where it matters most.
+ *
+ * `\b[vs]\d+` cannot match inside a mnemonic: `v_mul_f32_e32` has no digit directly after a
+ * word-boundary `v`, and `s_mov_b32` none after `s`. `f32` and `b128` are preceded by `_`,
+ * which is a word character, so the boundary does not fire there either.
+ */
+const REGISTER_RE = /\b([vs])\[(\d+):(\d+)\]|\b([vs])(\d+)\b/g;
+
+/**
+ * DS-encoded instructions that read rasterizer-written data rather than allocated LDS.
+ *
+ * `ds_param_load` is how an RDNA pixel shader fetches its interpolants, and `ds_direct_load`
+ * how it reads a flat-shaded one. Both go through LDS the hardware populated before the shader
+ * ran, so neither consumes the workgroup's LDS budget - which is why RGA reports
+ * `USED_LDS_BYTES 0` for a fragment shader full of them, correctly.
+ */
+const PARAM_LOAD = /^ds_(?:param|direct)_load/;
+
+/** Instruction-class prefixes, longest first so `s_wait_` is not shadowed by `s_`. */
+const CLASS_OF = [
+  ['export', 'Export'], ['exp ', 'Export'],
+  ['s_wait', 'Wait'], ['s_delay_alu', 'Wait'],
+  ['ds_', 'LDS'], ['buffer_', 'Memory'], ['global_', 'Memory'], ['flat_', 'Memory'],
+  ['scratch_', 'Scratch'], ['image_', 'Texture'], ['tbuffer_', 'Memory'],
+  ['v_', 'Vector'], ['s_', 'Scalar']
+];
+
+/**
+ * What a listing is made of, counted from the text.
+ *
+ * One walk for the opcodes and one alternation over the whole string for the operands, for the
+ * reason `stats.js` measured and recorded: scanning the text once inside the regex engine beat
+ * invoking a pattern per line, and beat several patterns scanned separately.
+ */
+function measureRdna(text) {
+  const byClass = new Map();
+  let instructions = 0;
+  let waits = 0;
+  let delays = 0;
+  let usesLds = false;
+  let usesScratch = false;
+
+  let from = 0;
+  while (from <= text.length) {
+    let end = text.indexOf('\n', from);
+    if (end < 0) end = text.length;
+    const line = text.slice(from, end);
+    from = end + 1;
+
+    const parsed = parseRdna.parseLine(line);
+    if (!parsed || !parsed.opcode) continue;
+    const op = parsed.opcode.text;
+    instructions++;
+
+    if (op.startsWith('s_wait')) waits++;
+    else if (op === 's_delay_alu') delays++;
+    // `ds_` is the encoding class, not the question. A pixel shader reads its interpolants
+    // with `ds_param_load`, and those live in LDS the RASTERIZER wrote - they cost the shader
+    // no LDS allocation at all. Counting them as LDS use made the cross-check report "the code
+    // reads or writes LDS but RGA reports none used" on an ordinary fragment shader, which is
+    // the crying-wolf failure that gets a check ignored. Only allocation-consuming access
+    // counts.
+    if (op.startsWith('ds_') && !PARAM_LOAD.test(op)) usesLds = true;
+    if (op.startsWith('scratch_')) usesScratch = true;
+
+    const klass = (CLASS_OF.find(([prefix]) => op.startsWith(prefix)) || [null, 'Other'])[1];
+    byClass.set(klass, (byClass.get(klass) || 0) + 1);
+  }
+
+  const registers = { maxVector: -1, maxScalar: -1 };
+  REGISTER_RE.lastIndex = 0;
+  let m;
+  while ((m = REGISTER_RE.exec(text)) !== null) {
+    const file = m[1] || m[4];
+    // The high end of a range, or the single index.
+    const index = m[1] ? Math.max(Number(m[2]), Number(m[3])) : Number(m[5]);
+    if (file === 'v') registers.maxVector = Math.max(registers.maxVector, index);
+    else registers.maxScalar = Math.max(registers.maxScalar, index);
+  }
+
+  const mix = [...byClass.entries()]
+    .map(([category, count]) => ({
+      category, count, share: instructions ? (100 * count) / instructions : 0
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  return { instructions, mix, registers, waits, delays, usesLds, usesScratch };
+}
+
 // --------------------------------------------------------------------------- the rows
 
 const target = {
@@ -216,26 +312,81 @@ const target = {
    */
   statsProfile: {
     analyze(text, object) {
-      let instructions = 0;
-      for (const line of String(text).split(/\r?\n/)) {
-        const parsed = parseRdna.parseLine(line);
-        if (parsed && parsed.opcode) instructions++;
-      }
-      return { instructions, declared: (object && object.statistics) || null };
+      return {
+        ...measureRdna(String(text)),
+        declared: (object && object.statistics) || null,
+        localSize: (object && object.localSize) || null
+      };
     },
 
     summaryLines(measured, metadata) {
       const pad = label => `// ${label.padEnd(FIELD_WIDTH)}: `;
-      const lines = [pad('instructions') + `${measured.instructions.toLocaleString()}`];
+      const blank = `// ${' '.repeat(FIELD_WIDTH)}  `;
       const d = measured.declared || {};
-      if (d.ISA_SIZE !== undefined) lines.push(pad('code size') + `${d.ISA_SIZE} bytes`);
-      if (d.USED_SGPRs !== undefined) {
-        lines.push(pad('scalar regs') + `${d.USED_SGPRs} of ${d.AVAILABLE_SGPRs} SGPR`);
+      const lines = [pad('instructions') + `${measured.instructions.toLocaleString()}`];
+
+      // By ENCODING CLASS, which is what the mnemonic prefix names and is documented as such -
+      // not by functional unit, which would need a per-opcode table nobody here has verified.
+      // The label says which, because the two are easy to mistake for one another.
+      if (measured.mix.length) {
+        lines.push(pad('mix') + measured.mix.slice(0, 5)
+          .map(m => `${m.category} ${m.share < 10 ? m.share.toFixed(1) : Math.round(m.share)}%`)
+          .join('   '));
+        lines.push(blank + 'by encoding class, from the mnemonic prefix');
       }
+
+      if (d.ISA_SIZE !== undefined) lines.push(pad('code size') + `${d.ISA_SIZE} bytes`);
+
+      // RGA's count and the code's highest index are two independent statements. Both are
+      // printed, because the gap between them is meaningful: an allocation sits at or above
+      // what the code touches, and quietly printing one as the other would merge two claims.
+      if (d.USED_VGPRs !== undefined) {
+        lines.push(pad('vector regs') + `${d.USED_VGPRs} of ${d.AVAILABLE_VGPRs} VGPR ` +
+          'allocated by RGA' +
+          (measured.registers.maxVector >= 0
+            ? `; the code reaches v${measured.registers.maxVector}` : ''));
+      }
+      if (d.USED_SGPRs !== undefined) {
+        lines.push(pad('scalar regs') + `${d.USED_SGPRs} of ${d.AVAILABLE_SGPRs} SGPR ` +
+          'allocated by RGA' +
+          (measured.registers.maxScalar >= 0
+            ? `; the code reaches s${measured.registers.maxScalar}` : ''));
+      }
+
+      if (d.USED_LDS_BYTES !== undefined) {
+        lines.push(pad('LDS') + `${d.USED_LDS_BYTES} of ${d.AVAILABLE_LDS_BYTES} bytes`);
+      }
+      // Scratch is private memory, and its presence means the shader spilled or indexed a
+      // local array - which is why it is printed even when zero, the way local mem is on the
+      // NVIDIA road.
+      if (d.SCRATCH_MEM !== undefined) {
+        lines.push(pad('scratch') + `${d.SCRATCH_MEM} bytes` +
+          (d.SCRATCH_MEM ? ' - private memory, so something spilled or was indexed' : ''));
+      }
+
       const spills = (d.VGPR_SPILLS || 0) + (d.SGPR_SPILLS || 0);
       lines.push(pad('spills') + (spills
         ? `${d.VGPR_SPILLS || 0} VGPR, ${d.SGPR_SPILLS || 0} SGPR`
         : 'none'));
+
+      // Declared by the shader, and labelled so. RGA's own THREADS_PER_WORKGROUP and
+      // CL_WORKGROUP_* columns read 0 for every Vulkan shader measured, including a compute
+      // shader with a declared size, so they are dropped rather than printed - see
+      // `rga.ALWAYS_ZERO`. There is deliberately NO wave size and NO occupancy figure: RGA
+      // reports neither, and deriving occupancy would need a per-target allocation-granularity
+      // table this has not measured.
+      if (measured.localSize) {
+        lines.push(pad('workgroup') +
+          `${measured.localSize.join(' x ')} - declared by the shader, not reported by RGA`);
+      }
+
+      if (measured.waits) {
+        lines.push(pad('waits') + `${measured.waits} s_wait_* / s_waitcnt` +
+          (measured.delays ? `, ${measured.delays} s_delay_alu` : ''));
+        lines.push(blank + 'RDNA states dependency resolution as instructions, so these are ' +
+          'counted rather than decoded from a column.');
+      }
+
       void metadata;
       return lines;
     },
@@ -243,15 +394,37 @@ const target = {
     /**
      * The two accounts compared.
      *
-     * RGA states the register counts and the code states which registers it touches, and they
-     * are arrived at independently - so a disagreement means one of them is being read wrong,
-     * which is worth more than either number alone. The same argument `stats.crossCheck`
-     * makes for the cache road.
+     * RGA states the register counts and the code states which registers it touches, arrived
+     * at independently - so a disagreement means one of them is being read wrong, which is
+     * worth more than either number alone. Exactly the argument `stats.crossCheck` makes for
+     * the cache road, and the reason `declared` and `evidence` are kept apart.
+     *
+     * The rule is `used > allocated`, not `used != allocated`. An allocation legitimately sits
+     * ABOVE the highest register touched - alignment, a reserved pair, a granularity the
+     * compiler rounds to - so equality is not expected and demanding it would cry wolf on
+     * ordinary output. Exceeding it is the impossible direction.
      */
     crossCheck(measured, metadata) {
       const notes = [];
-      if (!metadata || metadata.registers === null || !measured.declared) return notes;
-      void notes;
+      const d = measured.declared;
+      if (!d) return notes;
+
+      const r = measured.registers;
+      if (d.USED_VGPRs !== undefined && r.maxVector >= 0 && r.maxVector + 1 > d.USED_VGPRs) {
+        notes.push(`RGA reports ${d.USED_VGPRs} VGPRs but the code reaches v${r.maxVector} - ` +
+          'one of the two is being read wrong');
+      }
+      if (d.USED_SGPRs !== undefined && r.maxScalar >= 0 && r.maxScalar + 1 > d.USED_SGPRs) {
+        notes.push(`RGA reports ${d.USED_SGPRs} SGPRs but the code reaches s${r.maxScalar} - ` +
+          'one of the two is being read wrong');
+      }
+      if (d.USED_LDS_BYTES === 0 && measured.usesLds) {
+        notes.push('the code reads or writes LDS but RGA reports none used');
+      }
+      if ((d.VGPR_SPILLS || d.SGPR_SPILLS) && !measured.usesScratch) {
+        notes.push('RGA reports spills but the code contains no scratch access');
+      }
+      void metadata;
       return notes;
     }
   },

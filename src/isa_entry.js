@@ -137,6 +137,9 @@ function normalize(raw, { target, origin } = {}) {
     /** What a TOOL stated - RGA's statistics CSV, ptxas -v - as opposed to the container. */
     statistics: raw.statistics || null,
 
+    /** What the SHADER declared, where no tool reports it. Kept apart from both of the above. */
+    localSize: raw.localSize || null,
+
     warnings: raw.warnings || []
   };
 
@@ -171,6 +174,7 @@ function asObject(entry, extra = {}) {
     // what the CONTAINER recorded: keeping them apart is what lets a target compare the two
     // and report a disagreement rather than merging them into one unchallenged number.
     statistics: entry.statistics || null,
+    localSize: entry.localSize || null,
     warnings: entry.warnings,
     ...extra
   };

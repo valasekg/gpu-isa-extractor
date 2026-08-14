@@ -816,8 +816,26 @@ function chooseSlangEntry(text, wanted, file, stated, targetId = 'nvidia') {
   }
 
   if (compute.length === found.length) {
-    return { entry: undefined, stage: COMPUTE_STAGE, road: roadOf(COMPUTE_STAGE, targetId),
-      lineage: 'cuda', producer: null, note: null };
+    const road = roadOf(COMPUTE_STAGE, targetId);
+    // `entry: undefined` is a CUDA-road affordance, not a general one: it is what lets slangc
+    // discover a lone compute kernel itself, so a single-kernel file needs no `-entry`. Every
+    // other road lowers to SPIR-V, where slangc is given `-entry` explicitly and an omitted
+    // one makes it hunt for a function called `main` and fail on a file that never claimed to
+    // have one. So the name is supplied wherever it is needed, and withheld only where
+    // withholding it is the feature.
+    return {
+      entry: road === 'cuda' ? undefined : (compute.length === 1 ? compute[0].name : undefined),
+      stage: COMPUTE_STAGE,
+      road,
+      lineage: 'cuda',
+      producer: null,
+      // A file with several compute kernels and no `-entry` is ambiguous on a road that must
+      // name one. Said here rather than surfaced as slangc failing to find `main`.
+      note: road !== 'cuda' && compute.length > 1
+        ? `this file declares ${compute.length} compute entry points and this target must ` +
+          'name one; add `-entry <name>` to its directive'
+        : null
+    };
   }
 
   // A mixed file has to name one, because the two roads cannot be walked at once - and
@@ -1499,6 +1517,22 @@ async function rgaCompile(tools, file, options) {
   steps.push({ tool: 'rga', command: quote(built.argv), log: built.log });
 
   const parseRdna = require('./parse_rdna');
+
+  // The workgroup size, from the SHADER rather than from RGA. Every one of RGA's
+  // THREADS_PER_WORKGROUP and CL_WORKGROUP_* columns reads 0 for a Vulkan shader - including a
+  // compute shader that declares a size - because they are OpenCL-mode fields, so the module
+  // is the only honest source. Only asked for the stages that have one, and a reflector
+  // failure costs the line rather than the compile.
+  let localSize = null;
+  if (['compute', 'mesh', 'amplification'].includes(stage) && tools.python) {
+    try {
+      const read = await reflect(tools, [modules[stage]]);
+      localSize = (read.modules[0] || {}).localSize || null;
+    } catch (e) {
+      notes.push(`the workgroup size could not be read from the module: ${e.message}`);
+    }
+  }
+
   const entries = [];
   for (const [which, text] of Object.entries(built.listings)) {
     // Only the stage that was asked for becomes a listing. A producer compiled alongside is
@@ -1536,6 +1570,7 @@ async function rgaCompile(tools, file, options) {
         killsPixels: null
       },
       statistics: declared,
+      localSize,
       warnings: []
     });
   }

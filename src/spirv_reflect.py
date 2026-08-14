@@ -475,6 +475,32 @@ class Module(object):
         out["factors"] = TESS_FACTORS[out["domain"]]
         return out
 
+    def local_size(self):
+        """The workgroup size the shader declares, as [x, y, z], or None.
+
+        Read from the module rather than from the compiler's statistics on purpose. RGA's
+        statistics CSV has THREADS_PER_WORKGROUP and CL_WORKGROUP_* columns, and every one of
+        them reads 0 for a Vulkan shader - including a compute shader with a declared size -
+        because they are OpenCL-mode fields. So the only honest source is what the shader
+        itself says, and a banner printing this must label it as declared rather than as
+        measured or reported.
+
+        Both spellings are read. `LocalSize` carries literals; `LocalSizeId` carries constant
+        ids, which is what a specialisation-constant workgroup size compiles to, and those are
+        resolved through the constants already collected. An unresolvable id yields None rather
+        than a guess - a specialisation constant genuinely has no value until it is specialised.
+        """
+        EM_LOCAL_SIZE = 17
+        EM_LOCAL_SIZE_ID = 38
+        for mode, operands in self.execution_modes:
+            if mode == EM_LOCAL_SIZE and len(operands) >= 3:
+                return [int(v) for v in operands[:3]]
+            if mode == EM_LOCAL_SIZE_ID and len(operands) >= 3:
+                resolved = [self.constants.get(o) for o in operands[:3]]
+                if all(v is not None for v in resolved):
+                    return [int(v) for v in resolved]
+        return None
+
     def patch_size(self):
         """How many vertices are in the patch this stage reads.
 
@@ -806,6 +832,13 @@ def reflect(path):
         # statically uses is invalid, and nothing downstream of here can tell.
         "pushBytes": module.push_constant_bytes(),
     }
+    # Only the stages that HAVE a workgroup. A vertex or fragment shader has none, and
+    # reporting `null` for one is noise where reporting it for a compute shader is a fact.
+    # `amplification` is what this reflector calls the stage Vulkan calls `task`; both spellings
+    # are accepted so the condition does not depend on which name reaches it.
+    if any(s in ("compute", "mesh", "amplification", "task")
+           for s, _ in module.entry_points):
+        out["localSize"] = module.local_size()
     if any(s == "geometry" for s, _ in module.entry_points):
         name, topology, vertices = module.input_primitive()
         out["primitive"] = {"name": name, "topology": topology, "vertices": vertices}
