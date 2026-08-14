@@ -213,8 +213,33 @@ const WRONG = { superset: '0a206c89ea37', dynamic: 'de06f203bf3b' };
 const PINNED_DEVICE = /NVIDIA RTX A4500/i;
 let pinsApply = false;
 
-/** Assert a recorded digest, or skip where this machine cannot be held to it. */
-function pinned(actual, expected, what, detail) {
+/**
+ * Pins whose INPUT changed, and which therefore describe a compile that can no longer happen.
+ *
+ * A digest is a fact about one compiler compiling one module for one architecture. Four of the
+ * `.spv` fixtures were regenerated - gsMain, tessHs, msMain and tessGenHs - because the SPIR-V
+ * committed with them carried an `ArrayStride` decoration on a `Function`-storage array, which
+ * the SDK that produced them accepted and the current one rejects. The shaders did not change;
+ * their compiled form did.
+ *
+ * So these pins are not merely device-specific any more, they are stale: on an A4500 they would
+ * now FAIL, and the failure would read as a driver or compiler regression when nothing about
+ * either changed. Skipping them on every machine, with the reason, is the honest state until
+ * someone re-records them on an A4500 against the new fixtures. Deleting them would throw away
+ * the only record of what those pipelines used to produce.
+ */
+const STALE_PINS = 'the .spv fixture behind it was regenerated under Vulkan SDK 1.4.341.1; ' +
+  're-record on an RTX A4500 against the new fixtures';
+
+/**
+ * Assert a recorded digest, or skip where this machine cannot be held to it.
+ *
+ * @param {string} [stale]  why this pin no longer describes a reachable compile. Skips
+ *   unconditionally, including on the device it was recorded on - which is the point: that is
+ *   the machine where it would otherwise fail for the wrong reason.
+ */
+function pinned(actual, expected, what, detail, stale) {
+  if (stale) return skip(`${what} (${stale})`);
   if (!pinsApply) return skip(`${what} (recorded on an RTX A4500; this is another device)`);
   return check(actual === expected, what, detail || `got ${actual}, want ${expected}`);
 }
@@ -423,7 +448,7 @@ function findBin(dir) {
       if (check(!paired.error, 'a vertex + geometry pipeline is created', paired.error)) {
         pinned(paired.geometry, 'ce4a65b17741',
           'the geometry microcode is what was recorded',
-          `got ${paired.geometry}, want ce4a65b17741`);
+          `got ${paired.geometry}, want ce4a65b17741`, STALE_PINS);
         check(!!paired.vertex, 'and the vertex stage is carved beside it, told apart by code',
           JSON.stringify(paired));
       }
@@ -522,9 +547,9 @@ function findBin(dir) {
       const real = await pipeline('tess', trio);
       if (check(!real.error, 'a vertex + hull + domain pipeline is created', real.error)) {
         pinned(real.hull, '618d558286e5', 'the hull microcode is what was recorded',
-          `got ${real.hull}, want 618d558286e5`);
+          `got ${real.hull}, want 618d558286e5`, STALE_PINS);
         pinned(real.domain, '22d5ea41c851', 'the domain microcode is what was recorded',
-          `got ${real.domain}, want 22d5ea41c851`);
+          `got ${real.domain}, want 22d5ea41c851`, STALE_PINS);
       }
 
       // The two synthesis directions are NOT equally safe, and the difference is measured
@@ -580,7 +605,7 @@ function findBin(dir) {
     if (check(!alone.error, 'a mesh shader alone makes a pipeline', alone.error)) {
       // Stage code 9, established by construction: this pipeline holds exactly one module.
       pinned(alone.mesh, '79fc9202f25d', 'the mesh microcode is what was recorded',
-        `got ${alone.mesh}, want 79fc9202f25d`);
+        `got ${alone.mesh}, want 79fc9202f25d`, STALE_PINS);
     }
 
     if (fs.existsSync(as)) {

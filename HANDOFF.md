@@ -69,7 +69,8 @@ py tools\oracle_compare.py --full     # release gate; minutes
 ```
 
 `verify.py` is the single entry point: JSON shape, every grammar regex, manifest wiring
-(commands, menus, settings, packaged modules), theme coverage, and the 14 JavaScript suites.
+(commands, menus, settings, packaged modules), theme coverage, a parse sweep over every shipped
+module, and the 16 JavaScript suites.
 
 **Read the failure detail, not the count.** `verify.py` records one result per JS *script*, so
 a suite that dies at its third check and a suite that dies at its fortieth produce an identical
@@ -77,12 +78,12 @@ summary line. That is not hypothetical: a syntax error in `compileview.js` once 
 commits behind an unchanged count of 2, because the count was checked and the reason was not.
 The count agreeing with what is written below is necessary and nowhere near sufficient.
 
-With a JS runtime on `PATH`, expect `FAIL 73 passed, 2 failed, 0 warnings, 1 skipped`. Without
+With a JS runtime on `PATH`, expect `FAIL 81 passed, 1 failed, 0 warnings, 1 skipped`. Without
 one, expect `PARTIAL 60 passed` - the word is `PARTIAL` rather than `PASS` because no
 JavaScript ran at all, so nothing checked whether the extension so much as parses.
 
-The two failures are **known, pre-existing, and unrelated to the extension's own logic.** They are
-recorded here rather than fixed in passing, because each needs evidence from more than one
+The one failure is **known, pre-existing, and unrelated to the extension's own logic.** It is
+recorded here rather than fixed in passing, because it needs evidence from more than one
 toolchain before it can be fixed rather than guessed at:
 
 - `test_endtoend.js` - "the cubin reports the architecture it was built for" gets `SM5`.
@@ -92,17 +93,52 @@ toolchain before it can be fixed rather than guessed at:
   cubin seen here" is now the answer. The whole CUDA compile road fails on this machine as a
   result - `nvdisasm --binary SM5` is rejected outright. Fixing it needs `e_flags` from more
   toolkit versions than one, or the two layouts cannot be told apart safely.
-- `test_gfx.js` section 9 - geometry, tessellation and mesh build pipelines the validation
-  layer rejects with *"Invalid explicit layout decorations on type ... the Function storage
-  class has a explicit layout from the ArrayStride decoration"*. The checked-in `.spv` fixtures
-  were produced by the older SDK; 1.4.341.1's `spirv-val` rejects what 1.3.296.0 accepted. The
-  driver still builds the pipelines and the microcode is probably right, which is precisely why
-  `vk_compile.py` treats the layer's verdict as fatal - do not weaken that to make this pass.
 
 `test_gfx.js` is the suite that can legitimately report skips: its second half needs an NVIDIA
 GPU, a working Vulkan driver and `slangc`, and skips rather than fails without them. Its first
 half - the struct ABI and the SPIR-V reflector - needs only Python and runs anywhere. Here it
-also skips 11 checks whose recorded microcode came from the A4500.
+skips 11 checks: seven whose recorded microcode came from the A4500, and four whose fixtures
+were regenerated (below).
+
+## The SPIR-V fixtures, and which SDK made them
+
+`tools/fixtures/gfx/*.spv` are committed binaries, and **the SDK that produced them is part of
+what they are**. Not recording that cost a day: four of them carried an `ArrayStride`
+decoration on a `Function`-storage array, which Vulkan SDK 1.3.296.0's `slangc` emitted and
+1.4.341.1's `spirv-val` rejects, and `test_gfx.js` section 9 failed on geometry, tessellation
+and mesh with no indication that the inputs rather than the code had aged.
+
+- `gsMain.spv`, `tessHs.spv`, `msMain.spv`, `tessGenHs.spv` were regenerated with **Vulkan SDK
+  1.4.341.1**. Established as stale fixtures rather than a slangc bug by rebuilding each from
+  its `.slang` source and re-running `spirv-val`: current slangc produces valid SPIR-V from the
+  same unchanged sources.
+- Every other `.spv` there predates that and still validates. They were left alone deliberately
+  - regenerating a fixture invalidates any digest recorded against it, so it is not free.
+
+All 23 validate under `spirv-val --target-env vulkan1.3`. Check before committing a new one:
+
+```powershell
+Get-ChildItem tools\fixtures\gfx -Filter *.spv | ForEach-Object {
+  & "$env:VULKAN_SDK\Bin\spirv-val.exe" --target-env vulkan1.3 $_.FullName }
+```
+
+Rebuild one with, for example:
+
+```powershell
+& "$env:VULKAN_SDK\Bin\slangc.exe" tools\fixtures\gfx\geometry.slang `
+    -target spirv -entry gsMain -stage geometry -o tools\fixtures\gfx\gsMain.spv
+```
+
+**Four digests in `test_gfx.js` are now marked stale** - the geometry, hull, domain and mesh
+microcode pins - because the modules they describe no longer exist. They skip on every machine,
+including the A4500 they were recorded on, since that is precisely where they would otherwise
+fail and read as a driver regression. `STALE_PINS` in that file says so. Re-record them on an
+A4500 against the new fixtures; they are kept rather than deleted because they are the only
+record of what those pipelines used to produce.
+
+The driver builds these pipelines whether the SPIR-V validates or not, and the microcode is
+probably right either way - which is exactly why `vk_compile.py` treats the validation layer's
+verdict as fatal. Do not weaken that to make a check pass.
 
 `test_golden.js` is the refactor gate, **and its limits are worth knowing before you trust it**.
 It pins the banner and the body of one *cache-origin* listing built from a synthetic
