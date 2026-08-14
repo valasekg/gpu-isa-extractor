@@ -59,14 +59,32 @@ const path = require('path');
 const cubin = require('./cubin');
 const spawn = require('./spawn');
 
-/** What this feature can compile, and what it calls each thing. */
+/**
+ * What this feature can compile, and what it calls each thing.
+ *
+ * The last two compile nothing - a cubin and an AMD code object are already-compiled
+ * containers, and "compiling" them means disassembling. They are here because they enter
+ * through the same door and leave in the same shape.
+ */
 const LANGUAGES = {
   '.slang': 'slang',
   '.cu': 'cuda',
   '.cuh': 'cuda',
   '.ptx': 'ptx',
-  '.cubin': 'cubin'
+  '.cubin': 'cubin',
+  '.co': 'codeobject',
+  '.hsaco': 'codeobject'
 };
+
+/**
+ * Extensions that MIGHT be an AMD code object, decided by looking rather than by the name.
+ *
+ * `.bin` is the contested one: the NVIDIA road's GLCache blobs use it too, and an `.elf` is
+ * whatever produced it. Neither can be routed on its extension, so these are sniffed with
+ * `rga.isCodeObject` and fall through to their existing meaning when the bytes say no. The
+ * unambiguous `.co` and `.hsaco` above need no such check.
+ */
+const SNIFF_FOR_CODE_OBJECT = new Set(['.bin', '.elf']);
 
 /**
  * The first-line escape hatch:
@@ -1180,6 +1198,31 @@ function languageOf(file) {
 }
 
 /**
+ * `languageOf`, plus a look inside for the extensions that cannot be routed on their name.
+ *
+ * Reads the ELF header only - 64 bytes is enough to answer, and a GLCache `.bin` can be
+ * hundreds of megabytes, so reading the whole file to decide what it is would be a real cost
+ * on the road that does not want it.
+ */
+async function detectLanguage(file) {
+  const named = languageOf(file);
+  if (named) return named;
+  if (!SNIFF_FOR_CODE_OBJECT.has(path.extname(file).toLowerCase())) return null;
+
+  let handle = null;
+  try {
+    handle = await fs.promises.open(file, 'r');
+    const head = Buffer.alloc(64);
+    const { bytesRead } = await handle.read(head, 0, 64, 0);
+    return bytesRead === 64 && require('./rga').isCodeObject(head) ? 'codeobject' : null;
+  } catch (e) {
+    return null;
+  } finally {
+    if (handle) await handle.close();
+  }
+}
+
+/**
  * The graphics road: Slang to SPIR-V, then one pipeline, then carve what the driver wrote.
  *
  * It returns the same shape the CUDA road returns, so everything downstream - the disassembly,
@@ -1472,6 +1515,116 @@ async function graphicsCompile(tools, file, options) {
  * none. Which settles it in this road's favour, and is why nothing here synthesises a `.gpso`:
  * the mode that needs one is the mode this code does not take. See `accuracyNote`.
  */
+/**
+ * One RDNA listing as an entry, in the shape the entry contract wants.
+ *
+ * Shared by the two AMD roads because they differ in where the text came from and in nothing
+ * else - the statistics CSV, the identity, the declared figures and the metadata are read the
+ * same way whether RGA just compiled the shader or just read it out of a code object. Written
+ * once so that a change to the contract lands on both roads rather than on whichever one was
+ * remembered.
+ *
+ * @param {string} options.origin    a key in `isa_amd`'s PROVENANCE: 'compiled' or 'binary'
+ */
+function rdnaEntry({ name, stage, text, statsCsv, origin, localSize = null }) {
+  const rga = require('./rga');
+  const crypto = require('crypto');
+  const parseRdna = require('./parse_rdna');
+  const declared = rga.readStatistics(statsCsv) || {};
+  const num = key => (declared[key] !== undefined ? declared[key] : null);
+
+  return {
+    name,
+    stage,
+    stages: [stage],
+    hardwareStage: parseRdna.entryLabel(text),
+    origin,
+    // No microcode: RGA emits one ELF for the whole pipeline, not one per stage, so there
+    // are no per-entry bytes to hash. The listing is identified by its own text, and the
+    // banner says so rather than printing a digest that looks like the NVIDIA one.
+    sha1: crypto.createHash('sha1').update(text, 'utf8').digest('hex'),
+    identityNote: 'sha1 of the ISA text; RGA emits one ELF per pipeline, not per stage',
+    isa: text,
+    codeBytes: num('ISA_SIZE'),
+    instructions: countInstructions(text, parseRdna),
+    declared: {
+      registers: num('USED_VGPRs'),
+      sharedBytes: num('USED_LDS_BYTES'),
+      localBytes: num('SCRATCH_MEM'),
+      spillStores: num('VGPR_SPILLS'),
+      spillLoads: num('SGPR_SPILLS')
+    },
+    metadata: {
+      stage,
+      stageCode: null,
+      registers: num('USED_VGPRs'),
+      registerCap: num('AVAILABLE_VGPRs'),
+      localBytes: num('SCRATCH_MEM'),
+      sharedBytes: num('USED_LDS_BYTES'),
+      killsPixels: null
+    },
+    statistics: declared,
+    localSize,
+    warnings: []
+  };
+}
+
+/**
+ * The binary road: an AMD code object the user already had, read back with `-s bin`.
+ *
+ * The counterpart of opening a `.cubin`, and the only AMD road that compiles nothing. It needs
+ * no target, because the code object carries its own and RGA reports it; supplying one would
+ * be overriding the file with a guess. Every stage inside the ELF becomes an entry, because
+ * unlike a compile there is no "the stage that was asked for" - the user opened a container
+ * and wants what is in it.
+ */
+async function codeObjectRead(tools, file, options) {
+  const rga = require('./rga');
+  const { outDir, steps, notes, sources } = options;
+
+  const read = await rga.disassembleCodeObject({
+    rga: tools.rga, co: file, outDir: path.join(outDir, 'bin'), token: options.token, run
+  });
+  steps.push({ tool: 'rga', command: quote(read.argv), log: read.log });
+
+  const entries = Object.entries(read.listings).map(([stage, text]) => rdnaEntry({
+    name: stage,
+    stage,
+    text,
+    statsCsv: read.statistics[stage],
+    origin: 'binary'
+  }));
+
+  if (read.stages.length > 1) {
+    notes.push(`this code object holds ${read.stages.length} stages - ` +
+      `${read.stages.join(', ')} - and each is listed separately`);
+  }
+
+  return {
+    entries,
+    cubinPath: null,
+    arch: read.device,
+    asic: read.device,
+    road: 'rga',
+    lineage: 'rga',
+    tool: tools.rga,
+    toolVersion: await rga.version(tools.rga, run),
+    stage: entries.length === 1 ? entries[0].stage : null,
+    pipeline: null,
+    // No accuracy note. That question is about which compiler produced the code, and this road
+    // did not produce it - it read what was already there. Measured: reading back an ELF gives
+    // the same text the compile that made it wrote, byte for byte.
+    accuracy: null,
+    steps,
+    ptxasLog: '',
+    ptxasInfo: () => ({
+      registers: null, localBytes: null, sharedBytes: null, spillStores: null, spillLoads: null
+    }),
+    sources,
+    notes
+  };
+}
+
 async function rgaCompile(tools, file, options) {
   const rga = require('./rga');
   const crypto = require('crypto');
@@ -1543,41 +1696,14 @@ async function rgaCompile(tools, file, options) {
     // Only the stage that was asked for becomes a listing. A producer compiled alongside is
     // part of the pipeline rather than the answer, exactly as on the NVIDIA graphics road.
     if (which !== stage) continue;
-    const declared = rga.readStatistics(built.statistics[which]) || {};
-    entries.push({
+    entries.push(rdnaEntry({
       name: chosen.entry || stage,
       stage: which,
-      stages: [which],
-      hardwareStage: parseRdna.entryLabel(text),
+      text,
+      statsCsv: built.statistics[which],
       origin: 'compiled',
-      // No microcode: RGA emits one ELF for the whole pipeline, not one per stage, so there
-      // are no per-entry bytes to hash. The listing is identified by its own text, and the
-      // banner says so rather than printing a digest that looks like the NVIDIA one.
-      sha1: crypto.createHash('sha1').update(text, 'utf8').digest('hex'),
-      identityNote: 'sha1 of the ISA text; RGA emits one ELF per pipeline, not per stage',
-      isa: text,
-      codeBytes: declared.ISA_SIZE !== undefined ? declared.ISA_SIZE : null,
-      instructions: countInstructions(text, parseRdna),
-      declared: {
-        registers: declared.USED_VGPRs !== undefined ? declared.USED_VGPRs : null,
-        sharedBytes: declared.USED_LDS_BYTES !== undefined ? declared.USED_LDS_BYTES : null,
-        localBytes: declared.SCRATCH_MEM !== undefined ? declared.SCRATCH_MEM : null,
-        spillStores: declared.VGPR_SPILLS !== undefined ? declared.VGPR_SPILLS : null,
-        spillLoads: declared.SGPR_SPILLS !== undefined ? declared.SGPR_SPILLS : null
-      },
-      metadata: {
-        stage: which,
-        stageCode: null,
-        registers: declared.USED_VGPRs !== undefined ? declared.USED_VGPRs : null,
-        registerCap: declared.AVAILABLE_VGPRs !== undefined ? declared.AVAILABLE_VGPRs : null,
-        localBytes: declared.SCRATCH_MEM !== undefined ? declared.SCRATCH_MEM : null,
-        sharedBytes: declared.USED_LDS_BYTES !== undefined ? declared.USED_LDS_BYTES : null,
-        killsPixels: null
-      },
-      statistics: declared,
-      localSize,
-      warnings: []
-    });
+      localSize
+    }));
   }
 
   if (!entries.length) {
@@ -1882,16 +2008,31 @@ async function carveCache(cacheDir, stage, entryName, group) {
  * @returns {{entries, cubinPath, arch, steps, ptxasInfo, sources}}
  */
 async function compile(tools, file, options = {}) {
-  const language = languageOf(file);
+  const language = await detectLanguage(file);
   if (!language) {
     throw new CompileError(
       `${path.basename(file)} is not something this can compile. ` +
-      'Supported: .slang, .cu, .ptx and .cubin.');
+      'Supported: .slang, .cu, .ptx, .cubin, and AMD code objects (.co, .hsaco, or a .bin ' +
+      'or .elf whose header says it is one).');
   }
 
   const arch = String(options.arch || '86').replace(/^sm_?/i, '').replace(/^SM/i, '');
   const outDir = options.outDir;
   await fs.promises.mkdir(outDir, { recursive: true });
+
+  // Before anything that reasons about flags, includes or architectures: a code object has no
+  // source to compile, no flags that could change it and no SM number to target. Everything
+  // below this line is about turning source into code, and there is no source here.
+  if (language === 'codeobject') {
+    if (!tools.rga) {
+      throw new CompileError(
+        `${path.basename(file)} is an AMD code object, which needs rga to read. ` +
+        'The Radeon GPU Analyzer is a free download and is not bundled with this extension.');
+    }
+    return codeObjectRead(tools, file, {
+      ...options, outDir, steps: [], notes: [], sources: [file]
+    });
+  }
 
   const routed = options.flags || { primary: [], nvrtc: [], ptxas: [] };
   const home = path.resolve(options.home || path.dirname(path.resolve(file)));
@@ -2024,6 +2165,8 @@ module.exports = {
   lineageOf,
   roadOf,
   languageOf,
+  detectLanguage,
+  SNIFF_FOR_CODE_OBJECT,
   parsePtxasInfo,
   quote,
   compile,

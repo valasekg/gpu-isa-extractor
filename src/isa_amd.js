@@ -66,14 +66,32 @@ const cont = text => `// ${' '.repeat(FIELD_WIDTH)}  ${text}`;
 /**
  * Where an AMD listing's code came from.
  *
- * One row, because there is one road in: compiled from source through RGA. There is no cache
- * row - this extension has no reader for an AMD driver's shader cache - and no `driver` row
- * distinct from `compiled`, because RGA's live-driver mode is still a compile this tool asked
- * for rather than a by-product it went looking for. That distinction is what the NVIDIA
- * `driver` row exists to record, and inventing one here would be describing a road that does
- * not exist.
+ * Two rows. There is still no cache row - this extension has no reader for an AMD driver's
+ * shader cache - and no `driver` row distinct from `compiled`, because RGA's live-driver mode
+ * is still a compile this tool asked for rather than a by-product it went looking for. That
+ * distinction is what the NVIDIA `driver` row exists to record, and inventing one here would
+ * be describing a road that does not exist.
+ *
+ * `binary` is the one road in that did not compile anything: an AMD code object the user
+ * already had, read back with `-s bin`. It is kept separate from `compiled` because the
+ * honest banner differs in the field that matters - there is no source file and no command
+ * that produced the code, only a file and the target RGA detected inside it.
  */
 const PROVENANCE = {
+  binary(result, sweepResult, field) {
+    const { object, compile } = result;
+    const lines = [field('read from') + `${object.source}`];
+    // The target is the code object's own word, not a setting and not a guess - which is the
+    // whole reason this road needs no ASIC. Worth saying, because every other AMD listing's
+    // target was chosen for it.
+    if (compile.asic) {
+      lines.push(field('target') + `${compile.asic} (detected in the code object)`);
+    }
+    lines.push(field('disassembled') + `${compile.steps.map(s => s.tool).join(' -> ')}`);
+    for (const step of compile.steps) lines.push(cont(step.command));
+    return lines;
+  },
+
   compiled(result, sweepResult, field) {
     const { object, compile } = result;
     const lines = [field('source') + `${object.source}`];
@@ -94,7 +112,7 @@ const PROVENANCE = {
  * shader independent of the code - the same two-source arrangement the cache road has, and the
  * thing `stats.crossCheck` exists to disagree with.
  */
-const REGISTER_SOURCE = { compiled: 'reported by RGA' };
+const REGISTER_SOURCE = { compiled: 'reported by RGA', binary: 'reported by RGA' };
 
 // --------------------------------------------------------------------------- banner tail
 

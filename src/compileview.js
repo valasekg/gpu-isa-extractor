@@ -178,6 +178,10 @@ const WHERE_FROM = {
     'Slang\'s own releases. Set `nvIsaExtractor.compile.slangcPath` to one.',
   ptxas: 'ptxas assembles PTX into a cubin. It ships with the CUDA Toolkit, next to ' +
     'nvdisasm. Set `nvIsaExtractor.compile.ptxasPath` to one.',
+  rga: 'rga is the Radeon GPU Analyzer, which compiles SPIR-V to RDNA ISA and reads AMD code ' +
+    'objects. It is a free download from https://github.com/GPUOpen-Tools/radeon_gpu_analyzer ' +
+    'and is not bundled with this extension. It needs no AMD GPU. Set ' +
+    '`nvIsaExtractor.compile.rgaPath` to one.',
   // Two roads need Python for different reasons, and only one of them has an escape hatch.
   // Offering `backend: nvcc` to someone compiling a fragment shader sends them in a circle:
   // the Vulkan harness and the SPIR-V reflector are Python scripts whatever the CUDA backend
@@ -308,7 +312,15 @@ async function run(sourceUri, progress, token, requestedTarget) {
   // under its own name so the compiler's diagnostics and the line markers still name a file
   // the user recognises.
   const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === file);
-  const text = doc ? doc.getText() : await fs.promises.readFile(file, 'utf8');
+
+  // A container is not read as text. `.cubin` and `.co` hold no entry-point declarations and
+  // no `// nv-isa-extractor` directive - nothing below wants their contents - and slurping one
+  // as UTF-8 to find that out costs the whole file. A GLCache `.bin` sniffed as a code object
+  // can be hundreds of megabytes.
+  const isContainer = ['cubin', 'codeobject'].includes(compile.languageOf(file));
+  const text = isContainer
+    ? ''
+    : (doc ? doc.getText() : await fs.promises.readFile(file, 'utf8'));
 
   const directive = compile.readDirective(text);
   const configured = settings.get('compile.flags') || '';
@@ -336,7 +348,11 @@ async function run(sourceUri, progress, token, requestedTarget) {
     stage: declaredStage,
     // Precedence: the command that was invoked, then the file's own directive, then the
     // setting. An explicit ask outranks a written default, which outranks a configured one.
-    requested: requestedTarget || flags.target || settings.get('compile.target') || 'auto',
+    // A code object outranks all three: it is an AMDGPU ELF, which is not a preference to be
+    // overridden but a fact about the file that was checked before getting here.
+    requested: language === 'codeobject'
+      ? 'amd'
+      : (requestedTarget || flags.target || settings.get('compile.target') || 'auto'),
     available: await targetAvailability(tools)
   });
   log(`target ${target.vendor} ${target.isa}: ${targetFrom}` +
@@ -344,7 +360,12 @@ async function run(sourceUri, progress, token, requestedTarget) {
 
   let chosen = language === 'slang'
     ? compile.chooseSlangEntry(text, undefined, file, flags, target.id)
-    : { road: target.roadFor(compile.COMPUTE_STAGE), lineage: 'cuda' };
+    : language === 'codeobject'
+      // No entry point to choose and no stage to route: the container names its own stages,
+      // and there may be several. `rga` rather than `target.roadFor(...)` because this road is
+      // not reached by asking what road a stage takes - nothing was staged.
+      ? { road: 'rga', lineage: 'rga' }
+      : { road: target.roadFor(compile.COMPUTE_STAGE), lineage: 'cuda' };
 
   // A file holding entry points on both roads compiles one of them, and until now the other
   // was unreachable: the banner said to "name one with the entry-point argument" and no
@@ -366,8 +387,14 @@ async function run(sourceUri, progress, token, requestedTarget) {
 
   const needed = [];
   if (language === 'slang') needed.push('slangc');
-  if (chosen.road === 'graphics') {
+  if (language === 'codeobject') {
+    // One tool, and none of the CUDA chain: nothing is compiled, so there is no front end to
+    // demand. Listed first because the checks below are all about producing code.
+    needed.push('rga');
+  } else if (chosen.road === 'graphics') {
     needed.push('python');                       // the Vulkan helper, and the reflector
+  } else if (chosen.road === 'rga') {
+    needed.push('rga');
   } else {
     if (language !== 'cubin') needed.push('ptxas');
     if ((language === 'slang' || language === 'cuda') && backend !== 'nvcc') needed.push('python');

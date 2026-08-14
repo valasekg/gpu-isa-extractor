@@ -321,6 +321,43 @@ async function main() {
       'and every listing is BYTE-IDENTICAL to what the compile road wrote',
       'they differ, so -s bin is disassembling differently rather than reading back');
 
+    // The whole road, through compile() rather than through rga.js - because the parts that
+    // decide a .bin is a code object at all, and that a code object's banner says "read from"
+    // rather than "compiled", live there and are not reached by the calls above.
+    const compile = require(path.join(__dirname, '..', 'src', 'compile.js'));
+    const amd = require(path.join(__dirname, '..', 'src', 'isa_amd.js'));
+
+    check(await compile.detectLanguage(withElf.binaryPath) === 'codeobject',
+      'a .bin whose header says AMDGPU is routed as a code object');
+    check(await compile.detectLanguage(path.join(SPV, 'fs.spv')) === null,
+      'while a .spv is not, and neither extension was consulted to decide it');
+    check(await compile.detectLanguage('nowhere.slang') === 'slang',
+      'and an ordinary source file still routes on its name');
+
+    const built = await compile.compile({ rga: found.path }, withElf.binaryPath,
+      { outDir: path.join(outRoot, 'via-compile') });
+    check(built.road === 'rga' && built.asic === asic,
+      'compile() takes the binary road and reports the detected target',
+      `road=${built.road} asic=${built.asic}`);
+    check(built.entries.length === 2,
+      'both stages in the container become entries', `${built.entries.length} entries`);
+    check(built.entries.every(e => e.origin === 'binary'),
+      'each marked as read rather than compiled',
+      built.entries.map(e => e.origin).join(', '));
+    check(built.accuracy === null,
+      'and no accuracy note, because this road compiled nothing to be accurate about');
+
+    // The banner has to render for this origin. A provenance row that throws takes out the
+    // whole listing, and `binary` is a row nothing else exercises.
+    const rows = amd.target.provenance[built.entries[0].origin](
+      { object: { source: withElf.binaryPath }, compile: built }, null,
+      label => `// ${label.padEnd(14)}  `);
+    check(rows.some(l => /read from/.test(l)) && rows.some(l => /detected in the code object/.test(l)),
+      'the banner says where it was read from and that the target came out of the file',
+      rows.join('\n'));
+    check(!rows.some(l => /compiled/.test(l)),
+      'and does not claim to have compiled anything');
+
     // A code object is not a SPIR-V module. Feeding it the wrong file must be a refusal.
     let notAnElf = null;
     try {
