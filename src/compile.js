@@ -547,12 +547,12 @@ const STAGES = {
   // `group` means "compile every raytracing entry point in this file together", which is
   // what a real pipeline holds. A raygeneration shader is mandatory in one; every other
   // raytracing stage is reached from one, and alone is not a pipeline.
-  raygeneration: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'rgen', group: 'raytracing' },
-  miss: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'miss', group: 'raytracing' },
-  closesthit: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'chit', group: 'raytracing' },
-  anyhit: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'ahit', group: 'raytracing' },
-  intersection: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'sect', group: 'raytracing' },
-  callable: { lineage: 'graphics', road: { nvidia: 'graphics' }, slot: 'call', group: 'raytracing' }
+  raygeneration: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'rgen', group: 'raytracing' },
+  miss: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'miss', group: 'raytracing' },
+  closesthit: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'chit', group: 'raytracing' },
+  anyhit: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'ahit', group: 'raytracing' },
+  intersection: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'sect', group: 'raytracing' },
+  callable: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'call', group: 'raytracing' }
 };
 
 /**
@@ -1570,6 +1570,108 @@ function rdnaEntry({ name, stage, text, statsCsv, origin, localSize = null }) {
 }
 
 /**
+ * The AMD raytracing road: Slang to HLSL, merged into a DXR library, through RGA.
+ *
+ *     .slang --slangc -target hlsl--> HLSL x N --dxr_library--> one library --rga -s dxr--> ISA
+ *
+ * The whole FILE compiles, not the entry point that was asked for, and that is not a shortcut.
+ * A DXR pipeline is built around its raygeneration shader - the same rule the NVIDIA road
+ * already enforces, and `chooseSlangEntry` already refuses a file without one - so every stage
+ * in the file goes into one library and RGA returns one listing per entry point. Asking for
+ * just the miss shader would produce a state object that no driver would start.
+ *
+ * `dxr_library.js` holds why the merge is not a concatenation and why the state has to be
+ * synthesised. What belongs here is that the synthesised parts are ASSUMPTIONS, and they reach
+ * the banner as notes rather than being quietly stood behind.
+ */
+async function dxrCompile(tools, file, options) {
+  const rga = require('./rga');
+  const dxrLibrary = require('./dxr_library');
+  const { outDir, flags, chosen, steps, notes, sources } = options;
+
+  const asic = options.gfx || await defaultAsic(tools, rga, rga.MODE_DXR);
+  if (!asic) {
+    throw new CompileError(
+      'rga lists no DXR targets it can build for. `rga -s dxr --list-asics` is what was ' +
+      'asked, and it is a different list from the Vulkan one - a target this RGA can build ' +
+      'a fragment shader for is not necessarily one it can build a raytracing pipeline for.');
+  }
+
+  // No -entry: the whole module, every entry point, in one invocation. That is what produces
+  // a library rather than a shader, and the only form `dxr_library.build` can merge.
+  const emitted = await slangToHlsl(tools, file, outDir, { flags: flags.slang });
+  steps.push({ tool: 'slangc', command: quote(emitted.argv), log: emitted.log });
+  sources.push(file);
+
+  let library;
+  try {
+    library = dxrLibrary.build(emitted.hlsl, {
+      recursion: Number(options.recursion) || 1
+    });
+  } catch (e) {
+    throw new CompileError(
+      `the raytracing entry points could not be assembled into one DXR library: ${e.message}`);
+  }
+
+  if (!library.stages.some(s => s.stage === 'raygeneration')) {
+    throw new CompileError(
+      'this file declares no raygeneration shader, and a DXR pipeline is built around one - ' +
+      'it is the only stage a driver will start. The other five are reached through it.');
+  }
+
+  // Said out loud, every time. These are the parts of a pipeline that the SOURCE does not
+  // state and that this had to choose, and a listing whose register allocation depends on them
+  // should not present them as facts about the shader.
+  for (const assumed of library.assumptions) notes.push(`assumed: ${assumed}`);
+
+  const built = await rga.compileDxr({
+    rga: tools.rga, asic, source: library.source,
+    outDir: path.join(outDir, 'dxr'), token: options.token, run
+  });
+  steps.push({ tool: 'rga', command: quote(built.argv), log: built.log });
+
+  // Keyed by entry-point NAME, not by stage: a file may hold two miss shaders, and "miss"
+  // would not say which. `stages` maps the name back to what it is.
+  const stageOf = new Map(library.stages.map(s => [s.name, s.stage]));
+  const entries = Object.entries(built.listings).map(([name, text]) => rdnaEntry({
+    name,
+    stage: stageOf.get(name) || chosen.stage,
+    text,
+    statsCsv: built.statistics[name],
+    origin: 'compiled'
+  }));
+
+  if (!entries.length) {
+    throw new CompileError(
+      `rga built no raytracing listings for ${asic}, though it reported success.`);
+  }
+
+  return {
+    entries,
+    cubinPath: null,
+    arch: asic,
+    asic,
+    road: 'rga',
+    lineage: 'rga',
+    tool: tools.rga,
+    toolVersion: await rga.version(tools.rga, run),
+    stage: chosen.stage,
+    pipeline: `one raytracing pipeline: ${library.stages.map(s => s.stage).join(', ')}`,
+    // The pipeline-state question the Vulkan roads answer does not arise here - there is no
+    // .gpso for raytracing - but the synthesised state is the same kind of uncertainty, and it
+    // is already in `notes`. Saying it twice in different words would read as two problems.
+    accuracy: null,
+    steps,
+    ptxasLog: '',
+    ptxasInfo: () => ({
+      registers: null, localBytes: null, sharedBytes: null, spillStores: null, spillLoads: null
+    }),
+    sources,
+    notes
+  };
+}
+
+/**
  * The binary road: an AMD code object the user already had, read back with `-s bin`.
  *
  * The counterpart of opening a `.cubin`, and the only AMD road that compiles nothing. It needs
@@ -1755,9 +1857,28 @@ function countInstructions(text, parseRdna) {
  * gfx9 and gfx10 target an earlier version accepted. A pinned default would stop working on an
  * upgrade, and an unsupported `-c` is silently ignored rather than refused.
  */
-async function defaultAsic(tools, rga) {
-  const listed = await rga.targets(tools.rga, run);
+async function defaultAsic(tools, rga, mode) {
+  const listed = await rga.targets(tools.rga, run, mode);
   return listed.length ? listed[listed.length - 1].codename : null;
+}
+
+/**
+ * The whole Slang module as HLSL, on stdout.
+ *
+ * No `-entry` and no `-o`, both deliberate. Naming an entry point compiles that one shader,
+ * and a DXR state object is built from a library holding all of them; asking for a file makes
+ * slangc demand one `-o` per entry, which is the same problem spelled differently. With
+ * neither, slangc detects entry points from their `[shader(...)]` attributes and writes the
+ * lot to stdout - as separate translation units, which is what `dxr_library` exists to merge.
+ */
+async function slangToHlsl(tools, source, outDir, { flags = [] } = {}) {
+  const args = [source, '-target', 'hlsl', ...flags];
+  const result = await run(tools.slangc, args);
+  const hlsl = result.stdout || '';
+  if (result.failed || !hlsl.includes('[shader(')) {
+    fail('slangc -target hlsl', result);
+  }
+  return { hlsl, argv: result.argv, log: result.stderr || '' };
 }
 
 /** What the listing describes, in the banner's one-line form. */
@@ -2064,7 +2185,7 @@ async function compile(tools, file, options = {}) {
     // Every road is named explicitly and anything else refuses. Written as `!== 'graphics'
     // means CUDA` this silently sent a null road - a stage this target has no road for - down
     // the CUDA path, where slangc crashes rather than declining.
-    if (chosen.road && !['graphics', 'cuda', 'rga'].includes(chosen.road)) {
+    if (chosen.road && !['graphics', 'cuda', 'rga', 'dxr'].includes(chosen.road)) {
       throw new CompileError(
         `${chosen.entry || 'this shader'} takes the ${chosen.road} road, which this build ` +
         `does not know how to walk. ${stageRefusal(options.targetId)}`);
@@ -2074,6 +2195,12 @@ async function compile(tools, file, options = {}) {
         `${chosen.entry || 'this shader'} is ${article(chosen.stage || 'shader')} ` +
         `${chosen.stage || 'shader'} shader, which this target cannot compile. ` +
         stageRefusal(options.targetId));
+    }
+    if (chosen.road === 'dxr') {
+      return dxrCompile(tools, file, {
+        ...options, outDir, home, flags, chosen, steps, notes, sources,
+        gfx: routed.gfx || options.gfx
+      });
     }
     if (chosen.road === 'rga') {
       return rgaCompile(tools, file, {

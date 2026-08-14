@@ -310,14 +310,14 @@ const target = {
 
   refusalFor(stage) {
     const compile = require('./compile');
+    // Raytracing used to be refused here, at length, because RGA's Vulkan modes have no
+    // raytracing stage options at all - `--rgen` is rejected with "Option 'rgen' does not
+    // exist", and neither the offline nor the live-driver mode accepts --miss, --chit,
+    // --ahit, --sect or --call. That was a gap in one command line rather than a property of
+    // the hardware, and the refusal said so by naming `-s dxr` as the mode that does exist.
+    // It is now the road those stages take, so the refusal is gone rather than reworded: a
+    // stage with a road returns null here on the line below, like any other.
     if (compile.roadOf(stage, this.id)) return null;
-    if (RAYTRACING.has(stage)) {
-      return `RGA's Vulkan modes have no raytracing stage options at all - \`--rgen\` is ` +
-        'rejected with "Option \'rgen\' does not exist", and neither the offline nor the ' +
-        'live-driver mode accepts --miss, --chit, --ahit, --sect or --call. This is a gap in ' +
-        'one tool\'s command line rather than a property of the hardware. RGA does have a ' +
-        '`-s dxr` mode, which takes DXIL rather than SPIR-V.';
-    }
     return compile.stageRefusal(this.id);
   },
 
@@ -489,13 +489,8 @@ const target = {
   },
 
   /** The RGA modes, so callers name them through the target rather than by literal. */
-  modes: { offline: rga.MODE_OFFLINE, driver: rga.MODE_DRIVER }
+  modes: { offline: rga.MODE_OFFLINE, driver: rga.MODE_DRIVER, dxr: rga.MODE_DXR, binary: rga.MODE_BINARY }
 };
-
-/** The six stages RGA's Vulkan modes cannot reach, named so the refusal can be specific. */
-const RAYTRACING = new Set([
-  'raygeneration', 'miss', 'closesthit', 'anyhit', 'intersection', 'callable'
-]);
 
 const dialect = {
   id: 'amd-rdna-isa',
@@ -537,4 +532,4 @@ const dialect = {
 dialect.claimsFile = file =>
   path.extname(String(file || '')).toLowerCase() === dialect.listingExt;
 
-module.exports = { target, dialect, RAYTRACING, FIELD_WIDTH };
+module.exports = { target, dialect, FIELD_WIDTH };

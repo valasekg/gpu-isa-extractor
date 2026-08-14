@@ -555,19 +555,28 @@ check(isa.LISTING_EXTS.has('.rdnaisa'),
 check(isa.dialectForFile('x.deadbeef.gfx1201.rdnaisa') === isa.DIALECTS['amd-rdna-isa'],
   'so an AMD listing on disk resolves to the AMD dialect, not the NVIDIA one');
 
-// The eight stages RGA's Vulkan modes reach, measured from `rga -h -s <mode>`.
+// Fourteen: the eight RGA's Vulkan modes reach, measured from `rga -h -s <mode>`, plus the six
+// raytracing stages, which take a different road entirely - `-s dxr`, through HLSL rather than
+// SPIR-V. This check read `=== 8` and "not raytracing" until that road existed, which is what
+// a golden check is for: the count moving is the change announcing itself.
 const amdStages = compile.stagesFor('amd');
-check(amdStages.length === 8, 'AMD reaches eight stages', amdStages.join(', '));
-check(!amdStages.includes('raygeneration'),
-  'and not raytracing, which RGA\'s Vulkan modes have no stage option for');
+check(amdStages.length === 14, 'AMD reaches fourteen stages', amdStages.join(', '));
 check(amdStages.includes('mesh') && amdStages.includes('amplification'),
   'mesh and amplification ARE reached - offline mode only, contrary to RGA\'s GUI manual');
 
-// The refusal has to name the alternative rather than just decline.
-const rtRefusal = amd.refusalFor('raygeneration');
-check(typeof rtRefusal === 'string' && /-s dxr/.test(rtRefusal),
-  'a raytracing stage is refused by name, and the refusal names the mode that does exist',
-  rtRefusal);
+// Every raytracing stage, and all on the one road: a DXR pipeline is compiled as a whole, so
+// a target that reached some of them and not others would be describing something impossible.
+const RAYTRACING = ['raygeneration', 'miss', 'closesthit', 'anyhit', 'intersection', 'callable'];
+check(RAYTRACING.every(s => amdStages.includes(s)),
+  'and all six raytracing stages, because a DXR pipeline is built as one thing',
+  RAYTRACING.filter(s => !amdStages.includes(s)).join(', ') || 'all present');
+check(RAYTRACING.every(s => compile.roadOf(s, 'amd') === 'dxr'),
+  'each on the dxr road, not the SPIR-V one',
+  RAYTRACING.map(s => `${s}:${compile.roadOf(s, 'amd')}`).join(' '));
+
+check(amd.refusalFor('raygeneration') === null,
+  'so a raytracing stage is no longer refused - it used to be, naming `-s dxr` as the mode ' +
+  'that would work, and now that mode is the road it takes');
 check(amd.refusalFor('fragment') === null, 'a stage it CAN compile has no refusal');
 
 // Absence is declared, not discovered.

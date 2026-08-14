@@ -393,7 +393,9 @@ async function run(sourceUri, progress, token, requestedTarget) {
     needed.push('rga');
   } else if (chosen.road === 'graphics') {
     needed.push('python');                       // the Vulkan helper, and the reflector
-  } else if (chosen.road === 'rga') {
+  } else if (chosen.road === 'rga' || chosen.road === 'dxr') {
+    // The raytracing road runs slangc too, but for HLSL rather than SPIR-V, and `language ===
+    // 'slang'` above has already asked for it.
     needed.push('rga');
   } else {
     if (language !== 'cubin') needed.push('ptxas');
