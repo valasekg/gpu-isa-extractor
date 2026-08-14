@@ -1007,6 +1007,7 @@ else:
                    "test_hover.js", "test_semantic.js", "test_explain.js",
                    "test_ctrl.js", "test_zstd.js", "test_scoreboard.js", "test_stats.js",
                    "test_golden.js",
+                   "test_dwarf.js",
                    "test_blobstore.js", "test_compile.js", "test_dxr.js",
                    "test_rga.js", "test_gfx.js",
                    "test_browser.js", "test_endtoend.js"):
