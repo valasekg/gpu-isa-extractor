@@ -1464,8 +1464,13 @@ async function graphicsCompile(tools, file, options) {
  * the shader.
  *
  * What it does NOT share is the pipeline state. RGA's offline mode has no render-state option
- * at all, and its live-driver mode takes a `.gpso`, which this does not yet synthesise - so the
- * banner states which road ran and declines to call either one accurate. See `accuracyNote`.
+ * at all; only its live-driver mode takes a `.gpso`. That used to be written up here as a
+ * reason to distrust this road, on the strength of the two modes disagreeing 87 to 76.
+ *
+ * Measured since: hand the live mode any pipeline state, even an empty one, and it drops to 76
+ * and matches this road BYTE FOR BYTE. The 87 was the default state RGA invents when given
+ * none. Which settles it in this road's favour, and is why nothing here synthesises a `.gpso`:
+ * the mode that needs one is the mode this code does not take. See `accuracyNote`.
  */
 async function rgaCompile(tools, file, options) {
   const rga = require('./rga');
@@ -1642,24 +1647,40 @@ function describePipeline(stage, chosen, mode) {
 }
 
 /**
- * What this road cannot yet claim about its own accuracy.
+ * What this road claims about its own accuracy, and why it can now claim it.
  *
- * Measured: the same fragment shader gives 87 instructions through the live driver with no
- * pipeline state and 76 through the offline compiler, and the first divergence is
- * `s_mov_b64 s[0:1], exec` against `s[2:3]` - user-data SGPRs shifting because the descriptor
- * layout differs. RGA warns about exactly this. Until a reflected `.gpso` is fed to the live
- * road and the two compared, NEITHER number is the one a real pipeline gets, and a banner that
- * picked one would be claiming more than is known.
+ * This note used to say neither road's figure was trustworthy, on the strength of one fragment
+ * shader giving 87 instructions live and 76 offline. That gap turned out not to be a
+ * disagreement between two compilers at all.
+ *
+ * Measured, three ways on the same shader pair for gfx1201:
+ *
+ *   offline                        76 instructions
+ *   live driver, no pipeline state 87 instructions
+ *   live driver, ANY pipeline state 76 instructions - BYTE-IDENTICAL to offline
+ *
+ * The 87 was RGA's own invented default state, which it warns about itself. Supplying a
+ * pipeline state - even an empty one - makes the live driver agree with the offline compiler
+ * exactly. So the offline figure IS the figure, and the caveat belongs on the live road with
+ * no state rather than on both.
+ *
+ * A second measurement, worth stating because the NVIDIA road's equivalent came out the other
+ * way: substituting UNIFORM_BUFFER_DYNAMIC for UNIFORM_BUFFER and adding eight bindings the
+ * shader never touches produced IDENTICAL code here. On the NVIDIA graphics road the same
+ * substitution moved a shader from 48 instructions to 40. One shader on one target is not a
+ * law, so it is not stated as one - but it means the descriptor layout is not the lever here
+ * that it is there.
  */
 function accuracyNote(mode) {
   return mode === 'vulkan'
-    ? ['Compiled through the AMD driver with no pipeline state, which RGA warns may be',
-      'inaccurate: the descriptor layout it assumes is not necessarily the one your engine',
-      'binds. Treat the register counts as indicative until a pipeline state file is supplied.']
-    : ['Compiled by the static offline compiler, which needs no driver and no AMD GPU. RGA',
-      'reports this road as less accurate than its live-driver mode; the two were measured to',
-      'differ on one fragment shader by 87 instructions against 76. Neither figure has yet',
-      'been checked against a pipeline built with a matching descriptor layout.'];
+    ? ['Compiled through the AMD driver WITHOUT a pipeline state, so this is RGA\'s own',
+      'invented default rather than a pipeline anything would build. Measured: that default',
+      'produced 87 instructions where both the offline compiler and the live driver given any',
+      'pipeline state produced 76, byte for byte. Supply one, or read the offline listing.']
+    : ['Compiled by the static offline compiler, which needs no driver and no AMD GPU.',
+      'Measured byte-identical to the live AMD driver given a pipeline state, on the same',
+      'shader pair for this target - so this is the same code the driver produces, not an',
+      'approximation of it.'];
 }
 
 /** The render state, named the way the file would have to name it to get this one back. */

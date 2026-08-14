@@ -19,21 +19,34 @@
  *
  * An AMD GPU. Neither RGA mode requires one: the offline mode is a static compiler, and the
  * live-driver mode falls back to the AMDVLK driver RGA ships with. Measured on a machine with
- * only an NVIDIA adapter, both produced output, and the two disagreed - 87 instructions
- * against 76 for one fragment shader - so the live road really did compile rather than
- * silently reusing the offline result.
+ * only an NVIDIA adapter, both produced output, and the live road is really compiling rather
+ * than replaying the offline result - it responds to its inputs, changing from 87 instructions
+ * to 76 when handed a pipeline state file. (Not because the two disagree: given that file they
+ * agree exactly. See below.)
  *
  * That inverts the NVIDIA graphics road's central constraint, where the local driver IS the
  * compiler. It is stated here rather than generalised from there.
  *
- * ## What is NOT yet claimed
+ * ## Which road is accurate - measured, not assumed
  *
- * Which of the two roads is accurate. RGA warns that a live compile with no pipeline state may
- * be inaccurate, and the 87-vs-76 gap is exactly that warning made visible: the first
- * divergence is `s_mov_b64 s[0:1], exec` against `s[2:3]`, user-data SGPRs shifting because
- * the descriptor layout differs. Until a reflected `.gpso` is fed to the live road and the
- * result compared, NEITHER number is the one a real pipeline gets, and the banner says so
- * rather than picking one and sounding certain.
+ * This header used to end by declining to say, on the strength of that 87-vs-76 gap. The gap
+ * turned out not to be the two compilers disagreeing. Feeding the live road a pipeline state -
+ * an EMPTY one, carrying no descriptor layout at all - drops it to 76 and makes it
+ * byte-identical to the offline listing. The 87 was RGA's invented default state, which is
+ * what its own warning is about.
+ *
+ * So the offline road is not an approximation of the driver's output; on what has been
+ * measured it IS the driver's output, and the caveat belongs on live-with-no-state alone.
+ * `tools/test_rga.js` pins both halves so the banner cannot keep claiming this after it stops
+ * being true.
+ *
+ * ## What is still NOT claimed
+ *
+ * That the descriptor layout never matters here. It did not change the code for this shader
+ * pair on this target - substituting UNIFORM_BUFFER_DYNAMIC and adding eight unused bindings
+ * produced identical output, where the same substitution on the NVIDIA graphics road moved a
+ * shader from 48 instructions to 40. One pair on one target is not a rule, and it is not
+ * written down as one.
  */
 
 const path = require('path');

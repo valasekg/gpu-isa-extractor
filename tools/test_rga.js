@@ -243,6 +243,46 @@ async function main() {
       'and produces different code from the same shader compiled with its vertex shader - ' +
       'which is why a producer is synthesised rather than skipped');
 
+    // Experiment 13, as a check rather than a note.
+    //
+    // The live driver given NO pipeline state uses one RGA invented, and that default is what
+    // made live and offline disagree - not the two compilers. Given any pipeline state, even an
+    // empty one, the live driver was measured byte-identical to the offline compiler. This is
+    // what lets the banner say the offline listing IS what the driver produces rather than
+    // hedging about both. If it ever stops being true, the banner is overclaiming and should
+    // be caught here.
+    const pso = path.join(outRoot, 'empty.gpso');
+    // Deliberately empty - it carries no layout at all. That is the point: it is not that a
+    // CORRECT state closes the gap, it is that ANY state does, because what the default state
+    // was doing was not modelling your pipeline either.
+    fs.writeFileSync(pso, JSON.stringify({
+      VkGraphicsPipelineCreateInfo: { basePipelineIndex: -1 },
+      VkPipelineLayoutCreateInfo: { setLayoutCount: 0, pSetLayouts: [] }
+    }, null, 2), 'utf8');
+
+    const liveDefault = await rga.compile({
+      rga: found.path, asic, mode: rga.MODE_DRIVER,
+      modules: { vertex: path.join(SPV, 'vs.spv'), fragment: path.join(SPV, 'fs.spv') },
+      outDir: path.join(outRoot, 'live-default'), run
+    }).catch(() => null);
+    const liveStated = await rga.compile({
+      rga: found.path, asic, mode: rga.MODE_DRIVER, pso,
+      modules: { vertex: path.join(SPV, 'vs.spv'), fragment: path.join(SPV, 'fs.spv') },
+      outDir: path.join(outRoot, 'live-stated'), run
+    }).catch(() => null);
+
+    if (!liveDefault || !liveStated) {
+      skip('the live-driver mode did not run here, so the pipeline-state finding is unchecked');
+    } else {
+      check(liveStated.listings.fragment === paired.listings.fragment,
+        'the live driver given a pipeline state is byte-identical to the offline compiler',
+        liveStated.listings.fragment === paired.listings.fragment ? '' :
+          'they differ, so the banner\'s claim that offline IS the driver\'s code is wrong');
+      check(liveDefault.listings.fragment !== liveStated.listings.fragment,
+        'while the same driver with NO state produces something else - which is the ' +
+        'default RGA invents, and the reason the two ever looked like they disagreed');
+    }
+
     // The failure mode that matters: exit 0 with nothing written must be an error here.
     let refused = null;
     try {
