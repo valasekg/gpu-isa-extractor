@@ -39,23 +39,37 @@ TypeScript, no `vsce`. Plain CommonJS that the extension host runs directly.
   (`tools/package_vsix.py`, which writes the VSIX by hand).
 - The JavaScript test suites run under **a real Node if there is one, otherwise VS Code's own
   Electron in Node mode** - `ELECTRON_RUN_AS_NODE=1` against `Code.exe`. `find_node()` in
-  `verify.py` prefers `which("node")` and reports a skip rather than a pass if it finds
-  neither. A machine with neither runs 60 of the checks and skips the 14 JS suites, which is a
-  warning, not a pass.
+  `verify.py` prefers `which("node")`, then derives Code.exe from `code` on PATH, and reports a
+  warning rather than a pass if it finds neither. A machine with neither runs 65 of the checks
+  and skips the 17 JS suites, which is a warning, not a pass.
 - CUDA is at `D:\Development\Programs\CUDA\v12.8`; `nvdisasm` and `ptxas` work. MSVC 14.44 is
   installed at `D:\Development\VisualStudio2022`, so `nvcc` and `tools/vk_abi_freeze.py` can
   run - but nothing in the shipped extension needs a C compiler, and that must stay true.
 - The Vulkan SDK is at `%VULKAN_SDK%` and supplies `slangc`. The *loader* the graphics road
   actually uses ships with the display driver; the SDK is a dev-time convenience for
   `spirv-reflect` and the validation layers.
+- **RGA** (Radeon GPU Analyzer) is the AMD road's third-party tool, on the same footing as
+  slangc and CUDA: not bundled, free, and resolved at run time. It needs **no AMD GPU** - the
+  offline mode is a static compiler and the live-driver mode falls back to the AMDVLK driver
+  RGA ships with, both measured working on an NVIDIA-only machine. Version measured here is
+  **2.14.2**, which dropped every gfx9 and gfx10 target an earlier release accepted, so digests
+  pinned to a target name skip rather than fail when this RGA cannot build for it.
+  `tools/test_rga.js` takes **`RGA_PATH`** for an unpacked archive, mirroring `VSCODE_EXE`;
+  without it the ten checks needing a real binary skip.
 
 **The machine this was last verified on is not the machine most of the recorded numbers came
 from,** and the difference is load-bearing rather than trivia. The digests throughout this file
 and in `test_gfx.js` were recorded on an **RTX A4500 (SM86)** under **Vulkan SDK 1.3.296.0**.
 The current machine is an **RTX 3500 Ada Generation Laptop GPU (SM89)** with **SDK 1.4.341.1**
-and **CUDA 12.8**, and there is no VS Code installed. Anything that compares against a recorded
-digest therefore skips here rather than passing, and says so - which is correct, and is not the
-same as working.
+and **CUDA 12.8**. Anything that compares against a recorded digest therefore skips here rather
+than passing, and says so - which is correct, and is not the same as working.
+
+This paragraph used to end "and there is no VS Code installed". There is: it is at
+`C:\Development\Programs\Microsoft VS Code`, on **C: and not D:** unlike everything else here.
+`find_node()` had that path hardcoded to the D: drive, found nothing, and downgraded the entire
+JavaScript section to a warning - 65 checks, `PARTIAL`, exit 0, with the suites and the
+module-parse check silently not running. It now derives the path from `code` on PATH. If you
+ever see `PARTIAL` and "no JS runtime found", nothing has been checked about the code itself.
 
 Do not introduce an npm-only workflow without first making the offline packaging story
 explicit. The current one has no network dependency at all.
