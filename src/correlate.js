@@ -56,9 +56,8 @@ const MARKER_RE = /^\s*\/\/##\s+([^\s:][^:]*):(\d+)\s*$/;
  *
  * The `@` is what keeps this unambiguous against the source-file table in the same banner,
  * whose right-hand side is a Windows path and therefore also contains a colon.
- */
-/**
- * `@0000 file.slang:9`, or `@0000 -` for a run with no source position at all.
+ *
+ * ## `@0000 -`, a run with no source position at all
  *
  * The dash is not decoration. A DWARF line table marks compiler-generated code - a vertex
  * shader's NGG wrapper, prologue setup - with line 0, meaning "nothing here came from the
@@ -70,7 +69,30 @@ const MARKER_RE = /^\s*\/\/##\s+([^\s:][^:]*):(\d+)\s*$/;
  */
 const ADDRESS_MAP_RE = /^\s*\/\/\s+@([0-9a-fA-F]+)\s+(?:-|(\S+):(\d+))\s*$/;
 
-const ADDRESS_RE = /\/\*([0-9a-fA-F]+)\*\//;
+/**
+ * The instruction address on a listing line, in either dialect's spelling.
+ *
+ * nvdisasm puts it in a LEADING comment and RGA in a TRAILING one:
+ *
+ *     /_*0a10*_/          IMAD R2, R3, R5, RZ ;
+ *         s_mov_b64 s[0:1], exec       // 000000000200: BE80017E
+ *
+ * (the first is written with underscores here only because it would otherwise close this
+ * comment). One regex rather than a dialect parameter because every caller already has a
+ * line and none of them has a dialect - and the two forms cannot collide: the RGA branch
+ * needs 8-16 hex digits immediately after `//`, which no SASS line and no banner row has.
+ * `readMarkers` skips comment-only lines before it gets here anyway, so the banner's own
+ * `@0000 file:9` rows are never offered to it.
+ */
+const ADDRESS_RE = /\/\*([0-9a-fA-F]+)\*\/|\/\/\s*([0-9A-Fa-f]{8,16}):/;
+
+/** The address on a line, or null. */
+function addressIn(line) {
+  const m = ADDRESS_RE.exec(line);
+  if (!m) return null;
+  const parsed = parseInt(m[1] || m[2], 16);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 /** `.section .text.name` and the banner rule nvdisasm draws above it. */
 const SECTION_RE = /^\s*\.section\s+(\.text\.[^\s,]+)/;
@@ -140,10 +162,8 @@ function parse(text, entryName) {
 
     if (!section || (entryName && section !== entryName)) continue;
 
-    const addr = ADDRESS_RE.exec(line);
-    if (!addr) continue;
-    const address = parseInt(addr[1], 16);
-    if (!Number.isFinite(address)) continue;
+    const address = addressIn(line);
+    if (address === null) continue;
 
     // Only a change of position is recorded. nvdisasm already prints one marker per run, but
     // a run can be interrupted by a label without the position changing.
@@ -247,9 +267,8 @@ function annotate(listing, map, { labels } = {}) {
     const line = listing.slice(from, end);
     from = end + 1;
 
-    const addr = ADDRESS_RE.exec(line);
-    if (!addr) { out.push(line); continue; }
-    const address = parseInt(addr[1], 16);
+    const address = addressIn(line);
+    if (address === null) { out.push(line); continue; }
     const at = map.get(address);
     if (!at) {
       unattributed++;
@@ -409,14 +428,11 @@ function readMarkers(text) {
       current = { label: marker[1], line: Number(marker[2]) };
       continue;
     }
-    const address = ADDRESS_RE.exec(lines[i]);
-    if (!address) continue;
+    const address = addressIn(lines[i]);
+    if (address === null) continue;
 
     let at = current;
-    if (runs.length) {
-      const parsed = parseInt(address[1], 16);
-      at = Number.isFinite(parsed) ? positionAt(runs, parsed) : null;
-    }
+    if (runs.length) at = positionAt(runs, address);
     if (!at) continue;
 
     byListingLine.set(i, at);

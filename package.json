@@ -213,7 +213,7 @@
       {
         "command": "nvIsaExtractor.revealSource",
         "key": "ctrl+alt+shift+s",
-        "when": "editorTextFocus && editorLangId == nvidia-sass"
+        "when": "editorTextFocus && (editorLangId == nvidia-sass || editorLangId == amd-rdna-isa)"
       }
     ],
     "menus": {
@@ -393,7 +393,7 @@
         {
           "command": "nvIsaExtractor.revealSource",
           "group": "navigation@10",
-          "when": "editorLangId == nvidia-sass"
+          "when": "editorLangId == nvidia-sass || editorLangId == amd-rdna-isa"
         }
       ]
     },

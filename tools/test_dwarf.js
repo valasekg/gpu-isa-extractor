@@ -213,5 +213,44 @@ check(plainRuns.length === 1 && plainRuns[0].line === 7 && plainRuns[0].label ==
   'an ordinary NVIDIA map entry still reads exactly as before',
   JSON.stringify(plainRuns));
 
+section('7. The editor resolves an RDNA listing line to a source line');
+
+// The whole point, end to end: a saved AMD listing with its banner map, read back the way the
+// editor reads it. This is what `revealSource` and the definition provider run on, and it
+// exercises the one thing that had to change in correlate.js - nvdisasm writes the address in
+// a LEADING `/*hex*/` and RGA in a TRAILING `// hex:`, and readMarkers scans for it.
+const fragLabels = correlate.labelsFor(files);
+const document = [
+  ...correlate.bannerLines(records, fragLabels).map(l => `// ${' '.repeat(14)}  ${l}`),
+  '',
+  ...frag.split('\n')
+].join('\n');
+
+const marks = correlate.readMarkers(document);
+check(marks.byListingLine.size > 50,
+  'most instruction lines in the listing resolve to a source position',
+  `${marks.byListingLine.size} lines`);
+
+// The banner's own rows must not be indexed as if they were code - that bug scrolled the
+// listing back up to its own header.
+const bannerRows = correlate.bannerLines(records, fragLabels).length;
+check([...marks.byListingLine.keys()].every(i => i > bannerRows),
+  'and no banner row is mistaken for an instruction',
+  [...marks.byListingLine.keys()].filter(i => i <= bannerRows).join(', '));
+
+// Resolve one known line by content rather than by index, so the check survives the fixture
+// being regenerated.
+const docLines = document.split('\n');
+const alphaTest = docLines.findIndex(l => /0x3d4ccccd/i.test(l));
+check(alphaTest > 0, 'the listing contains the alpha-test compare');
+const resolved = marks.byListingLine.get(alphaTest);
+check(resolved && resolved.line === 137,
+  'and it resolves to line 137 - the `if (albedo.a < 0.05f)` the constant belongs to',
+  resolved ? `line ${resolved.line}` : 'unresolved');
+
+check(marks.bySourceLine && marks.bySourceLine.size > 0,
+  'the reverse direction is populated too, so source -> listing works',
+  marks.bySourceLine ? `${marks.bySourceLine.size} source lines` : 'none');
+
 console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);

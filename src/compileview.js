@@ -462,6 +462,11 @@ async function build({ file, source, tools, flags, archInfo, outDir, backend, di
     // dirty, and every sibling of the file is invisible from there.
     home: path.dirname(file),
     backend: backend === 'auto' ? undefined : backend,
+    // Correlation costs a whole extra compiler run on the AMD road - amdllpc over the same
+    // modules, because RGA will not emit debug info itself. Asking for it when the setting
+    // says the map is not wanted is work whose result is thrown away, and the NVIDIA road
+    // already skips its own second pass for the same reason.
+    correlate: (settings.get('compile.correlationStyle') || 'banner') !== 'off',
     // The target `run()` resolved, not the one `compile()` would default to. Without this,
     // `chooseSlangEntry` inside `compile()` fell back to its own `'nvidia'` default and the
     // file was routed TWICE by two different answers: `run()`'s decided which tools to require
