@@ -1547,6 +1547,45 @@ function gfxipFor(asic) {
   return m ? `${m[1]}.${m[2]}.${m[3]}` : null;
 }
 
+const SPIRV_MAGIC = 0x07230203;
+
+/**
+ * The source files a SPIR-V module's line info actually refers to.
+ *
+ * Asked of the SPIR-V and NOT of the DWARF, because the DWARF cannot answer it. amdllpc
+ * collapses every `DIFile` into one, and measured on a two-file compute shader it kept the
+ * WRONG one: the SPIR-V named `main.slang` and `helper.slang` correctly, and the line table
+ * that came out named only `helper.slang` - so every instruction from `main.slang` would have
+ * been attributed to a file it never came from, at line numbers belonging to the other file.
+ *
+ * The first version of this guard read the DWARF's file count and so was dead code: one file
+ * in, one file out, guard never fires, attributions silently wrong. This reads `OpLine`'s File
+ * operand, which is the compiler's own record of where each instruction came from, before
+ * anything has had a chance to flatten it.
+ *
+ * Doubles as the check that `-g1` produced line info at all: an empty result means no `OpLine`,
+ * which is what a future Slang release that changes what `-g1` means would look like. Better to
+ * lose the road than to keep it on an assumption.
+ *
+ * @returns {Set<number>} distinct `OpString` ids used as an `OpLine` file
+ */
+function spirvLineFiles(buf) {
+  const files = new Set();
+  if (!Buffer.isBuffer(buf) || buf.length < 20) return files;
+  if (buf.readUInt32LE(0) !== SPIRV_MAGIC) return files;      // big-endian SPIR-V is not emitted
+
+  for (let at = 20; at + 4 <= buf.length;) {
+    const word = buf.readUInt32LE(at);
+    const count = word >>> 16;
+    const opcode = word & 0xffff;
+    if (count === 0 || at + count * 4 > buf.length) break;
+    // OpLine = 8, operands File <id>, Line, Column.
+    if (opcode === 8 && count >= 4) files.add(buf.readUInt32LE(at + 4));
+    at += count * 4;
+  }
+  return files;
+}
+
 /** amdllpc ships inside the RGA tree, beside the executable this already resolved. */
 function amdllpcFor(rgaPath) {
   const exe = process.platform === 'win32' ? 'amdllpc.exe' : 'amdllpc';
@@ -1589,6 +1628,31 @@ async function rdnaCorrelation(tools, { asic, modules, outDir, rgaBinary, notes,
   }
   if (!rgaBinary || !fs.existsSync(rgaBinary)) {
     notes.push('no source correlation: RGA wrote no code object to check the line table against');
+    return null;
+  }
+
+  // Decided from the SPIR-V, BEFORE amdllpc runs, because afterwards the evidence is gone -
+  // see `spirvLineFiles`. Every module is checked and the counts unioned: a pipeline whose
+  // fragment shader is single-file and whose vertex shader includes a header still spans two.
+  let spanned = 0;
+  for (const module of Object.values(modules)) {
+    let found;
+    try {
+      found = spirvLineFiles(await fs.promises.readFile(module));
+    } catch (e) {
+      found = new Set();
+    }
+    if (!found.size) {
+      notes.push('no source correlation: the SPIR-V carries no OpLine, so slangc emitted no ' +
+        'line information for this shader');
+      return null;
+    }
+    spanned = Math.max(spanned, found.size);
+  }
+  if (spanned > 1) {
+    notes.push(`no source correlation: this shader spans ${spanned} source files, and amdllpc ` +
+      'collapses them into one - measured keeping the INCLUDED file and attributing the main ' +
+      'file\'s instructions to it, which would be confidently wrong rather than absent');
     return null;
   }
 
@@ -1643,9 +1707,12 @@ async function rdnaCorrelation(tools, { asic, modules, outDir, rgaBinary, notes,
   }
   if (!read.records.length || !read.files.length) return null;
 
+  // A second, cheaper net for the same hazard. It does not fire on the case above - amdllpc
+  // has already flattened by this point - but it costs nothing and would catch a future
+  // toolchain that stops flattening and starts emitting several files honestly.
   if (read.files.length > 1) {
-    notes.push('no source correlation: this shader spans ' + read.files.length + ' files, and ' +
-      'amdllpc collapses them into one - the line numbers would be attributed to the wrong file');
+    notes.push(`no source correlation: the line table names ${read.files.length} files, and ` +
+      'only single-file attribution has been shown correct here');
     return null;
   }
 
@@ -2448,6 +2515,7 @@ module.exports = {
   roadOf,
   languageOf,
   detectLanguage,
+  spirvLineFiles,
   SNIFF_FOR_CODE_OBJECT,
   parsePtxasInfo,
   quote,

@@ -27,6 +27,7 @@ const dwarf = require(path.join(__dirname, '..', 'src', 'dwarf_line.js'));
 const parseRdna = require(path.join(__dirname, '..', 'src', 'parse_rdna.js'));
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'rdna');
+const SPV = path.join(__dirname, 'fixtures', 'gfx');
 const ELF = path.join(FIXTURES, 'surface-shading-debug.elf');
 
 let checks = 0;
@@ -175,6 +176,41 @@ check([...vertPositions.values()].every(p => p.line > 0),
 // The two stages share one address space; a vertex address must never pick up a fragment run.
 check([...vertPositions.keys()].every(a => a < 0x200),
   'vertex addresses all sit below the fragment shader\'s base, so the stages do not bleed');
+
+section('5b. How many files the shader spans, asked of the SPIR-V');
+
+// The guard that decides whether correlation is safe at all, and the reason it reads the
+// SPIR-V rather than the line table.
+//
+// amdllpc collapses every DIFile into one. Measured on `twofile-g1.spv` - a compute shader
+// that `#include`s a helper - the SPIR-V names both files correctly and the DWARF that comes
+// out names only ONE, and it is the INCLUDED file. So the main file's instructions would be
+// attributed to a file they never came from, at line numbers belonging to the other file.
+//
+// The first version of this guard counted the DWARF's files and was therefore dead code: one
+// file in, one file out, guard never fires, attributions silently wrong. These fixtures exist
+// so it cannot quietly become dead again.
+const compileMod = require(path.join(__dirname, '..', 'src', 'compile.js'));
+
+const twoFile = fs.readFileSync(path.join(FIXTURES, 'twofile-g1.spv'));
+const oneFile = fs.readFileSync(path.join(FIXTURES, 'onefile-g1.spv'));
+
+check(compileMod.spirvLineFiles(twoFile).size === 2,
+  'a shader that includes another names two files in its OpLine records',
+  String(compileMod.spirvLineFiles(twoFile).size));
+check(compileMod.spirvLineFiles(oneFile).size === 1,
+  'and one that does not names one',
+  String(compileMod.spirvLineFiles(oneFile).size));
+
+// The same call is what proves `-g1` did anything at all. A future Slang whose `-g1` stops
+// emitting OpLine must lose the road rather than keep it on an assumption.
+check(compileMod.spirvLineFiles(fs.readFileSync(path.join(SPV, 'fs.spv'))).size === 0,
+  'a module compiled WITHOUT -g1 reports no files, which is what turns the road off',
+  String(compileMod.spirvLineFiles(fs.readFileSync(path.join(SPV, 'fs.spv'))).size));
+check(compileMod.spirvLineFiles(Buffer.from('this is not spirv at all, but long enough')).size === 0,
+  'and something that is not SPIR-V reports none rather than throwing');
+check(compileMod.spirvLineFiles(Buffer.alloc(4)).size === 0,
+  'as does a buffer too short to hold a header');
 
 section('6. A hole survives the round trip through the banner');
 
