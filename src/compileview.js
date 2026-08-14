@@ -238,7 +238,42 @@ function resolveTarget(uri) {
 // is not any more: a target is now a row in the ISA registry, and the two collided badly
 // enough to be a parse error rather than a shadowed variable. The file keeps the name that
 // says what it is.
-async function compileCommand(uri) {
+/**
+ * Compile, having asked which ISA to compile for.
+ *
+ * A separate command rather than a prompt inside the ordinary one: `chooseEntry` already
+ * establishes the rule that a modal appears where there is a real ambiguity the user has not
+ * resolved, and a dual-toolchain machine would otherwise get a dialog on every single compile.
+ * Anyone who wants that has `compile.target: ask`; anyone who wants it once has this.
+ */
+async function compileForCommand(uri) {
+  const picked = await vscode.window.showQuickPick(
+    isa.list().map(t => ({
+      label: `${t.vendor} ${t.isa}`,
+      description: t.id,
+      detail: describeTargetAvailability(t),
+      id: t.id
+    })),
+    { title: 'Compile this shader for which ISA?', matchOnDescription: true });
+  if (!picked) return;                                  // dismissed: not an error
+  return compileCommand(uri, picked.id);
+}
+
+/** One line per target in the picker, so an unavailable one says why before it is chosen. */
+function describeTargetAvailability(target) {
+  const cached = toolCache;
+  if (!cached) return '';
+  if (target.id === 'amd') {
+    return cached.rga
+      ? 'rga found; no AMD GPU needed'
+      : 'rga not found - install the Radeon GPU Analyzer, or set compile.rgaPath';
+  }
+  return cached.ptxas || cached.python
+    ? 'CUDA toolchain found'
+    : 'no CUDA toolchain found - install the CUDA Toolkit';
+}
+
+async function compileCommand(uri, requestedTarget) {
   const sourceUri = resolveTarget(uri);
   if (!sourceUri) {
     vscode.window.showErrorMessage(
@@ -252,7 +287,7 @@ async function compileCommand(uri) {
       location: vscode.ProgressLocation.Notification,
       title: `Compiling ${path.basename(sourceUri.fsPath)}`,
       cancellable: true
-    }, (progress, token) => run(sourceUri, progress, token));
+    }, (progress, token) => run(sourceUri, progress, token, requestedTarget));
   } catch (e) {
     if (e && e.message === 'cancelled') return;
     log(`compile failed: ${e && e.message}`);
@@ -264,7 +299,7 @@ async function compileCommand(uri) {
   }
 }
 
-async function run(sourceUri, progress, token) {
+async function run(sourceUri, progress, token, requestedTarget) {
   const file = sourceUri.fsPath;
   const settings = config();
 
@@ -299,7 +334,9 @@ async function run(sourceUri, progress, token) {
     : compile.COMPUTE_STAGE;
   const { target, from: targetFrom, alternative } = isa.resolveTarget({
     stage: declaredStage,
-    requested: flags.target || settings.get('compile.target') || 'auto',
+    // Precedence: the command that was invoked, then the file's own directive, then the
+    // setting. An explicit ask outranks a written default, which outranks a configured one.
+    requested: requestedTarget || flags.target || settings.get('compile.target') || 'auto',
     available: await targetAvailability(tools)
   });
   log(`target ${target.vendor} ${target.isa}: ${targetFrom}` +
@@ -931,6 +968,7 @@ module.exports = {
   resolveTools,
   resolveTarget,
   compileCommand,
+  compileForCommand,
   revealSource,
   markersFor,
   refresh,

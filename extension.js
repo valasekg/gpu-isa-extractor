@@ -40,7 +40,7 @@ function log(message) {
 async function doctorCommand(context) {
   const findings = await vscode.window.withProgress({
     location: vscode.ProgressLocation.Window,
-    title: 'Checking the NVIDIA ISA Extractor environment'
+    title: 'Checking the GPU ISA Extractor environment'
   }, () => doctor.diagnose(context));
 
   const { text, failed, warned } = doctor.render(findings, context);
@@ -57,7 +57,7 @@ async function doctorCommand(context) {
     vscode.window.showWarningMessage(
       `Ready, with ${warned} thing(s) worth knowing - see the output channel.`);
   } else {
-    vscode.window.showInformationMessage('NVIDIA ISA Extractor: everything checks out.');
+    vscode.window.showInformationMessage('GPU ISA Extractor: everything checks out.');
   }
 }
 
@@ -79,7 +79,7 @@ async function clearOutputCommand(context) {
 }
 
 function activate(context) {
-  channel = vscode.window.createOutputChannel('NVIDIA ISA Extractor');
+  channel = vscode.window.createOutputChannel('GPU ISA Extractor');
   review.load(context.globalState);
 
   const semantic = new SassSemanticTokensProvider();
@@ -130,6 +130,7 @@ function activate(context) {
     vscode.commands.registerCommand('nvIsaExtractor.nextUnreviewed', () => browser.walk(1, { unreviewedOnly: true })),
     vscode.commands.registerCommand('nvIsaExtractor.loadMore', node => browser.loadMore(node)),
     vscode.commands.registerCommand('nvIsaExtractor.compileSource', uri => compileview.compileCommand(uri)),
+    vscode.commands.registerCommand('nvIsaExtractor.compileSourceFor', uri => compileview.compileForCommand(uri)),
     vscode.commands.registerCommand('nvIsaExtractor.revealSource', () => compileview.revealSource()),
     vscode.commands.registerCommand('nvIsaExtractor.openSettings', () => browser.openSettings()),
     vscode.commands.registerCommand('nvIsaExtractor.doctor', () => doctorCommand(context)),
@@ -160,7 +161,13 @@ function activate(context) {
     view.onDidChangeVisibility(e => { if (e.visible) blobstore.checkStamps(); })
   );
 
-  // The tools probe decides which welcome message the empty view shows. It is phrased as
+  // The tools probe decides which welcome message the empty view shows. It asks about
+  // nvdisasm specifically, and that is right rather than an oversight: this key gates the
+  // CACHE-BROWSING welcome, and browsing a driver shader cache is NVIDIA-only - there is no
+  // reader for an AMD one. Compiling for AMD needs none of this and is reported separately
+  // by the doctor, so a machine with rga and no CUDA toolkit correctly sees the cache-road
+  // welcome while still being able to compile.
+  // It is phrased as
   // "missing" rather than "ready" so the unset state - which is what the view renders during
   // the probe - reads as "nothing wrong yet" instead of accusing the user of a missing
   // toolkit for the moment it takes to find one.

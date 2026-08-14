@@ -271,6 +271,79 @@ async function diagnose(context) {
       'their own - naming any of them compiles all of them.');
   }
 
+  // 7b. the AMD road
+  //
+  // Its own finding rather than a line in the one above, because almost nothing it depends on
+  // is shared: no ptxas, no NVRTC, no Python, no driver, and - the part worth stating plainly -
+  // no AMD GPU. Both RGA modes cross-compile, so this road works on the machine reading it.
+  {
+    const compileview = require('./compileview');
+    const rga = require('./rga');
+    const tools = await compileview.resolveTools();
+    const detail = [];
+
+    if (!tools.rga) {
+      add('warn', 'compiling for AMD is unavailable',
+        'rga: not found. The Radeon GPU Analyzer is a free download from ' +
+        'https://github.com/GPUOpen-Tools/radeon_gpu_analyzer/releases and is not bundled - ' +
+        'it is 227 MB, most of it back ends this road never uses. Set ' +
+        '`nvIsaExtractor.compile.rgaPath` to one, or put it on PATH.',
+        'Nothing else is needed for it: no AMD GPU, no AMD driver, no Python. Both of RGA\'s ' +
+        'Vulkan modes cross-compile for any target they list.');
+    } else {
+      detail.push(`rga: ${tools.rga}`);
+      detail.push(await rga.version(tools.rga, pipeline.run));
+
+      // Asked rather than assumed, because the list shrinks between releases: 2.14.2 dropped
+      // every gfx9 and gfx10 target an earlier version accepted. A pinned `compile.gfx` that
+      // this RGA cannot build is silently ignored by rga itself, so it is checked here.
+      let listed = [];
+      try {
+        listed = await rga.targets(tools.rga, pipeline.run);
+      } catch (e) { /* reported as none below */ }
+
+      if (!listed.length) {
+        detail.push('targets: none listed, so nothing can be compiled. `rga -s vk-spv-offline ' +
+          '--list-asics` is what was asked.');
+      } else {
+        const names = listed.map(t => t.codename);
+        const generations = [...new Set(listed.map(t => t.architecture))];
+        detail.push(`targets: ${names.length} (${generations.join(', ')}) - ` +
+          `${names.slice(0, 4).join(', ')}${names.length > 4 ? ', ...' : ''}`);
+        const pinned = tools.gfx;
+        if (pinned && !names.includes(pinned)) {
+          detail.push(`compile.gfx is set to ${pinned}, which THIS rga does not list. An ` +
+            'unsupported target is silently not built rather than refused, so it would ' +
+            'produce an empty output directory rather than an error.');
+        } else if (pinned) {
+          detail.push(`compile.gfx: ${pinned}`);
+        } else {
+          detail.push(`compile.gfx is unset, so the newest listed target is used: ` +
+            `${names[names.length - 1]}`);
+        }
+      }
+
+      detail.push(tools.slangc
+        ? 'slangc is present, so .slang reaches this road'
+        : 'slangc: NOT FOUND - without it nothing can be lowered to SPIR-V for rga to read');
+
+      const stages = require('./compile').stagesFor('amd');
+      detail.push(`stages: ${stages.join(', ')}. Raytracing is absent - RGA's Vulkan modes ` +
+        'have no stage option for it, and `-s dxr` takes DXIL rather than SPIR-V.');
+      detail.push('No AMD GPU is needed. Neither mode compiles on the hardware: the offline ' +
+        'mode is a static compiler and the live-driver mode uses the AMDVLK driver RGA ships ' +
+        'with. This inverts the NVIDIA graphics road above, where the local driver IS the ' +
+        'compiler.');
+
+      const pinnedOk = !tools.gfx || listed.some(t => t.codename === tools.gfx);
+      add(tools.slangc && listed.length && pinnedOk ? 'ok' : 'warn',
+        tools.slangc && listed.length
+          ? 'compiling for AMD is available'
+          : 'compiling for AMD is incomplete',
+        ...detail);
+    }
+  }
+
   // 8. storage
   {
     const stats = await output.storageStats(context);

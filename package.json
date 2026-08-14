@@ -173,6 +173,11 @@
         "icon": "$(gear)"
       },
       {
+        "command": "nvIsaExtractor.compileSourceFor",
+        "title": "Compile and Disassemble For...",
+        "category": "GPU ISA"
+      },
+      {
         "command": "nvIsaExtractor.revealSource",
         "title": "Go to the Source Line for This Instruction",
         "category": "GPU ISA",
@@ -379,6 +384,9 @@
         {
           "command": "nvIsaExtractor.filter",
           "when": "nvIsaExtractor.hasBlob"
+        },
+        {
+          "command": "nvIsaExtractor.compileSourceFor"
         }
       ],
       "editor/context": [
