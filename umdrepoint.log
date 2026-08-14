@@ -1,0 +1,20 @@
+umdrepoint based on WDK 19041 and - on Sep 27 2021 14:54:06
+DetourTransactionBegin:0
+DetourUpdateThread:0
+subDx9Path :[]
+subDx10Path:[]
+subDx11Path:[]
+subDx12Path:[C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll]
+DetourTransactionCommit:0
+IsDebuggerPresent:0
+H:40000000 Substituting DX12 UMD: C:\Windows\System32\DriverStore\FileRepository\nvblwi.inf_amd64_a5690601bc7fd5ec\nvldumdx.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:40000040 Substituting DX12 UMD: d3d10warp.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:40000100 Substituting DX12 UMD: C:\Windows\System32\DriverStore\FileRepository\nvblwi.inf_amd64_a5690601bc7fd5ec\nvldumdx.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:40000140 Substituting DX12 UMD: d3d10warp.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:40000280 Substituting DX12 UMD: C:\Windows\System32\DriverStore\FileRepository\nvblwi.inf_amd64_a5690601bc7fd5ec\nvldumdx.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:400002C0 Substituting DX12 UMD: d3d10warp.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:40000380 Substituting DX12 UMD: C:\Windows\System32\DriverStore\FileRepository\nvblwi.inf_amd64_a5690601bc7fd5ec\nvldumdx.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:40000400 Substituting DX12 UMD: C:\Windows\System32\DriverStore\FileRepository\nvblwi.inf_amd64_a5690601bc7fd5ec\nvldumdx.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:40000440 Substituting DX12 UMD: d3d10warp.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:40000500 Substituting DX12 UMD: C:\Windows\System32\DriverStore\FileRepository\nvblwi.inf_amd64_a5690601bc7fd5ec\nvldumdx.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll
+H:40000680 Substituting DX12 UMD: C:\Windows\System32\DriverStore\FileRepository\nvblwi.inf_amd64_a5690601bc7fd5ec\nvldumdx.dll with C:\Users\oldbr\AppData\Local\Temp\claude\D--Development-Repositories-gpu-isa-extractor\63dd8f71-d1c4-459d-9ed1-188f5fcb03e1\scratchpad\rga-full\utils\dx12\amdxc\amdxc64.dll

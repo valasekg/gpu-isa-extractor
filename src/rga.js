@@ -149,17 +149,22 @@ async function version(rgaPath, run) {
 }
 
 /**
- * Every target this RGA can build for, as `{ codename, architecture }`.
+ * Every target this RGA can build for IN A GIVEN MODE, as `{ codename, architecture }`.
  *
- * Asked rather than hardcoded, because the list SHRINKS between releases: 2.14.2 lists ten
- * codenames, all RDNA3, RDNA3.5 and RDNA4, and dropped every gfx9/gfx10 target an earlier
- * version accepted - while still shipping `isa_spec/amdgpu_isa_rdna1.xml`. A pinned default
- * would stop working on an upgrade, and an unsupported `-c` is silently ignored rather than
- * refused, so this is also what makes a bad target a refusal instead of an empty output
- * directory.
+ * Asked rather than hardcoded, because the list SHRINKS between releases: 2.14.2's Vulkan
+ * offline mode lists ten codenames, all RDNA3, RDNA3.5 and RDNA4, and dropped every gfx9/gfx10
+ * target an earlier version accepted - while still shipping `isa_spec/amdgpu_isa_rdna1.xml`.
+ * A pinned default would stop working on an upgrade, and an unsupported `-c` is silently
+ * ignored rather than refused, so this is also what makes a bad target a refusal instead of an
+ * empty output directory.
+ *
+ * Per mode, and not by tidiness: the same RGA offers DIFFERENT targets depending on `-s`.
+ * Measured on 2.14.2 - the Vulkan offline mode lists 10, and the DXR mode lists 27, reaching
+ * back to gfx900 (Vega) and including the RDNA1 and CDNA parts Vulkan has dropped. Asking one
+ * mode about another's targets returns a confident wrong answer.
  */
-async function targets(rgaPath, run) {
-  const probe = await run(rgaPath, ['-s', MODE_OFFLINE, '--list-asics'], { timeout: 60000 });
+async function targets(rgaPath, run, mode = MODE_OFFLINE) {
+  const probe = await run(rgaPath, ['-s', mode, '--list-asics'], { timeout: 60000 });
   const out = `${probe.stdout || ''}${probe.stderr || ''}`;
   const found = [];
   for (const line of out.split('\n')) {
@@ -248,6 +253,64 @@ async function compile({ rga, asic, modules, outDir, mode = MODE_OFFLINE, pso, b
   }
 
   return { listings, statistics, binaryPath, argv: result.argv, log, mode };
+}
+
+// ------------------------------------------------------------------------ raytracing
+
+/** `-s dxr`. DirectX Raytracing, and the only road to RDNA raytracing ISA there is. */
+const MODE_DXR = 'dxr';
+
+/**
+ * Compile a DXR library.
+ *
+ * `--offline` always. It means "assume no AMD display adapter is installed", and RGA then uses
+ * the `amdxc64.dll` it ships with - measured working on a machine with only an NVIDIA adapter,
+ * which is the same claim the Vulkan roads make and the reason this whole target needs no AMD
+ * hardware. Passing it unconditionally costs nothing on a machine that does have one.
+ *
+ * The output names are `<asic>_<Stage>_<function>_isa.txt`, so the listings come back keyed by
+ * the ENTRY POINT NAME rather than by stage - which is what a raytracing pipeline wants, since
+ * a file can hold two miss shaders and "miss" would not say which.
+ *
+ * @param {string} options.source   the merged library text; written out here
+ * @returns {Promise<{listings, statistics, argv, log, mode}>}
+ */
+async function compileDxr({ rga, asic, source, outDir, token, run }) {
+  await fs.promises.rm(outDir, { recursive: true, force: true });
+  await fs.promises.mkdir(outDir, { recursive: true });
+
+  const hlsl = path.join(outDir, 'library.hlsl');
+  await fs.promises.writeFile(hlsl, source, 'utf8');
+
+  const args = ['-s', MODE_DXR, '--offline', '-c', asic, '--hlsl', hlsl,
+    '--isa', path.join(outDir, 'isa.txt'), '-a', path.join(outDir, 'stats.csv')];
+
+  const result = await run(rga, args, { timeout: 300000, token });
+  if (result.cancelled) throw new Error('cancelled');
+  const log = `${result.stdout || ''}${result.stderr || ''}`;
+
+  const listings = {};
+  const statistics = {};
+  // `<asic>_<Stage>_<entry>_isa.txt`. The stage prefix is RGA's own capitalised spelling and
+  // the entry name is the function's, so both are recovered rather than reconstructed.
+  const NAME_RE = new RegExp(`^${asic}_([A-Za-z]+)_(\\w+)_(isa|stats)\\.(?:txt|csv)$`);
+  for (const file of await fs.promises.readdir(outDir)) {
+    const m = NAME_RE.exec(file);
+    if (!m) continue;
+    const [, , entry, kind] = m;
+    const text = await fs.promises.readFile(path.join(outDir, file), 'utf8');
+    (kind === 'isa' ? listings : statistics)[entry] = text;
+  }
+
+  if (!Object.keys(listings).length) {
+    throw new Error(
+      `rga built no raytracing ISA for ${asic} and exited ${result.code}. A DXR pipeline needs ` +
+      'a raygeneration shader - it is the only stage a driver will start - and a state object ' +
+      'it cannot build reports exactly like this.' +
+      `${log.trim() ? `\n${log.trim()}` : ''}`);
+  }
+
+  return { listings, statistics, argv: result.argv, log, mode: MODE_DXR };
 }
 
 // --------------------------------------------------------------- reading a code object
@@ -393,6 +456,7 @@ module.exports = {
   MODE_OFFLINE,
   MODE_DRIVER,
   MODE_BINARY,
+  MODE_DXR,
   STAGE_FLAGS,
   OUTPUT_STAGE,
   STAGE_OF_OUTPUT,
@@ -401,6 +465,7 @@ module.exports = {
   version,
   targets,
   compile,
+  compileDxr,
   isCodeObject,
   disassembleCodeObject,
   readStatistics,
