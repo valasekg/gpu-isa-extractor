@@ -1,0 +1,239 @@
+{
+  "_meta": {
+    "generated_by": "hand-curated",
+    "source": "AMD RDNA ISA reference guides, cross-checked against the machine-readable spec RGA ships as utils/isa_spec/amdgpu_isa_rdna*.xml",
+    "why": "RDNA mnemonics are systematic in a way SASS is not: an encoding class prefix, an operation, and a type suffix. So this table is mostly PREFIX rules over classes, with named entries only where an opcode does something its name does not say. That is the opposite of data/opcodes.json, which must enumerate because NVIDIA's mnemonics are not derivable.",
+    "confidence": "AMD documents its instruction set first-party and publishes the spec in machine-readable form, so RDNA entries are better grounded than the NVIDIA table's reverse-engineered ones. Where an entry is inferred rather than documented it says so in `source`.",
+    "future": "utils/isa_spec/amdgpu_isa_rdna4.xml in an installed RGA holds AMD's own description of every opcode, under the MIT licence RGA ships with. A dev-time generator over it - the counterpart of tools/fetch_opcodes.py - would replace the named table below with a complete one. It is not shipped because nothing has yet checked its output against a corpus.",
+    "sources": {
+      "isa-guide": "documented in AMD's RDNA ISA reference guide",
+      "isa-spec": "read from the machine-readable ISA spec RGA ships",
+      "corpus": "read off observed disassembly - inferred, not confirmed"
+    }
+  },
+
+  "classes": {
+    "s_": {
+      "name": "Scalar ALU / scalar memory",
+      "desc": "Runs once per wave on the scalar unit, on SGPRs. Values the whole wave agrees on - loop counters, descriptors, uniform addresses - live here, which is why a shader that keeps work scalar uses fewer VGPRs.",
+      "cat": "Scalar",
+      "source": "isa-guide"
+    },
+    "v_": {
+      "name": "Vector ALU",
+      "desc": "Runs once per lane on VGPRs, under the EXEC mask. This is the per-pixel and per-vertex work.",
+      "cat": "Vector",
+      "source": "isa-guide"
+    },
+    "ds_": {
+      "name": "Data Share",
+      "desc": "Local Data Share - the on-chip scratchpad shared within a workgroup, and the path parameter interpolation reads through on RDNA.",
+      "cat": "LDS",
+      "source": "isa-guide"
+    },
+    "buffer_": {
+      "name": "Buffer memory",
+      "desc": "Typed memory access through a buffer resource descriptor, with bounds checking and format conversion the address arithmetic does not have to do.",
+      "cat": "Memory",
+      "source": "isa-guide"
+    },
+    "global_": {
+      "name": "Global memory",
+      "desc": "Flat address-space access that is known to target global memory, so it skips the aperture check a flat_ access pays.",
+      "cat": "Memory",
+      "source": "isa-guide"
+    },
+    "flat_": {
+      "name": "Flat memory",
+      "desc": "Access whose address decides at run time which aperture it lands in - global, LDS or scratch. More general than global_, and slower for it.",
+      "cat": "Memory",
+      "source": "isa-guide"
+    },
+    "scratch_": {
+      "name": "Scratch memory",
+      "desc": "Per-lane private memory. Its presence means the shader spilled or used indexable local arrays, which the statistics report as scratch usage.",
+      "cat": "Memory",
+      "source": "isa-guide"
+    },
+    "image_": {
+      "name": "Image memory",
+      "desc": "Texture access through an image resource descriptor: filtering, addressing modes and format conversion in the texture unit.",
+      "cat": "Texture",
+      "source": "isa-guide"
+    },
+    "tbuffer_": {
+      "name": "Typed buffer memory",
+      "desc": "Buffer access with an explicit data format, rather than one carried by the descriptor.",
+      "cat": "Memory",
+      "source": "isa-guide"
+    },
+    "export": {
+      "name": "Export",
+      "desc": "Hands finished values to the fixed-function hardware - render targets from a pixel shader, position and parameters from the last geometry stage. A shader's real output, and the last thing it does.",
+      "cat": "Export",
+      "source": "isa-guide"
+    }
+  },
+
+  "opcodes": {
+    "s_endpgm": {
+      "desc": "End the program. Every wave ends here, and any outstanding memory operation must have been waited on first.",
+      "cat": "Control",
+      "source": "isa-guide"
+    },
+    "s_delay_alu": {
+      "desc": "Tell the hardware how far apart dependent VALU instructions are, so it need not detect the hazard itself. Purely a scheduling hint: it changes timing, not results. `instid0`/`instid1` name the dependency kind and `instskip` how many instructions to skip between them.",
+      "cat": "Wait",
+      "source": "isa-guide",
+      "note": "gfx11 and later. Its density is a rough measure of how tightly the compiler packed dependent arithmetic."
+    },
+    "s_clause": {
+      "desc": "Group the following memory instructions into a clause the hardware issues without interruption, which keeps their latency overlapping.",
+      "cat": "Control",
+      "source": "isa-guide"
+    },
+    "s_waitcnt": {
+      "desc": "Block until the named counters have drained. The counters are outstanding-operation counts, not flags, so one wait can cover several loads - the same shape as an NVIDIA scoreboard wait, expressed as an instruction rather than a field.",
+      "cat": "Wait",
+      "source": "isa-guide",
+      "note": "gfx10 and gfx11. gfx12 splits it into s_wait_loadcnt, s_wait_storecnt, s_wait_dscnt and s_wait_kmcnt."
+    },
+    "s_wait_loadcnt": {
+      "desc": "Block until outstanding vector memory LOADS have returned. gfx12's split of s_waitcnt's vmcnt.",
+      "cat": "Wait",
+      "source": "isa-guide"
+    },
+    "s_wait_storecnt": {
+      "desc": "Block until outstanding vector memory STORES have completed. gfx12's split of vscnt.",
+      "cat": "Wait",
+      "source": "isa-guide"
+    },
+    "s_wait_kmcnt": {
+      "desc": "Block until outstanding scalar memory reads have returned. Scalar loads may complete out of order, so a partial wait cannot name which one it is waiting for.",
+      "cat": "Wait",
+      "source": "isa-guide"
+    },
+    "s_wait_dscnt": {
+      "desc": "Block until outstanding LDS operations have completed.",
+      "cat": "Wait",
+      "source": "isa-guide"
+    },
+    "s_wait_expcnt": {
+      "desc": "Block until outstanding exports have been consumed, which is what frees the registers they read.",
+      "cat": "Wait",
+      "source": "isa-guide"
+    },
+    "s_wait_alu": {
+      "desc": "Block until named ALU dependencies have resolved. The gfx12 counterpart of s_delay_alu's hint, as a wait rather than a hint.",
+      "cat": "Wait",
+      "source": "isa-spec"
+    },
+    "s_and_saveexec_b64": {
+      "desc": "Save EXEC, then mask it with the condition - the standard way a branch is entered. The saved copy is what restores the other lanes at the join.",
+      "cat": "Control",
+      "source": "isa-guide",
+      "note": "Divergence on RDNA is ordinary code operating on the EXEC mask, not a hardware reconvergence stack, so an if/else is visible as saveexec / branch / restore rather than as a BSSY/BSYNC pair."
+    },
+    "s_cbranch_execz": {
+      "desc": "Branch if EXEC is zero - skip a block no lane would execute. The compiler emits this after masking EXEC, so a divergent branch costs nothing when the whole wave agrees.",
+      "cat": "Control",
+      "source": "isa-guide"
+    },
+    "s_cbranch_execnz": {
+      "desc": "Branch if any lane is still active.",
+      "cat": "Control",
+      "source": "isa-guide"
+    },
+    "s_wqm_b64": {
+      "desc": "Whole-quad mode: enable every lane in a 2x2 quad if any of them is active. Pixel shaders need it so screen-space derivatives and mipmap selection have real neighbouring values to difference.",
+      "cat": "Control",
+      "source": "isa-guide"
+    },
+    "s_getpc_b64": {
+      "desc": "Read the program counter, which is how position-independent addresses - a jump table, an embedded constant - are formed.",
+      "cat": "Control",
+      "source": "isa-guide"
+    },
+    "s_mov_b32": { "desc": "Copy a 32-bit scalar value.", "cat": "Scalar", "source": "isa-guide" },
+    "s_mov_b64": { "desc": "Copy a 64-bit scalar pair - typically an address, a descriptor half or a lane mask.", "cat": "Scalar", "source": "isa-guide" },
+    "s_bfe_u32": { "desc": "Bit-field extract, unsigned. The packed operand names offset and width together.", "cat": "Scalar", "source": "isa-guide" },
+    "s_load_b128": { "desc": "Scalar load of 128 bits - usually a resource descriptor, which is why it appears before buffer and image access.", "cat": "Memory", "source": "isa-guide" },
+
+    "ds_param_load": {
+      "desc": "Read an interpolation parameter out of LDS. On RDNA the rasterizer leaves attributes in LDS and the pixel shader fetches them, rather than reading a dedicated attribute space.",
+      "cat": "LDS",
+      "source": "isa-guide",
+      "note": "The RDNA counterpart of NVIDIA's IPA reading a[0x...]."
+    },
+    "v_interp_p10_f32": {
+      "desc": "First half of barycentric interpolation: the P10 term, combining the attribute's value with the I barycentric.",
+      "cat": "Vector",
+      "source": "isa-guide"
+    },
+    "v_interp_p2_f32": {
+      "desc": "Second half of barycentric interpolation, folding in the J barycentric. A p10/p2 pair is one interpolated scalar.",
+      "cat": "Vector",
+      "source": "isa-guide"
+    },
+    "v_mbcnt_lo_u32_b32": {
+      "desc": "Count active lanes below this one, low half. With mbcnt_hi it gives each lane its index within the wave, which is how a compacted write offset is formed.",
+      "cat": "Vector",
+      "source": "isa-guide"
+    },
+    "v_mbcnt_hi_u32_b32": {
+      "desc": "The high half of the same lane-index computation.",
+      "cat": "Vector",
+      "source": "isa-guide"
+    },
+    "v_rcp_f32_e32": { "desc": "Approximate reciprocal, on the transcendental unit - a quarter rate, and not IEEE-exact.", "cat": "Transcendental", "source": "isa-guide" },
+    "v_rsq_f32_e32": { "desc": "Approximate reciprocal square root. What a `normalize` lowers to.", "cat": "Transcendental", "source": "isa-guide" },
+    "v_sqrt_f32_e64": { "desc": "Approximate square root.", "cat": "Transcendental", "source": "isa-guide" },
+    "v_exp_f32_e32": { "desc": "Base-2 exponential. A `pow` becomes log, multiply, exp - which is why both appear around one source-level power.", "cat": "Transcendental", "source": "isa-guide" },
+    "v_log_f32_e32": { "desc": "Base-2 logarithm.", "cat": "Transcendental", "source": "isa-guide" },
+    "v_fmac_f32_e32": { "desc": "Fused multiply-accumulate into the destination, which must therefore already hold the addend.", "cat": "Vector", "source": "isa-guide" },
+    "v_fma_f32": { "desc": "Fused multiply-add with three named sources and a separate destination.", "cat": "Vector", "source": "isa-guide" },
+    "v_mul_dx9_zero_f32_e32": {
+      "desc": "Multiply with DirectX 9 zero semantics: 0 times anything is 0, including infinity and NaN. Emitted where a shading language demands that rule rather than IEEE's.",
+      "cat": "Vector",
+      "source": "isa-guide"
+    },
+    "v_cmpx_gt_u32_e64": {
+      "desc": "Compare and write the result straight into EXEC, masking off lanes that fail. The `x` is the EXEC write - this is a comparison and a branch entry in one instruction.",
+      "cat": "Control",
+      "source": "isa-guide"
+    },
+    "v_cvt_f32_ubyte0_e32": {
+      "desc": "Convert byte 0 of the source to float. Unpacking a packed colour or an index without shifting first.",
+      "cat": "Vector",
+      "source": "isa-guide"
+    },
+    "v_lshl_add_u32": {
+      "desc": "Shift left and add in one instruction - the address arithmetic behind an indexed access.",
+      "cat": "Vector",
+      "source": "isa-guide"
+    }
+  },
+
+  "modifiers": {
+    "clamp": { "desc": "Clamp the result to [0,1] for float, or saturate for integer, at no extra cost.", "source": "isa-guide" },
+    "done": { "desc": "This is the last export of its kind, which lets the hardware release the resources the export was holding.", "source": "isa-guide" },
+    "offen": { "desc": "The offset comes from a VGPR, so each lane addresses its own location.", "source": "isa-guide" },
+    "idxen": { "desc": "The index comes from a VGPR, so each lane selects its own record in the buffer.", "source": "isa-guide" },
+    "wait_exp": { "desc": "Wait for this many outstanding exports before issuing. An embedded wait, on instructions whose encoding carries one.", "source": "isa-spec" },
+    "wait_va_vdst": { "desc": "Wait until at most this many VALU destination writes are outstanding.", "source": "isa-spec" },
+    "wait_vm_vsrc": { "desc": "Wait until at most this many vector-memory reads of the source registers are outstanding.", "source": "isa-spec" },
+    "instid0": { "desc": "The dependency class of the first instruction s_delay_alu is describing.", "source": "isa-guide" },
+    "instid1": { "desc": "The dependency class of the second.", "source": "isa-guide" },
+    "instskip": { "desc": "How many instructions sit between the two s_delay_alu names.", "source": "isa-guide" }
+  },
+
+  "registers": {
+    "v": { "name": "VGPR", "desc": "Vector general-purpose register: one value per lane. The count a shader uses decides how many waves fit on a SIMD, which is its occupancy." },
+    "s": { "name": "SGPR", "desc": "Scalar general-purpose register: one value for the whole wave." },
+    "exec": { "name": "EXEC", "desc": "The lane mask. A zero bit means that lane's results are discarded, which is how divergence works - there is no per-instruction predicate." },
+    "vcc": { "name": "VCC", "desc": "Vector condition code: one bit per lane, written by comparisons and read by carry-in and by branches." },
+    "scc": { "name": "SCC", "desc": "Scalar condition code: the single bit a scalar comparison writes and a scalar branch reads." },
+    "m0": { "name": "M0", "desc": "A general-purpose scalar the hardware reads implicitly - LDS addressing base, GDS, and the parameter-load base in a pixel shader." },
+    "null": { "name": "null", "desc": "Writes here are discarded; reads give zero. The RDNA counterpart of RZ." }
+  }
+}

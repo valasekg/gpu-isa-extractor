@@ -38,6 +38,7 @@
 
 const path = require('path');
 
+const dataRdna = require('./data_rdna');
 const parseRdna = require('./parse_rdna');
 const rga = require('./rga');
 
@@ -297,7 +298,16 @@ const dialect = {
   archFallback: 'gfx',
   parseLine: parseRdna.parseLine,
   detectArchitecture: parseRdna.detectArchitecture,
-  tables: {},
+  tables: {
+    lookupOpcode: dataRdna.lookupOpcode,
+    lookupModifier: dataRdna.lookupModifier,
+    lookupSpecialRegister: dataRdna.lookupSpecialRegister,
+    registerClass: dataRdna.registerClass,
+    ARCH_LABELS: dataRdna.ARCH_LABELS
+  },
+  /** How well grounded an entry is, which reads differently here - see data_rdna.js. */
+  sourceLabels: dataRdna.sourceLabels,
+  docUrl: 'https://gpuopen.com/amd-isa-documentation/',
   /**
    * Null, and the null is the point.
    *

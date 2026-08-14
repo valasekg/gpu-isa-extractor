@@ -23,14 +23,51 @@ const CONFIDENCE_LABEL = {
   inferred: 'controlled inference'
 };
 
+/**
+ * The lookup tables for one dialect, falling back to the NVIDIA ones.
+ *
+ * A dialect that names no tables gets `data`, which is what keeps every existing call working
+ * while the AMD row supplies its own. The five functions here are the ones BOTH ISAs have an
+ * answer for; everything else in this file - the uniform-datapath twin, constant banks,
+ * attribute slots, the control column - is NVIDIA-shaped and reached only from token kinds or
+ * fields the RDNA parser never produces. The one exception is `attribute`, which both emit and
+ * which is guarded where it is used.
+ */
+function tablesFor(dialect) {
+  const t = (dialect && dialect.tables) || {};
+  return {
+    lookupOpcode: t.lookupOpcode || data.lookupOpcode,
+    lookupModifier: t.lookupModifier || data.lookupModifier,
+    lookupSpecialRegister: t.lookupSpecialRegister || data.lookupSpecialRegister,
+    registerClass: t.registerClass || data.registerClass,
+    ARCH_LABELS: t.ARCH_LABELS || data.ARCH_LABELS,
+    /** Null on a dialect with no such notion, so a caller can decline rather than invent. */
+    lookupAttributeSlot: t.lookupAttributeSlot ||
+      (dialect && dialect.id === 'nvidia-sass' ? data.lookupAttributeSlot : null),
+    sourceLabels: (dialect && dialect.sourceLabels) || data.sourceLabels,
+    docUrl: (dialect && dialect.docUrl) || DOC_URL,
+    /** Whether the NVIDIA-only elaborations - the uniform twin, the PTX phrasing - apply. */
+    nvidia: !dialect || dialect.id === 'nvidia-sass',
+    notInTables: !dialect || dialect.id === 'nvidia-sass'
+      ? 'Not in NVIDIA\'s published instruction tables.'
+      : 'Not in this extension\'s RDNA tables, and its prefix names no encoding class either.'
+  };
+}
+
 class SassHoverProvider {
   provideHover(document, position) {
     if (!vscode.workspace.getConfiguration('nvidiaSass').get('hover.enabled', true)) return null;
 
+    // Which ISA this document holds decides both how the line is read and which tables the
+    // answer comes out of. `dialectFor` keys on the language id, which is the only thing that
+    // survives a listing being saved and reopened.
+    const dialect = isa.dialectFor(document) || isa.DIALECTS['nvidia-sass'];
+    const tables = tablesFor(dialect);
+
     const line = document.lineAt(position.line).text;
     let parsed;
     try {
-      parsed = parseLine(line);
+      parsed = dialect.parseLine(line);
     } catch (e) {
       return null;
     }
@@ -58,13 +95,13 @@ class SassHoverProvider {
     if (parsed.opcode && at(parsed.opcode.start, parsed.opcode.end)) {
       const arch = architectureFor(document);
       const elaborate = hoverDetail() === 'elaborate';
-      return md(opcodeMarkdown(parsed.opcode.text, arch, parsed, elaborate),
+      return md(opcodeMarkdown(parsed.opcode.text, arch, parsed, elaborate, tables),
                 range(parsed.opcode.start, parsed.opcode.end));
     }
 
     const mod = parsed.modifiers.find(m => at(m.start, m.end));
     if (mod) {
-      return md(modifierMarkdown(parsed.opcode ? parsed.opcode.text : null, mod),
+      return md(modifierMarkdown(parsed.opcode ? parsed.opcode.text : null, mod, tables),
                 range(mod.start, mod.end));
     }
 
@@ -72,7 +109,7 @@ class SassHoverProvider {
     const hits = parsed.tokens.filter(t => at(t.start, t.end));
     if (hits.length) {
       const token = hits.reduce((a, b) => (b.end - b.start <= a.end - a.start ? b : a));
-      const body = tokenMarkdown(token, parsed);
+      const body = tokenMarkdown(token, parsed, tables);
       if (body) return md(body, range(token.start, token.end));
     }
 
@@ -136,29 +173,37 @@ function hoverDetail() {
 
 /* ------------------------------------------------------------------ opcodes */
 
-function opcodeMarkdown(name, arch, parsed, elaborate) {
-  const entry = data.lookupOpcode(name);
+function opcodeMarkdown(name, arch, parsed, elaborate, tables = tablesFor(null)) {
+  const entry = tables.lookupOpcode(name);
   if (!entry) {
-    const twin = data.uniformTwinOf(name);
+    // The uniform-datapath twin is a SASS notion - `UIADD3` against `IADD3` - and looking for
+    // one in another ISA would offer a guess dressed as a relationship.
+    const twin = tables.nvidia ? data.uniformTwinOf(name) : null;
     const twinEntry = twin && data.lookupOpcode(twin);
-    const lines = [`### \`${name}\``, '', 'Not in NVIDIA\'s published instruction tables.'];
+    const lines = [`### \`${name}\``, '', tables.notInTables];
     if (twinEntry) {
       lines.push('', `Looks like the warp-uniform twin of \`${twin}\` - *${twinEntry.desc}* - ` +
                      'run on the uniform datapath.');
     }
-    if (elaborate) lines.push(...elaborateOpcodeMarkdown(name, twinEntry, parsed));
+    if (elaborate) lines.push(...elaborateOpcodeMarkdown(name, twinEntry, parsed, tables));
     return lines.join('\n');
   }
 
   const lines = [`### \`${name}\`  ·  ${entry.cat}`, '', entry.desc];
 
-  if (entry.documented) {
-    const listed = entry.archs.map(a => data.ARCH_LABELS[a] || a).join(', ');
+  // `archs` is a per-opcode list of the architectures NVIDIA's tables name it for. RDNA
+  // entries carry no such list - AMD documents the instruction set per generation rather than
+  // per opcode - so the guard is on the field, not on the target: a documented entry without
+  // one simply has no "listed for" line to print.
+  if (entry.documented && entry.archs) {
+    const listed = entry.archs.map(a => tables.ARCH_LABELS[a] || a).join(', ');
     lines.push('', `**Listed for:** ${listed}`);
     if (arch && !entry.archs.includes(arch)) {
-      lines.push('', `> Not listed in the ${data.ARCH_LABELS[arch]} table, but present in this file.`);
+      lines.push('', `> Not listed in the ${tables.ARCH_LABELS[arch] || arch} table, but present in this file.`);
     }
     lines.push('', `[NVIDIA CUDA Binary Utilities](${DOC_URL})`);
+  } else if (entry.documented) {
+    lines.push('', `[AMD ISA documentation](${tables.docUrl})`);
   } else {
     lines.push('', '> Absent from NVIDIA\'s tables, which cover the compute pipeline only. ' +
                    'This is a graphics-pipeline instruction; the description is reconstructed ' +
@@ -169,11 +214,11 @@ function opcodeMarkdown(name, arch, parsed, elaborate) {
   if (data.isUniformDatapath(name)) {
     lines.push('', 'Runs on the **uniform datapath** - one result for the whole warp.');
   }
-  if (elaborate) lines.push(...elaborateOpcodeMarkdown(name, entry, parsed));
+  if (elaborate) lines.push(...elaborateOpcodeMarkdown(name, entry, parsed, tables));
   return lines.join('\n');
 }
 
-function elaborateOpcodeMarkdown(name, entry, parsed) {
+function elaborateOpcodeMarkdown(name, entry, parsed, tables = tablesFor(null)) {
   const modifierNames = parsed ? parsed.modifiers.map(mod => mod.text) : [];
   const explanation = explainOpcode(name, entry, modifierNames, instructionOperands(parsed));
   const lines = [
@@ -199,7 +244,7 @@ function elaborateOpcodeMarkdown(name, entry, parsed) {
   if (parsed && parsed.modifiers.length) {
     lines.push('', '#### Active postfixes', '');
     for (const mod of parsed.modifiers) {
-      const known = data.lookupModifier(name, mod.text);
+      const known = tables.lookupModifier(name, mod.text);
       const meaning = known ? known.desc : 'No curated description is recorded.';
       const provenance = known && known.source
         ? ` *(${provenanceSummary(known)})*` : '';
@@ -247,8 +292,8 @@ function code(value) {
 
 /* ---------------------------------------------------------------- modifiers */
 
-function modifierMarkdown(opcode, mod) {
-  const entry = data.lookupModifier(opcode, mod.text);
+function modifierMarkdown(opcode, mod, tables = tablesFor(null)) {
+  const entry = tables.lookupModifier(opcode, mod.text);
   const title = `### \`.${mod.text}\`` + (opcode ? `  on \`${opcode}\`` : '');
 
   if (!entry) {
@@ -284,7 +329,7 @@ function classMarkdown(key, role) {
   return `### ${cls.title}\n\n${cls.desc}${roleNote(role)}`;
 }
 
-function tokenMarkdown(token, parsed) {
+function tokenMarkdown(token, parsed, tables = tablesFor(null)) {
   const role = token.role;
   const opcode = parsed.opcode ? parsed.opcode.text : null;
 
@@ -300,7 +345,7 @@ function tokenMarkdown(token, parsed) {
     case 'predFile':
       return classMarkdown('predicateFile', role);
     case 'special':
-      return specialMarkdown(token, role);
+      return specialMarkdown(token, role, tables);
     case 'barrier':
       return classMarkdown('barrier', role);
     case 'scoreboard':
@@ -310,7 +355,7 @@ function tokenMarkdown(token, parsed) {
     case 'descriptor':
       return descriptorMarkdown(token);
     case 'attribute':
-      return attributeMarkdown(token);
+      return attributeMarkdown(token, tables);
     case 'immediate':
       return immediateMarkdown(token, opcode);
     case 'reuse': {
@@ -322,9 +367,9 @@ function tokenMarkdown(token, parsed) {
   }
 }
 
-function specialMarkdown(token, role) {
-  const cls = data.registerClass(token.text === 'SRZ' ? 'specialZero' : 'special');
-  const specific = data.lookupSpecialRegister(token.text);
+function specialMarkdown(token, role, tables = tablesFor(null)) {
+  const cls = tables.registerClass(token.text === 'SRZ' ? 'specialZero' : 'special');
+  const specific = tables.lookupSpecialRegister(token.text);
   const parts = [`### \`${token.text}\``];
   if (specific) parts.push('', specific.desc);
   if (cls) parts.push('', cls.desc);
@@ -362,16 +407,16 @@ function descriptorMarkdown(token) {
   return parts.join('\n');
 }
 
-function attributeMarkdown(token) {
-  const cls = data.registerClass('attribute');
+function attributeMarkdown(token, tables = tablesFor(null)) {
+  const cls = tables.registerClass('attribute');
   const parts = [`### \`${token.text}\``];
   const m = /^a\[([^\]]*)\]/.exec(token.text);
   if (m) {
-    const known = data.lookupAttributeSlot(m[1]);
+    const known = tables.lookupAttributeSlot ? tables.lookupAttributeSlot(m[1]) : null;
     if (known) parts.push('', `Slot \`${m[1]}\` - **${known}**`);
   }
   if (cls) parts.push('', cls.desc);
-  const note = data.registersDoc.attributeSlots._note;
+  const note = tables.lookupAttributeSlot ? data.registersDoc.attributeSlots._note : null;
   if (note) parts.push('', `*${note}*`);
   return parts.join('\n');
 }
