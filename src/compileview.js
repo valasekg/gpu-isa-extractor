@@ -515,9 +515,18 @@ async function chooseEntry(entries, target) {
 async function openEntry({ built, entry, source, compiledFrom, directive, configured,
   archInfo, token, outDir, target }) {
   const graphics = built.road === 'graphics';
-  // Correlation exists only where a cubin line table does, which is the CUDA road alone.
-  // Gating on "not graphics" would have sent the AMD road looking for one.
-  const correlatable = built.road === 'cuda';
+  // Two roads can correlate, for different reasons, and neither is "not graphics".
+  //
+  //   - CUDA reads a line table out of the cubin with a second nvdisasm pass.
+  //   - The AMD road cannot be asked twice: RGA's listing has no line table in it, so the
+  //     table was obtained during the compile and travels on the result. See `rdnaCorrelation`
+  //     in compile.js for why it needs a second compiler run and what it checks before
+  //     trusting the answer.
+  //
+  // The graphics road has neither, and that is measured rather than assumed: across 3,340
+  // cache objects the container carries no debug section, and SPIR-V built with `slangc -g`
+  // produced a byte-identical object of exactly the same size. The driver strips it.
+  const correlatable = built.road === 'cuda' || !!built.correlation;
 
   // The entry decides how it becomes text. Everything below this line works on the text and on
   // what the entry says about itself, and none of it names a disassembler - which is the whole
@@ -540,26 +549,27 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
   const plain = emission.text;
   const annotation = emission.annotation;
 
-  // Correlation comes from a second pass over the cubin, because line info lives in the ELF
-  // and `--binary` has no ELF to read it from.
-  //
-  // The graphics road has no cubin and no line table to read one out of, and this is
-  // measured rather than assumed: across 3,340 cache objects the container carries no debug
-  // section at all, and SPIR-V built with `slangc -g` - `OpLine`, `OpSource`, the whole source
-  // text embedded - produced a byte-identical object of exactly the same size. The driver
-  // strips it. So the block is skipped outright rather than allowed to fail into its catch,
-  // which would log "source correlation unavailable" on every graphics compile and read as a
-  // fault rather than as a property of the route.
+  // Skipped outright when the road has no line table, rather than allowed to fail into the
+  // catch below - which would log "source correlation unavailable" on every graphics compile
+  // and read as a fault rather than as a property of the route.
   let correlation = null;
   let body = plain;
   const style = config().get('compile.correlationStyle') || 'banner';
   if (style !== 'off' && correlatable) {
     try {
-      const g = await runTool(emission.tool, ['-c', '-g', built.cubinPath], token);
-      // An unsaved buffer was compiled from a copy; the line table names the copy, and
-      // everything downstream must name the file the user actually has open.
-      const parsed = correlate.rewriteSource(
-        correlate.parse(g, entry.name), compiledFrom, source);
+      // Where the records come from is the road's business; what happens to them is not.
+      // An unsaved buffer was compiled from a copy, so both sources go through
+      // `rewriteSource`: the line table names the copy, and everything downstream must name
+      // the file the user actually has open.
+      const parsed = built.correlation
+        ? correlate.rewriteSource(
+          { entries: new Map([[entry.name, built.correlation.records]]),
+            files: built.correlation.files },
+          compiledFrom, source)
+        : correlate.rewriteSource(
+          correlate.parse(await runTool(emission.tool, ['-c', '-g', built.cubinPath], token),
+            entry.name),
+          compiledFrom, source);
       const records = parsed.entries.get(entry.name);
       if (records && records.length) {
         const labels = correlate.labelsFor(parsed.files);
@@ -567,7 +577,11 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
         // line number may not, so the first token is always unambiguous. (This used to key
         // on a NUL, written as a literal byte rather than an escape, which made the whole
         // file binary to git and grep.)
-        const distinct = new Set(records.map(r => `${r.line} ${r.file}`)).size;
+        // Holes excluded: a run attributed to nothing is not a source line, and counting one
+        // would report "correlated 47 runs over 13 source lines" where one of the thirteen is
+        // the absence of a line.
+        const positioned = records.filter(r => r.line !== null && r.file);
+        const distinct = new Set(positioned.map(r => `${r.line} ${r.file}`)).size;
         // Runs are contiguous from the first record onward, so the only instructions with no
         // source position are those before it. Counting them does not need the per-address
         // Map expanded - which for a large kernel is one entry per instruction, built here
@@ -597,17 +611,25 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
             `${target.isa} does not have; the map is in the banner instead`);
         }
         correlation = {
-          marked: records.length,
+          // Runs that carry a position. The map below still holds the holes, because the
+          // reader needs them to know where attribution stops - but "marked" is a count of
+          // what was correlated, and a hole is the opposite of that.
+          marked: positioned.length,
           lines: distinct,
           unattributed,
           files: parsed.files.map(f => [f, labels.get(f)]),
           map: style === 'banner' ? correlate.bannerLines(records, labels) : null
         };
-        log(`correlated ${records.length} run(s) over ${distinct} source line(s)` +
+        log(`correlated ${positioned.length} run(s) over ${distinct} source line(s)` +
+          (records.length > positioned.length
+            ? `, ${records.length - positioned.length} run(s) with no source position`
+            : '') +
           (unattributed ? `, ${unattributed} instruction(s) unattributed` : '') +
           ` (${style})`);
       } else {
-        log('nvdisasm -g returned no source positions for this entry point');
+        log(built.correlation
+          ? 'the line table holds no source positions for this entry point'
+          : 'nvdisasm -g returned no source positions for this entry point');
       }
     } catch (e) {
       // A listing without correlation is still a listing. Losing the SASS because the line

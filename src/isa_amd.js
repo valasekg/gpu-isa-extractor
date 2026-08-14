@@ -157,9 +157,26 @@ function bannerTail(result, field) {
     '//   scheduling is in the code below and carries hovers. Some gfx11+ encodings do hold',
     '//   embedded wait fields - wait_exp, wait_va_vdst - and those print as ordinary',
     '//   modifiers.',
-    '// No source correlation: RGA offers none in any Vulkan mode.',
     '// Instruction width varies (4, 8 or 12 bytes), so addresses are printed as RGA emits',
     '//   them and no instruction index is derived from them.');
+
+  // Correlation is conditional on this road, which no other absence here is. RGA itself
+  // offers none in any mode; the line table comes from running its bundled amdllpc a second
+  // time with debug info kept, and there are several ordinary reasons that can fail. So the
+  // banner says which happened rather than printing one sentence that is sometimes a lie.
+  if (result.correlation) {
+    lines.push(
+      '// Source correlation is from a DWARF line table, compiled separately by amdllpc and',
+      '//   checked to describe byte-identical machine code. Attribution is provenance, not a',
+      '//   bill: optimised code interleaves lines, and a shader\'s prologue tends to be',
+      '//   attributed to whichever line the scheduler hung it under.',
+      '// Runs marked `-` have no source position at all - compiler-generated code, which for',
+      '//   a vertex shader is most of the NGG wrapper Slang lowers it into.');
+  } else {
+    lines.push(
+      '// No source correlation: RGA offers none in any mode, and the separate debug compile',
+      '//   that would supply one did not run or did not agree with this listing.');
+  }
 
   if (result.accuracy) lines.push('//', ...result.accuracy.map(line => `// ${line}`));
   return lines;
@@ -480,8 +497,13 @@ const target = {
   absences: {
     controlColumn: 'RDNA states dependency resolution as separate instructions rather than ' +
       'as a field in every instruction, so there is no column to decode.',
-    correlation: 'RGA offers no source correlation in any Vulkan mode - there is no ' +
-      'line-info flag and no OpLine pass-through.',
+    // Still an absence, because it is what this target CANNOT do unaided: every other road
+    // here reads correlation out of what its compiler already produced. `bannerTail` says
+    // which of the two happened for a given listing.
+    correlation: 'RGA offers no source correlation in any mode - there is no line-info flag ' +
+      'and no OpLine pass-through. A line table can still be had by running RGA\'s own ' +
+      'bundled amdllpc a second time with `--trim-debug-info=false`, which this does when the ' +
+      'shader is single-file and the result is byte-identical to the listing.',
     cache: 'This extension has no reader for an AMD driver\'s shader cache, so AMD listings ' +
       'come from compiling rather than from browsing.'
   },

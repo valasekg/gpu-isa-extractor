@@ -1013,13 +1013,27 @@ async function slangToCuda(tools, source, outDir, { flags = [], entry }) {
  * two separate modules with the right stage on each - letting slangc discover both into one
  * module would produce something no pipeline can use.
  */
-async function slangToSpirv(tools, source, outDir, { flags = [], entry, stage, name }) {
+async function slangToSpirv(tools, source, outDir, {
+  flags = [], entry, stage, name, debugInfo = false
+}) {
   const out = path.join(outDir, `${name || entry || 'shader'}.spv`);
   const args = [
     source,
     '-target', 'spirv',
     ...(entry ? ['-entry', entry] : []),
     ...(stage ? ['-stage', stage] : []),
+    // `-g1` and not `-g2`, and only where it is asked for.
+    //
+    // `-g1` emits plain `OpLine`, which is what the AMD correlation road reads. `-g2` emits
+    // `NonSemantic.Shader.DebugInfo.100` instead, which CRASHES amdllpc - access violation in
+    // its `lower-translator` pass on hull and raygeneration shaders - and silently perturbs
+    // geometry scheduling, producing the same 371 instructions in a different order.
+    //
+    // Opt-in rather than always-on because this function also feeds the NVIDIA graphics road,
+    // where the SPIR-V goes to the local driver: changing what the driver is handed changes
+    // what it compiles and caches, and no measurement here justifies that risk on a road that
+    // gets its correlation elsewhere.
+    ...(debugInfo ? ['-g1'] : []),
     ...flags,
     '-o', out
   ];
@@ -1515,6 +1529,129 @@ async function graphicsCompile(tools, file, options) {
  * none. Which settles it in this road's favour, and is why nothing here synthesises a `.gpso`:
  * the mode that needs one is the mode this code does not take. See `accuracyNote`.
  */
+// ------------------------------------------------------------- AMD source correlation
+
+/**
+ * The `--gfxip` amdllpc wants for an RGA codename.
+ *
+ * `gfx1201` is `12.0.1`, `gfx1150` is `11.5.0`: the first two digits are the major, then the
+ * minor, then the step. Derived rather than tabulated because the derivation was checked
+ * against what RGA itself passes - `rga -v` prints its own amdllpc command line, and it read
+ * `--gfxip=12.0.1` for gfx1201.
+ *
+ * A wrong answer here is safe: amdllpc refuses an unknown gfxip outright, and this road
+ * degrades to no correlation rather than to a wrong one.
+ */
+function gfxipFor(asic) {
+  const m = /^gfx(\d{2})(\d)(\d)$/.exec(String(asic || ''));
+  return m ? `${m[1]}.${m[2]}.${m[3]}` : null;
+}
+
+/** amdllpc ships inside the RGA tree, beside the executable this already resolved. */
+function amdllpcFor(rgaPath) {
+  const exe = process.platform === 'win32' ? 'amdllpc.exe' : 'amdllpc';
+  const candidate = path.join(path.dirname(rgaPath), 'utils', exe);
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+/**
+ * The line table for an RGA compile, or null with a reason.
+ *
+ * RGA drives amdllpc with debug info trimmed and offers no way to turn that off, so this runs
+ * amdllpc a SECOND time with `--trim-debug-info=false`, using RGA's own argv otherwise. The
+ * two compiles then have to be shown to agree, and that is most of what this function is:
+ *
+ *   1. **`.text` must be byte-identical** to the code object RGA produced. `--auto-layout-desc`
+ *      means amdllpc infers its own descriptor layout, and that is the one place the two could
+ *      diverge. A line table describing different machine code is worse than no line table,
+ *      so a mismatch drops the road rather than annotating the listing with it.
+ *   2. **One source file only.** amdllpc collapses every `DIFile` into one: a shader that
+ *      `#include`s or `import`s another gets the included file's LINE NUMBERS attributed to
+ *      the top-level file's NAME. Measured at 23 of 40 instructions pointing at the wrong
+ *      file, landing on a blank line and an opening brace. That is confidently wrong rather
+ *      than honestly absent, which is the trade this codebase refuses everywhere else.
+ *
+ * Never throws. Correlation is an enhancement to a listing that is already complete, and a
+ * shader whose line table cannot be had should still disassemble.
+ *
+ * @returns {?{records, files, tool, command}}  null when unavailable; `note` explains why
+ */
+async function rdnaCorrelation(tools, { asic, modules, outDir, rgaBinary, notes, token }) {
+  const dwarf = require('./dwarf_line');
+
+  const amdllpc = amdllpcFor(tools.rga);
+  if (!amdllpc) return null;                     // an RGA install without utils/; say nothing
+
+  const gfxip = gfxipFor(asic);
+  if (!gfxip) {
+    notes.push(`no source correlation: ${asic} has no amdllpc --gfxip spelling`);
+    return null;
+  }
+  if (!rgaBinary || !fs.existsSync(rgaBinary)) {
+    notes.push('no source correlation: RGA wrote no code object to check the line table against');
+    return null;
+  }
+
+  // In PIPELINE ORDER, which RGA never has to care about and this does.
+  //
+  // `rga` takes its modules behind `--vert`/`--frag` flags, so the order they are passed in is
+  // irrelevant to it - and `modules` is built fragment-first, because the fragment shader is
+  // the one that was asked for and the vertex producer is added afterwards. amdllpc takes them
+  // POSITIONALLY, and a pipeline handed its stages backwards is a different pipeline: the
+  // `.text` guard below caught this as "the debug compile produced different machine code",
+  // which is exactly what it was.
+  const ORDER = ['vertex', 'hull', 'domain', 'geometry', 'amplification', 'mesh',
+    'fragment', 'compute'];
+  const ordered = Object.keys(modules)
+    .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b))
+    .map(stage => modules[stage]);
+
+  const elf = path.join(outDir, 'debug.elf');
+  const args = ['-v', '--include-llvm-ir', '--auto-layout-desc', '--trim-debug-info=false',
+    `-o=${elf}`, `--gfxip=${gfxip}`, ...ordered];
+  const result = await run(amdllpc, args, { timeout: 300000, token });
+  const log = `${result.stdout || ''}${result.stderr || ''}`;
+
+  // amdllpc's exit code is as unreliable as RGA's. It prints this on success and this is what
+  // the run is judged by.
+  if (!/AMDLLPC SUCCESS/.test(log) || !fs.existsSync(elf)) {
+    notes.push('no source correlation: amdllpc declined to compile with debug info');
+    return null;
+  }
+
+  const ours = await fs.promises.readFile(elf);
+  const theirs = await fs.promises.readFile(rgaBinary);
+  const ourText = dwarf.sections(ours).get('.text');
+  const theirText = dwarf.sections(theirs).get('.text');
+  if (!ourText || !theirText || !ourText.equals(theirText)) {
+    notes.push('no source correlation: the debug compile produced different machine code from ' +
+      'the listing, so its line table describes something else');
+    return null;
+  }
+  if (!dwarf.addressesAreTextRelative(ours)) {
+    notes.push('no source correlation: .text is not based at zero, so the line table\'s ' +
+      'addresses are not the listing\'s addresses');
+    return null;
+  }
+
+  let read;
+  try {
+    read = dwarf.records(ours);
+  } catch (e) {
+    notes.push(`no source correlation: the line table could not be read (${e.message})`);
+    return null;
+  }
+  if (!read.records.length || !read.files.length) return null;
+
+  if (read.files.length > 1) {
+    notes.push('no source correlation: this shader spans ' + read.files.length + ' files, and ' +
+      'amdllpc collapses them into one - the line numbers would be attributed to the wrong file');
+    return null;
+  }
+
+  return { records: read.records, files: read.files, tool: amdllpc, command: quote(result.argv) };
+}
+
 /**
  * One RDNA listing as an entry, in the shape the entry contract wants.
  *
@@ -1750,7 +1887,9 @@ async function rgaCompile(tools, file, options) {
 
   const settled = await Promise.allSettled(wanted.map(w =>
     slangToSpirv(tools, file, outDir, {
-      flags: flags.slang, entry: w.entry, stage: w.stage, name: w.name
+      flags: flags.slang, entry: w.entry, stage: w.stage, name: w.name,
+      // Asked for here and nowhere else: this is the road that can read it back.
+      debugInfo: options.correlate !== false
     })));
   for (const one of settled) {
     if (one.status === 'fulfilled') {
@@ -1771,10 +1910,21 @@ async function rgaCompile(tools, file, options) {
       'shader compiles to standing alone');
   }
 
+  // `-b` costs one extra file and buys the only thing that can check the correlation compile:
+  // the machine code RGA itself produced, to compare against.
   const built = await rga.compile({
-    rga: tools.rga, asic, modules, outDir: path.join(outDir, 'rga'), token, run
+    rga: tools.rga, asic, modules, outDir: path.join(outDir, 'rga'),
+    binary: options.correlate === false ? null : path.join(outDir, 'rga', 'pipeline.bin'),
+    token, run
   });
   steps.push({ tool: 'rga', command: quote(built.argv), log: built.log });
+
+  const correlation = options.correlate === false ? null : await rdnaCorrelation(tools, {
+    asic, modules, outDir, rgaBinary: built.binaryPath, notes, token: options.token
+  });
+  if (correlation) {
+    steps.push({ tool: 'amdllpc', command: correlation.command, log: '' });
+  }
 
   const parseRdna = require('./parse_rdna');
 
@@ -1828,6 +1978,11 @@ async function rgaCompile(tools, file, options) {
     stage,
     pipeline: describePipeline(stage, chosen, built.mode),
     accuracy: accuracyNote(built.mode),
+    // The line table, when there is one. Carried on the result rather than fetched later
+    // because it comes from a compile that has already happened and cannot be redone from the
+    // listing alone - the NVIDIA road can re-run nvdisasm over its cubin, and this road has no
+    // equivalent second look.
+    correlation,
     steps,
     ptxasLog: '',
     // Nothing here is ptxas, and the cross-check has a better source: RGA's own statistics CSV,

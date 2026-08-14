@@ -176,5 +176,42 @@ check([...vertPositions.values()].every(p => p.line > 0),
 check([...vertPositions.keys()].every(a => a < 0x200),
   'vertex addresses all sit below the fragment shader\'s base, so the stages do not bleed');
 
+section('6. A hole survives the round trip through the banner');
+
+// The banner is not a cache - it IS the correlation, read back when a saved listing is
+// reopened. So a hole has to be expressible there, or an instruction in compiler-generated
+// code inherits the previous source line the moment the file is closed and opened again.
+const correlate = require(path.join(__dirname, '..', 'src', 'correlate.js'));
+
+const withHole = [
+  { address: 0x000, file: 'D:\\shaders\\x.slang', line: 10 },
+  { address: 0x100, file: null, line: null },
+  { address: 0x200, file: 'D:\\shaders\\x.slang', line: 20 }
+];
+const labels = correlate.labelsFor(['D:\\shaders\\x.slang']);
+const mapLines = correlate.bannerLines(withHole, labels);
+check(mapLines.length === 3, 'the map has a line per run, holes included', mapLines.join(' | '));
+check(/^@0100 -$/.test(mapLines[1]), 'and the hole is written as a dash', mapLines[1]);
+
+const banner = mapLines.map(l => `// ${' '.repeat(14)}  ${l}`).join('\n') + '\nsomething:\n';
+const runs = correlate.readAddressMap(banner);
+check(runs.length === 3, 'all three read back', `${runs.length}`);
+check(runs[1].line === null && runs[1].label === null,
+  'the hole reads back as a run with no position');
+
+check(correlate.positionAt(runs, 0x050) && correlate.positionAt(runs, 0x050).line === 10,
+  'an address in the first run gets line 10');
+check(correlate.positionAt(runs, 0x180) === null,
+  'an address INSIDE THE HOLE gets nothing - not line 10, which is the whole point');
+check(correlate.positionAt(runs, 0x240) && correlate.positionAt(runs, 0x240).line === 20,
+  'and the run after the hole resumes normally');
+
+// The NVIDIA form must be untouched by all of this.
+const plain = `// ${' '.repeat(14)}  @0000 k.cu:7\ncode:\n`;
+const plainRuns = correlate.readAddressMap(plain);
+check(plainRuns.length === 1 && plainRuns[0].line === 7 && plainRuns[0].label === 'k.cu',
+  'an ordinary NVIDIA map entry still reads exactly as before',
+  JSON.stringify(plainRuns));
+
 console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);

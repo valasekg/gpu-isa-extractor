@@ -57,7 +57,18 @@ const MARKER_RE = /^\s*\/\/##\s+([^\s:][^:]*):(\d+)\s*$/;
  * The `@` is what keeps this unambiguous against the source-file table in the same banner,
  * whose right-hand side is a Windows path and therefore also contains a colon.
  */
-const ADDRESS_MAP_RE = /^\s*\/\/\s+@([0-9a-fA-F]+)\s+(\S+):(\d+)\s*$/;
+/**
+ * `@0000 file.slang:9`, or `@0000 -` for a run with no source position at all.
+ *
+ * The dash is not decoration. A DWARF line table marks compiler-generated code - a vertex
+ * shader's NGG wrapper, prologue setup - with line 0, meaning "nothing here came from the
+ * source". Leaving those runs out of the map would make the PREVIOUS run appear to continue
+ * through them, because `positionAt` answers with the last run at or before an address. So a
+ * hole is written down as explicitly as a position, and `positionAt` returns null inside one.
+ *
+ * The NVIDIA road never emits these: nvdisasm's markers only ever name a real line.
+ */
+const ADDRESS_MAP_RE = /^\s*\/\/\s+@([0-9a-fA-F]+)\s+(?:-|(\S+):(\d+))\s*$/;
 
 const ADDRESS_RE = /\/\*([0-9a-fA-F]+)\*\//;
 
@@ -279,7 +290,9 @@ function annotate(listing, map, { labels } = {}) {
 function rewriteSource(parsed, from, to) {
   if (!from || !to || samePath(from, to)) return parsed;
 
-  const swap = file => (samePath(file, from) ? to : file);
+  // `file` is null on a hole - a run explicitly attributed to nothing, which the AMD road
+  // emits and the NVIDIA one never does. `samePath` would throw on it.
+  const swap = file => (file && samePath(file, from) ? to : file);
   const entries = new Map();
   for (const [name, records] of parsed.entries) {
     entries.set(name, records.map(r => ({ ...r, file: swap(r.file) })));
@@ -295,8 +308,13 @@ function rewriteSource(parsed, from, to) {
 function bannerLines(records, labels) {
   const out = [];
   for (const record of records || []) {
+    const at = `@${record.address.toString(16).padStart(4, '0')}`;
+    if (record.line === null || record.line === undefined || !record.file) {
+      out.push(`${at} -`);                    // a hole; see ADDRESS_MAP_RE
+      continue;
+    }
     const label = (labels && labels.get(record.file)) || path.basename(record.file);
-    out.push(`@${record.address.toString(16).padStart(4, '0')} ${label}:${record.line}`);
+    out.push(`${at} ${label}:${record.line}`);
   }
   return out;
 }
@@ -324,7 +342,12 @@ function readAddressMap(text) {
     // The map lives in the banner; the first line that is not a comment ends it.
     if (!line.startsWith('//')) break;
     const m = ADDRESS_MAP_RE.exec(line);
-    if (m) out.push({ address: parseInt(m[1], 16), label: m[2], line: Number(m[3]) });
+    // `m[2]` absent is the dash form: a run that is explicitly attributed to nothing.
+    if (m) {
+      out.push(m[2] === undefined
+        ? { address: parseInt(m[1], 16), label: null, line: null }
+        : { address: parseInt(m[1], 16), label: m[2], line: Number(m[3]) });
+    }
   }
   return out.sort((a, b) => a.address - b.address);
 }
@@ -344,7 +367,10 @@ function positionAt(runs, address) {
     const mid = (lo + hi) >> 1;
     if (runs[mid].address <= address) { found = runs[mid]; lo = mid + 1; } else hi = mid - 1;
   }
-  return found;
+  // A hole answers the same as "before the first run": there is no source position here. The
+  // alternative - handing back a run whose line is null - would push the check onto every
+  // caller, and the one that forgot would render `file:null`.
+  return found && found.line === null ? null : found;
 }
 
 /**
