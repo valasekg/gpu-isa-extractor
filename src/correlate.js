@@ -66,8 +66,16 @@ const MARKER_RE = /^\s*\/\/##\s+([^\s:][^:]*):(\d+)\s*$/;
  * hole is written down as explicitly as a position, and `positionAt` returns null inside one.
  *
  * The NVIDIA road never emits these: nvdisasm's markers only ever name a real line.
+ *
+ * ## The label may contain spaces
+ *
+ * `(\S+)` here used to be a silent data-loss bug. `bannerLines` writes the file's BASENAME,
+ * and a shader called `surface shading.slang` produced `@0000 surface shading.slang:12`, which
+ * the pattern then declined to match - 47 rows written, 5 read back, correlation quietly gone.
+ * `(.+)` is greedy, so it takes everything up to the LAST colon and the line number is still
+ * unambiguous.
  */
-const ADDRESS_MAP_RE = /^\s*\/\/\s+@([0-9a-fA-F]+)\s+(?:-|(\S+):(\d+))\s*$/;
+const ADDRESS_MAP_RE = /^\s*\/\/\s+@([0-9a-fA-F]+)\s+(?:-|(.+):(\d+))\s*$/;
 
 /**
  * The instruction address on a listing line, in either dialect's spelling.
@@ -520,6 +528,7 @@ module.exports = {
   sourcesFor,
   unescapePath,
   samePath,
+  addressIn,
   parse,
   byAddress,
   labelsFor,

@@ -1553,10 +1553,12 @@ const SPIRV_MAGIC = 0x07230203;
  * The source files a SPIR-V module's line info actually refers to.
  *
  * Asked of the SPIR-V and NOT of the DWARF, because the DWARF cannot answer it. amdllpc
- * collapses every `DIFile` into one, and measured on a two-file compute shader it kept the
- * WRONG one: the SPIR-V named `main.slang` and `helper.slang` correctly, and the line table
- * that came out named only `helper.slang` - so every instruction from `main.slang` would have
- * been attributed to a file it never came from, at line numbers belonging to the other file.
+ * collapses every `DIFile` into one: on a two-file compute shader the SPIR-V named
+ * `main.slang` and `helper.slang` correctly and the line table that came out named exactly
+ * one of them, so every instruction from the other would have been attributed to a file it
+ * never came from, at line numbers belonging to a different file. WHICH one survives is not
+ * predictable - it was measured going both ways depending on where the entry point sits - so
+ * nothing here relies on the direction, only on the count.
  *
  * The first version of this guard read the DWARF's file count and so was dead code: one file
  * in, one file out, guard never fires, attributions silently wrong. This reads `OpLine`'s File
@@ -1567,21 +1569,43 @@ const SPIRV_MAGIC = 0x07230203;
  * which is what a future Slang release that changes what `-g1` means would look like. Better to
  * lose the road than to keep it on an assumption.
  *
- * @returns {Set<number>} distinct `OpString` ids used as an `OpLine` file
+ * Returns the file PATHS, resolved through `OpString`, and not the `<id>`s that name them.
+ * Ids are per-module result numbers, so `%12` in a vertex module and `%12` in a fragment
+ * module are unrelated - a set of them cannot be unioned across a pipeline, and the first
+ * version of this took `Math.max` of the per-module counts instead. That misses the case that
+ * matters: two stages each naming exactly ONE file, but two DIFFERENT files, scores 1 and the
+ * guard never fires on a pipeline that genuinely spans two sources.
+ *
+ * @returns {Set<string>} distinct source paths referenced by `OpLine`
  */
 function spirvLineFiles(buf) {
   const files = new Set();
   if (!Buffer.isBuffer(buf) || buf.length < 20) return files;
   if (buf.readUInt32LE(0) !== SPIRV_MAGIC) return files;      // big-endian SPIR-V is not emitted
 
+  const strings = new Map();
+  const referenced = new Set();
   for (let at = 20; at + 4 <= buf.length;) {
     const word = buf.readUInt32LE(at);
     const count = word >>> 16;
     const opcode = word & 0xffff;
     if (count === 0 || at + count * 4 > buf.length) break;
-    // OpLine = 8, operands File <id>, Line, Column.
-    if (opcode === 8 && count >= 4) files.add(buf.readUInt32LE(at + 4));
+    if (opcode === 7 && count >= 3) {
+      // OpString: Result <id>, Literal. The literal is NUL-terminated and word-padded.
+      const raw = buf.subarray(at + 8, at + count * 4);
+      const end = raw.indexOf(0);
+      strings.set(buf.readUInt32LE(at + 4),
+        raw.toString('utf8', 0, end < 0 ? raw.length : end));
+    } else if (opcode === 8 && count >= 4) {
+      referenced.add(buf.readUInt32LE(at + 4));       // OpLine: File <id>, Line, Column
+    }
     at += count * 4;
+  }
+
+  for (const id of referenced) {
+    const name = strings.get(id);
+    // Keyed case-folded, because the same file can reach here spelled two ways on Windows.
+    if (name) files.add(name.toLowerCase());
   }
   return files;
 }
@@ -1615,7 +1639,21 @@ function amdllpcFor(rgaPath) {
  *
  * @returns {?{records, files, tool, command}}  null when unavailable; `note` explains why
  */
-async function rdnaCorrelation(tools, { asic, modules, outDir, rgaBinary, notes, token }) {
+async function rdnaCorrelation(tools, options) {
+  // The whole body, not just the decode. The docblock's promise was only half kept: the
+  // amdllpc spawn, both readFiles and the two ELF reads were outside any try, and `spawn.text`
+  // REJECTS when the child emits an `error` event - which `amdllpcFor` cannot rule out, since
+  // it proves only that the file exists, not that it can be executed. A listing that had
+  // already compiled was being destroyed by the failure of the thing decorating it.
+  try {
+    return await rdnaCorrelationUnguarded(tools, options);
+  } catch (e) {
+    options.notes.push(`no source correlation: ${e && e.message ? e.message : e}`);
+    return null;
+  }
+}
+
+async function rdnaCorrelationUnguarded(tools, { asic, modules, outDir, rgaBinary, notes, token }) {
   const dwarf = require('./dwarf_line');
 
   const amdllpc = amdllpcFor(tools.rga);
@@ -1634,25 +1672,26 @@ async function rdnaCorrelation(tools, { asic, modules, outDir, rgaBinary, notes,
   // Decided from the SPIR-V, BEFORE amdllpc runs, because afterwards the evidence is gone -
   // see `spirvLineFiles`. Every module is checked and the counts unioned: a pipeline whose
   // fragment shader is single-file and whose vertex shader includes a header still spans two.
-  let spanned = 0;
+  // A genuine union over PATHS. Two stages that each name one file, but different ones, span
+  // two - which counting per module and taking the largest would score as one.
+  const spanned = new Set();
   for (const module of Object.values(modules)) {
-    let found;
-    try {
-      found = spirvLineFiles(await fs.promises.readFile(module));
-    } catch (e) {
-      found = new Set();
-    }
+    const found = spirvLineFiles(await fs.promises.readFile(module));
     if (!found.size) {
       notes.push('no source correlation: the SPIR-V carries no OpLine, so slangc emitted no ' +
         'line information for this shader');
       return null;
     }
-    spanned = Math.max(spanned, found.size);
+    for (const name of found) spanned.add(name);
   }
-  if (spanned > 1) {
-    notes.push(`no source correlation: this shader spans ${spanned} source files, and amdllpc ` +
-      'collapses them into one - measured keeping the INCLUDED file and attributing the main ' +
-      'file\'s instructions to it, which would be confidently wrong rather than absent');
+  if (spanned.size > 1) {
+    // Which of the files survives is deliberately not stated. amdllpc keeps one DIFile and
+    // discards the rest, and it was measured keeping a different one in different layouts -
+    // the included file in one test, the entry point's file in another. The direction is not
+    // reliable, so the note claims only what is: the attributions would name the wrong file.
+    notes.push(`no source correlation: this shader spans ${spanned.size} source files, and ` +
+      'amdllpc collapses them into one - the surviving file would be labelled with the other ' +
+      'file\'s line numbers, which is confidently wrong rather than absent');
     return null;
   }
 

@@ -183,15 +183,27 @@ function readForm(r, form, strings) {
   }
 }
 
-/** The directory or file table: a format description, then that many entries. */
+/**
+ * The directory or file table: a format description, then that many entries.
+ *
+ * The count is BOUNDED by the bytes left in the section, and that is not defensive
+ * programming for its own sake. `uleb` past the end of a Buffer reads `undefined`, which
+ * arithmetic turns into 0, so a corrupt count neither throws nor terminates - it just keeps
+ * pushing entries. Measured on a hand-corrupted 41-byte `.debug_line` whose only damage was
+ * the directory count: 16 million took 1.7 seconds, and larger values ran for 25 seconds and
+ * 3.7 GB before V8 gave up. An entry cannot be shorter than one byte, so the bytes remaining
+ * are a hard ceiling on how many there can be.
+ */
 function readEntryTable(r, strings) {
   const formatCount = r.u8();
   const formats = [];
   for (let i = 0; i < formatCount; i++) formats.push([r.uleb(), r.uleb()]);
 
-  const count = r.uleb();
+  const declared = r.uleb();
+  const count = Math.min(declared, Math.max(0, r.buf.length - r.at));
   const entries = [];
   for (let i = 0; i < count; i++) {
+    if (r.at >= r.buf.length) break;                  // ran out mid-entry
     const entry = { path: null, directory: null };
     for (const [contentType, form] of formats) {
       const value = readForm(r, form, strings);
@@ -388,11 +400,16 @@ function addressesAreTextRelative(buf) {
   const shentsize = buf.readUInt16LE(0x3A);
   const shnum = buf.readUInt16LE(0x3C);
   const shstrndx = buf.readUInt16LE(0x3E);
-  if (!shoff || !shnum) return false;
+  // The same bound `sections` applies. Without it the two disagreed on a truncated file:
+  // `sections` returned nothing and this threw RangeError reading past the end, so a
+  // half-written code object crashed the compile instead of losing the correlation.
+  if (!shoff || !shnum || shoff + shnum * shentsize > buf.length) return false;
+  if (shstrndx >= shnum) return false;
 
   const strHeader = shoff + shstrndx * shentsize;
   const strOff = Number(buf.readBigUInt64LE(strHeader + 0x18));
   const strSize = Number(buf.readBigUInt64LE(strHeader + 0x20));
+  if (strOff + strSize > buf.length) return false;
   const strtab = buf.subarray(strOff, strOff + strSize);
 
   for (let i = 0; i < shnum; i++) {
@@ -484,10 +501,50 @@ function positionsFor(runs, addresses) {
   return map;
 }
 
+/**
+ * The runs that describe one listing, out of a table describing a whole pipeline.
+ *
+ * A graphics pipeline compiles to ONE code object with every hardware stage in one `.text`,
+ * so the line table covers all of them - vertex at 0x0, fragment at 0x200 - while RGA writes
+ * one ISA file per stage. Handing the whole table to a single listing put 17 of 47 runs in the
+ * fragment shader's banner that belonged to the vertex shader, at addresses that listing does
+ * not contain, and inflated its "N runs over M source lines" to match.
+ *
+ * Per-instruction attribution was never wrong - `positionsFor` only answers about addresses it
+ * is given - but the banner is read by people, and a map full of addresses that are not in the
+ * listing beneath it is worse than useless.
+ *
+ * The run covering the first address is kept even though it starts earlier, because that is
+ * the run the first instruction is in; it is re-based so the map does not point outside.
+ *
+ * @param {Array} runs        from `records()`
+ * @param {Iterable<number>} addresses  the listing's own instruction addresses
+ */
+function forListing(runs, addresses) {
+  const all = [...addresses];
+  if (!runs || !runs.length || !all.length) return [];
+  const first = Math.min(...all);
+  const last = Math.max(...all);
+
+  const out = [];
+  for (const run of runs) {
+    if (run.address > last) break;
+    if (run.address < first) {
+      // Covers the first instruction: keep it, re-based, and let a later run replace it.
+      out.length = 0;
+      out.push({ ...run, address: first });
+      continue;
+    }
+    out.push(run);
+  }
+  return out;
+}
+
 module.exports = {
   sections,
   decode,
   records,
   positionsFor,
+  forListing,
   addressesAreTextRelative
 };

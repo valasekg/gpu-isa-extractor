@@ -197,10 +197,21 @@ const oneFile = fs.readFileSync(path.join(FIXTURES, 'onefile-g1.spv'));
 
 check(compileMod.spirvLineFiles(twoFile).size === 2,
   'a shader that includes another names two files in its OpLine records',
-  String(compileMod.spirvLineFiles(twoFile).size));
+  [...compileMod.spirvLineFiles(twoFile)].join(', '));
 check(compileMod.spirvLineFiles(oneFile).size === 1,
   'and one that does not names one',
-  String(compileMod.spirvLineFiles(oneFile).size));
+  [...compileMod.spirvLineFiles(oneFile)].join(', '));
+
+// PATHS, not <id>s. A result id is per-module, so `%12` in a vertex module and `%12` in a
+// fragment module are unrelated - counting ids per module and taking the largest scores 1 for
+// a pipeline whose two stages each name one file, but two DIFFERENT files.
+check([...compileMod.spirvLineFiles(twoFile)].every(f => typeof f === 'string' && f.length > 3),
+  'and they come back as paths, so they can be unioned across a pipeline',
+  [...compileMod.spirvLineFiles(twoFile)].join(', '));
+const union = new Set([...compileMod.spirvLineFiles(twoFile),
+  ...compileMod.spirvLineFiles(oneFile)]);
+check(union.size === 3, 'unioning two modules counts every distinct file once',
+  `${union.size}`);
 
 // The same call is what proves `-g1` did anything at all. A future Slang whose `-g1` stops
 // emitting OpLine must lose the road rather than keep it on an assumption.
@@ -249,6 +260,48 @@ check(plainRuns.length === 1 && plainRuns[0].line === 7 && plainRuns[0].label ==
   'an ordinary NVIDIA map entry still reads exactly as before',
   JSON.stringify(plainRuns));
 
+section('6b. What survives a hostile or half-written file');
+
+// Every one of these was a real failure before it was a check. A code object is a file on
+// disk that another process is writing, and correlation is a decoration on a listing that has
+// already compiled - none of these may take the listing down with them.
+
+check(dwarf.addressesAreTextRelative(buf.subarray(0, 4096)) === false,
+  'a truncated code object answers false rather than throwing RangeError');
+let survived = true;
+for (let cut = 64; cut < buf.length; cut += 512) {
+  try {
+    dwarf.addressesAreTextRelative(buf.subarray(0, cut));
+    dwarf.sections(buf.subarray(0, cut));
+  } catch (e) {
+    survived = false;
+    check(false, `truncating to ${cut} bytes threw`, e.message);
+    break;
+  }
+}
+check(survived, 'and no truncation of this fixture throws at all');
+
+// A corrupt directory-entry count used to allocate until V8 died - 25 seconds and 3.7 GB from
+// a 41-byte section, because uleb past the end of a Buffer reads undefined, becomes 0, and
+// never terminates the loop. The bound is the bytes remaining: an entry is at least one byte.
+const corrupt = Buffer.from(buf);
+const lineSection = dwarf.sections(buf).get('.debug_line');
+const lineAt = buf.indexOf(lineSection.subarray(0, 32));
+check(lineAt > 0, 'the .debug_line section is locatable for corruption');
+// The directory-table entry count sits after the header params; overwrite a wide span of the
+// table with 0xff so whatever ULEB it lands on decodes as enormous.
+for (let i = lineAt + 15; i < lineAt + 30 && i < corrupt.length; i++) corrupt[i] = 0xff;
+const started = Date.now();
+let threw = null;
+try {
+  dwarf.decode(corrupt);
+} catch (e) {
+  threw = e.message;
+}
+const took = Date.now() - started;
+check(took < 3000, 'a corrupt entry count returns quickly instead of allocating forever',
+  `${took}ms${threw ? `, threw: ${threw.slice(0, 60)}` : ''}`);
+
 section('7. The editor resolves an RDNA listing line to a source line');
 
 // The whole point, end to end: a saved AMD listing with its banner map, read back the way the
@@ -256,11 +309,39 @@ section('7. The editor resolves an RDNA listing line to a source line');
 // exercises the one thing that had to change in correlate.js - nvdisasm writes the address in
 // a LEADING `/*hex*/` and RGA in a TRAILING `// hex:`, and readMarkers scans for it.
 const fragLabels = correlate.labelsFor(files);
+
+// Narrowed to this listing first, as openEntry does. The line table covers the whole
+// pipeline - vertex at 0x0, fragment at 0x200, one .text - while RGA writes one file per
+// stage, so the unfiltered set put 17 of 47 runs in the fragment banner at addresses that
+// listing does not contain, and inflated its run and line counts to match.
+const forFrag = dwarf.forListing(records, fragAddresses);
+
 const document = [
-  ...correlate.bannerLines(records, fragLabels).map(l => `// ${' '.repeat(14)}  ${l}`),
+  ...correlate.bannerLines(forFrag, fragLabels).map(l => `// ${' '.repeat(14)}  ${l}`),
   '',
   ...frag.split('\n')
 ].join('\n');
+
+check(forFrag.length < records.length,
+  'the whole-pipeline table is narrowed to the listing being read',
+  `${forFrag.length} of ${records.length} runs`);
+check(forFrag.every(r => r.address >= Math.min(...fragAddresses) &&
+  r.address <= Math.max(...fragAddresses)),
+  'and every surviving run is inside the listing\'s own address range');
+check(forFrag.length > 0 && forFrag[0].address === Math.min(...fragAddresses),
+  'the run covering the first instruction is kept, re-based so it points inside',
+  forFrag.length ? `0x${forFrag[0].address.toString(16)}` : 'none');
+
+// A space in the file name used to lose the map silently: 47 rows written, 5 read back.
+const spaced = correlate.labelsFor(['D:\\a b\\surface shading.slang']);
+const spacedRow = correlate.bannerLines(
+  [{ address: 0x10, file: 'D:\\a b\\surface shading.slang', line: 12 }], spaced);
+const spacedBack = correlate.readAddressMap(`// ${' '.repeat(14)}  ${spacedRow[0]}\ncode:\n`);
+check(spacedBack.length === 1 && spacedBack[0].line === 12,
+  'a file name containing a space still round-trips through the banner',
+  `${spacedRow[0]} -> ${JSON.stringify(spacedBack)}`);
+check(spacedBack.length === 1 && spacedBack[0].label === 'surface shading.slang',
+  'with the label intact', spacedBack.length ? spacedBack[0].label : 'none');
 
 const marks = correlate.readMarkers(document);
 check(marks.byListingLine.size > 50,
@@ -269,7 +350,7 @@ check(marks.byListingLine.size > 50,
 
 // The banner's own rows must not be indexed as if they were code - that bug scrolled the
 // listing back up to its own header.
-const bannerRows = correlate.bannerLines(records, fragLabels).length;
+const bannerRows = correlate.bannerLines(forFrag, fragLabels).length;
 check([...marks.byListingLine.keys()].every(i => i > bannerRows),
   'and no banner row is mistaken for an instruction',
   [...marks.byListingLine.keys()].filter(i => i <= bannerRows).join(', '));

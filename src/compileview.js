@@ -517,6 +517,22 @@ async function chooseEntry(entries, target) {
  * `.text` section of a cubin is the same kind of thing a carve produces. Anything that only
  * worked here would drift out of step with the path that is used far more often.
  */
+/**
+ * Every instruction address a listing actually contains.
+ *
+ * `correlate.addressIn` knows both dialects' spellings, so this works on either - but it is
+ * only needed where a line table describes more code than the listing does, which is the AMD
+ * road: one code object holds every stage of a pipeline and RGA writes one file per stage.
+ */
+function addressesIn(text) {
+  const out = [];
+  for (const line of text.split('\n')) {
+    const address = correlate.addressIn(line);
+    if (address !== null) out.push(address);
+  }
+  return out;
+}
+
 async function openEntry({ built, entry, source, compiledFrom, directive, configured,
   archInfo, token, outDir, target }) {
   const graphics = built.road === 'graphics';
@@ -568,7 +584,11 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
       // the file the user actually has open.
       const parsed = built.correlation
         ? correlate.rewriteSource(
-          { entries: new Map([[entry.name, built.correlation.records]]),
+          // Narrowed to THIS listing first. The line table covers the whole pipeline - every
+          // hardware stage shares one `.text` - while the listing holds one stage, so the
+          // unfiltered set puts runs in the banner at addresses the reader cannot find.
+          { entries: new Map([[entry.name, require('./dwarf_line').forListing(
+            built.correlation.records, addressesIn(plain))]]),
             files: built.correlation.files },
           compiledFrom, source)
         : correlate.rewriteSource(
@@ -610,8 +630,12 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
             correlate.byAddress(records, compiled.evidence.codeBytes, stride),
             { labels }).text;
         } else if (style === 'inline') {
-          // Said rather than silently falling back to the banner form, because the setting was
-          // set deliberately and the reason it cannot be honoured is a property of the ISA.
+          // Said rather than silently falling back, because the setting was set deliberately
+          // and the reason it cannot be honoured is a property of the ISA. It DOES fall back
+          // though - `map` below is built for this case too. Leaving it null wrote a banner
+          // that announced a source map and then contained none, while the inline body
+          // annotation had also been skipped: the setting turned correlation off entirely
+          // rather than changing its shape.
           log(`inline correlation needs a fixed instruction width, which ${target.vendor} ` +
             `${target.isa} does not have; the map is in the banner instead`);
         }
@@ -623,7 +647,9 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
           lines: distinct,
           unattributed,
           files: parsed.files.map(f => [f, labels.get(f)]),
-          map: style === 'banner' ? correlate.bannerLines(records, labels) : null
+          // Written whenever the body was NOT annotated, which is the banner style and any
+          // target the inline style cannot serve.
+          map: (style === 'banner' || !stride) ? correlate.bannerLines(records, labels) : null
         };
         log(`correlated ${positioned.length} run(s) over ${distinct} source line(s)` +
           (records.length > positioned.length
