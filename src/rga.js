@@ -179,12 +179,16 @@ async function targets(rgaPath, run) {
  * @param {string} options.outDir     where to write; emptied first
  * @param {string} [options.mode]     MODE_OFFLINE or MODE_DRIVER
  * @param {?string} [options.pso]     a .gpso/.cpso pipeline state file, live-driver mode only
+ * @param {?string} [options.binary]  ask for the pipeline ELF here as well as the listings
  * @param {*} [options.token]         cancellation
  * @param {function} options.run      the process runner
- * @returns {Promise<{listings, statistics, argv, log, mode}>}
+ * @returns {Promise<{listings, statistics, binaryPath, argv, log, mode}>}
  *   `listings` is stage -> ISA text. Empty is a FAILURE, not an empty answer; see below.
+ *   `binaryPath` is where the ELF really landed, which is NOT the path asked for - RGA
+ *   prefixes the device onto the basename - or null if none was asked for or none appeared.
  */
-async function compile({ rga, asic, modules, outDir, mode = MODE_OFFLINE, pso, token, run }) {
+async function compile({ rga, asic, modules, outDir, mode = MODE_OFFLINE, pso, binary,
+  token, run }) {
   const flags = STAGE_FLAGS[mode];
   const unsupported = Object.keys(modules).filter(stage => !flags[stage]);
   if (unsupported.length) {
@@ -205,6 +209,11 @@ async function compile({ rga, asic, modules, outDir, mode = MODE_OFFLINE, pso, t
   const statsStem = path.join(outDir, 'stats.csv');
   const args = ['-s', mode, '-c', asic, '--isa', isaStem, '-a', statsStem];
   if (pso && mode === MODE_DRIVER) args.push('--pso', pso);
+  // `-b` is the whole pipeline's ELF, one file rather than one per stage - which is why the
+  // entries this road produces carry no per-stage microcode. Off unless asked for: it is
+  // 36 KB for a two-stage pipeline whose listings are a few KB, and nothing needs it to read
+  // the ISA. `disassembleCodeObject` is what makes it worth having at all.
+  if (binary) args.push('-b', binary);
   for (const [stage, file] of Object.entries(modules)) args.push(flags[stage], file);
 
   const result = await run(rga, args, { timeout: 300000, token });
@@ -229,7 +238,125 @@ async function compile({ rga, asic, modules, outDir, mode = MODE_OFFLINE, pso, t
       `directory is the only signal there is.${log.trim() ? `\n${log.trim()}` : ''}`);
   }
 
-  return { listings, statistics, argv: result.argv, log, mode };
+  // Where the ELF really landed. Asked for `pipeline.bin`, RGA writes `gfx1201_pipeline.bin`,
+  // so the path handed in is not the path to read back.
+  let binaryPath = null;
+  if (binary) {
+    const decorated = path.join(path.dirname(binary), `${asic}_${path.basename(binary)}`);
+    if (fs.existsSync(decorated)) binaryPath = decorated;
+    else if (fs.existsSync(binary)) binaryPath = binary;
+  }
+
+  return { listings, statistics, binaryPath, argv: result.argv, log, mode };
+}
+
+// --------------------------------------------------------------- reading a code object
+
+/** `-s bin`. Not a compile: a reader over an ELF that already holds compiled code. */
+const MODE_BINARY = 'bin';
+
+const ELF_MAGIC = 0x464c457f;                  // "\x7fELF" little-endian
+const EM_AMDGPU = 224;
+const ELFOSABI_AMDGPU_HSA = 64;
+
+/** RGA's output stage suffix back to the vocabulary the rest of this codebase uses. */
+const STAGE_OF_OUTPUT = Object.fromEntries(
+  Object.entries(OUTPUT_STAGE).map(([stage, suffix]) => [suffix, stage]));
+
+/** `<device>_isa_<stage>.txt` / `<device>_stats_<stage>.csv`, whatever the device turns out to be. */
+const OUTPUT_NAME_RE = /^(.+)_(isa|stats)_([a-z]+)\.(?:txt|csv)$/;
+
+/**
+ * Is this an AMD code object?
+ *
+ * Two independent markers rather than one, because `.bin` is a contested extension here - the
+ * NVIDIA road's GLCache blobs use it too, and those are not ELF at all. `EI_OSABI` and
+ * `e_machine` are set by different parts of the toolchain, so requiring both means a file has
+ * to be an AMDGPU ELF on two separate accounts before this road claims it.
+ *
+ * Deliberately a pure buffer test, so the routing decision can be made without spawning RGA.
+ */
+function isCodeObject(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 64) return false;
+  if (buf.readUInt32LE(0) !== ELF_MAGIC) return false;
+  if (buf[4] !== 2 || buf[5] !== 1) return false;             // ELF64, little-endian
+  return buf.readUInt16LE(18) === EM_AMDGPU &&
+    buf[7] >= ELFOSABI_AMDGPU_HSA && buf[7] <= ELFOSABI_AMDGPU_HSA + 3;
+}
+
+/**
+ * Disassemble an AMD code object, the counterpart of the cubin road.
+ *
+ * Two things make this different from `compile()` above, both measured rather than assumed:
+ *
+ *   1. **It takes no target.** `-s bin` reads the target out of the code object and says so -
+ *      "Target GPU detected: gfx1201 (RDNA4)" - which is why there is no `asic` parameter to
+ *      get wrong. Passing `-c` here would be inventing an answer the file already contains.
+ *   2. **The output names are not predictable.** `compile()` can build the filenames it
+ *      expects because it chose the device and the stages. Here BOTH come out of the ELF, so
+ *      the directory is emptied first and then read back for whatever landed in it. Guessing
+ *      the stem would mean knowing the answer before asking the question.
+ *
+ * Measured against the road that produced the ELF: the read-back listings are BYTE-IDENTICAL
+ * to the ones `compile()` wrote in the same run, both stages of a pipeline recovered
+ * separately from the single pipeline ELF. So this is a reader, not a second compiler, and
+ * `test_rga.js` pins that.
+ *
+ * @param {string} options.rga      the executable
+ * @param {string} options.co       path to the code object
+ * @param {string} options.outDir   where to write; emptied first
+ * @param {*} [options.token]       cancellation
+ * @param {function} options.run    the process runner
+ * @returns {Promise<{listings, statistics, device, stages, argv, log, mode}>}
+ */
+async function disassembleCodeObject({ rga, co, outDir, token, run }) {
+  await fs.promises.rm(outDir, { recursive: true, force: true });
+  await fs.promises.mkdir(outDir, { recursive: true });
+
+  const args = ['-s', MODE_BINARY, '--co', co,
+    '--isa', path.join(outDir, 'isa.txt'),
+    '-a', path.join(outDir, 'stats.csv')];
+
+  const result = await run(rga, args, { timeout: 300000, token });
+  if (result.cancelled) throw new Error('cancelled');
+  const log = `${result.stdout || ''}${result.stderr || ''}`;
+
+  const listings = {};
+  const statistics = {};
+  const devices = new Set();
+  for (const name of await fs.promises.readdir(outDir)) {
+    const m = OUTPUT_NAME_RE.exec(name);
+    if (!m) continue;
+    const [, device, kind, suffix] = m;
+    // An unknown suffix is kept under its own name rather than dropped. RGA grows stages
+    // faster than this table does, and a listing nobody can read is still better than one
+    // silently discarded.
+    const stage = STAGE_OF_OUTPUT[suffix] || suffix;
+    devices.add(device);
+    const text = await fs.promises.readFile(path.join(outDir, name), 'utf8');
+    (kind === 'isa' ? listings : statistics)[stage] = text;
+  }
+
+  if (!Object.keys(listings).length) {
+    throw new Error(
+      `rga wrote no ISA for ${path.basename(co)} and exited ${result.code}. Its exit code ` +
+      'does not report failure, so an empty output directory is the only signal there is. ' +
+      'A code object built for a target this RGA no longer supports fails exactly like ' +
+      `this.${log.trim() ? `\n${log.trim()}` : ''}`);
+  }
+
+  // The device from the FILENAMES, not from the log. Both are RGA's word for it, but the
+  // filenames are the ones the listings actually arrived under - parsing the human-readable
+  // banner would be trusting prose over structure.
+  return {
+    listings,
+    statistics,
+    device: devices.size === 1 ? [...devices][0] : null,
+    stages: Object.keys(listings),
+    argv: result.argv,
+    log,
+    mode: MODE_BINARY
+  };
 }
 
 /**
@@ -265,13 +392,17 @@ function readStatistics(csv) {
 module.exports = {
   MODE_OFFLINE,
   MODE_DRIVER,
+  MODE_BINARY,
   STAGE_FLAGS,
   OUTPUT_STAGE,
+  STAGE_OF_OUTPUT,
   ALWAYS_ZERO,
   resolve,
   version,
   targets,
   compile,
+  isCodeObject,
+  disassembleCodeObject,
   readStatistics,
   installRoots
 };

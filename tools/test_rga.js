@@ -283,6 +283,58 @@ async function main() {
         'default RGA invents, and the reason the two ever looked like they disagreed');
     }
 
+    // The binary road, against the road that made the file. `-s bin` is claimed to be a READER
+    // rather than a second compiler, and the only way to hold it to that is to disassemble an
+    // ELF whose listings are already in hand and require them to match exactly.
+    const withElf = await rga.compile({
+      rga: found.path, asic,
+      modules: { vertex: path.join(SPV, 'vs.spv'), fragment: path.join(SPV, 'fs.spv') },
+      outDir: path.join(outRoot, 'with-elf'),
+      binary: path.join(outRoot, 'with-elf', 'pipeline.bin'),
+      run
+    });
+    check(!!withElf.binaryPath && fs.existsSync(withElf.binaryPath),
+      'asking for -b produces an ELF, and the path it really landed at is reported',
+      `asked for pipeline.bin, got ${withElf.binaryPath}`);
+
+    check(rga.isCodeObject(fs.readFileSync(withElf.binaryPath)),
+      'and it sniffs as an AMD code object, on both e_machine and EI_OSABI');
+    check(!rga.isCodeObject(fs.readFileSync(path.join(SPV, 'fs.spv'))),
+      'while a SPIR-V module does not - it is not even an ELF');
+    check(!rga.isCodeObject(Buffer.alloc(64)),
+      'nor do 64 zero bytes, which are long enough to read but say nothing');
+
+    const readBack = await rga.disassembleCodeObject({
+      rga: found.path, co: withElf.binaryPath,
+      outDir: path.join(outRoot, 'readback'), run
+    });
+    check(readBack.device === asic,
+      'the target comes out of the code object rather than being supplied',
+      `detected ${readBack.device}, compiled for ${asic}`);
+    check(!readBack.argv.includes('-c'),
+      'and no -c was passed, because the file already knows');
+    check(readBack.stages.includes('vertex') && readBack.stages.includes('fragment'),
+      'both stages are recovered separately from the one pipeline ELF',
+      readBack.stages.join(', '));
+    check(readBack.listings.fragment === paired.listings.fragment &&
+      readBack.listings.vertex === paired.listings.vertex,
+      'and every listing is BYTE-IDENTICAL to what the compile road wrote',
+      'they differ, so -s bin is disassembling differently rather than reading back');
+
+    // A code object is not a SPIR-V module. Feeding it the wrong file must be a refusal.
+    let notAnElf = null;
+    try {
+      await rga.disassembleCodeObject({
+        rga: found.path, co: path.join(SPV, 'fs.spv'),
+        outDir: path.join(outRoot, 'not-elf'), run
+      });
+    } catch (e) {
+      notAnElf = e.message;
+    }
+    check(notAnElf !== null && /wrote no ISA/.test(notAnElf),
+      'and a SPIR-V module handed to the binary road is refused rather than half-read',
+      notAnElf === null ? 'it returned instead of throwing' : notAnElf.split('\n')[0]);
+
     // The failure mode that matters: exit 0 with nothing written must be an error here.
     let refused = null;
     try {
