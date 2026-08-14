@@ -939,11 +939,20 @@ def find_node():
         # stack trace, on precisely the machines that had a real Node to run them with. The
         # Electron branch below copies os.environ for the same reason; this one inherits it.
         return [node], None
+    # `code` on PATH is the shim in <install>\bin\code.cmd, so Code.exe is one directory up.
+    # Ask PATH before guessing at absolute paths: this used to lead with a hardcoded
+    # D:\Development\Programs\... and the install is on C: here, so the whole JavaScript
+    # section quietly downgraded to a warning and the run still said PARTIAL rather than
+    # failing. A drive letter is not a machine fact worth hardcoding above a lookup.
+    from_path = which("code") or which("code.cmd")
+    derived = (os.path.join(os.path.dirname(os.path.dirname(from_path)), "Code.exe")
+               if from_path else None)
     candidates = [
         os.environ.get("VSCODE_EXE"),
-        r"D:\Development\Programs\Microsoft VS Code\Code.exe",
+        derived,
         os.path.expandvars(r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"),
         r"C:\Program Files\Microsoft VS Code\Code.exe",
+        r"D:\Development\Programs\Microsoft VS Code\Code.exe",
     ]
     for exe in candidates:
         if exe and os.path.exists(exe):
