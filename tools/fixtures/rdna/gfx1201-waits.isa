@@ -1,0 +1,37 @@
+_amdgpu_cs_main:
+	s_mov_b32 s8, s1                                           // 000000000000: BE880001
+	s_getpc_b64 s[0:1]                                         // 000000000004: BE804700
+	v_and_b32_e32 v2, 0x3ff, v0                                // 000000000008: 360400FF 000003FF
+	s_sext_i32_i16 s1, s1                                      // 000000000010: BE810F01
+	s_lshl_b32 s10, ttmp9, 6                                   // 000000000014: 840A8675
+	s_mov_b32 s9, s1                                           // 000000000018: BE890001
+	s_load_b256 s[0:7], s[8:9], 0x0                            // 00000000001C: F4006004 F8000000
+	v_add_lshl_u32 v3, v2, s10, 2                              // 000000000024: D6470003 02081502
+	v_lshlrev_b32_e32 v2, 2, v2                                // 00000000002C: 30040482
+	s_delay_alu instid0(VALU_DEP_1)                            // 000000000030: BF870001
+	v_sub_nc_u32_e32 v4, 0, v2                                 // 000000000034: 4C080480
+	s_wait_kmcnt 0x0                                           // 000000000038: BFC70000
+	buffer_load_b64 v[0:1], v3, s[4:7], null offen             // 00000000003C: C405407C 40800800 00000003
+	s_buffer_load_b64 s[10:11], s[0:3], 0x0                    // 000000000048: F4022280 F8000000
+	s_load_b128 s[4:7], s[8:9], 0x20                           // 000000000050: F4004104 F8000020
+	s_buffer_load_b64 s[0:1], s[0:3], 0x8                      // 000000000058: F4022000 F8000008
+	s_wait_kmcnt 0x0                                           // 000000000060: BFC70000
+	s_cvt_f32_u32 s2, s10                                      // 000000000064: BE82650A
+	s_cvt_f32_u32 s0, s0                                       // 000000000068: BE806500
+	s_cvt_f32_u32 s1, s1                                       // 00000000006C: BE816501
+	s_wait_loadcnt 0x0                                         // 000000000070: BFC00000
+	ds_store_b32 v2, v0                                        // 000000000074: D8340000 00000002
+	s_wait_dscnt 0x0                                           // 00000000007C: BFC60000
+	ds_load_b32 v0, v4 offset:252                              // 000000000080: D8D800FC 00000004
+	v_mul_f32_e32 v1, s2, v1                                   // 000000000088: 10020202
+	s_cvt_f32_u32 s2, s11                                      // 00000000008C: BE82650B
+	s_wait_dscnt 0x0                                           // 000000000090: BFC60000
+	s_wait_alu 0xfffe                                          // 000000000094: BF88FFFE
+	s_delay_alu instid0(VALU_DEP_1) | instid1(SALU_CYCLE_1)    // 000000000098: BF870481
+	v_fmac_f32_e32 v1, s2, v0                                  // 00000000009C: 56020002
+	s_delay_alu instid0(VALU_DEP_1)                            // 0000000000A0: BF870001
+	v_fma_f32 v0, v1, s0, s1                                   // 0000000000A4: D6130000 00040101
+	s_clause 0x1                                               // 0000000000AC: BF850001
+	buffer_store_b32 v1, v3, s[4:7], null offen                // 0000000000B0: C406807C 40800801 00000003
+	buffer_store_b32 v0, v3, s[4:7], null offen offset:4       // 0000000000BC: C406807C 40800800 00000403
+	s_endpgm                                                   // 0000000000C8: BFB00000

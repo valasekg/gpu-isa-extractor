@@ -994,7 +994,7 @@ else:
     # whole listing - banner and body - but builds its own instruction stream, so it needs no
     # CUDA, no driver and no GPU and belongs with the suites that always run rather than with
     # the ones that skip.
-    for script in ("test_parse.js", "test_rdna_parse.js",
+    for script in ("test_parse.js", "test_rdna_parse.js", "test_rdna_depend.js",
                    "test_hover.js", "test_semantic.js", "test_explain.js",
                    "test_ctrl.js", "test_zstd.js", "test_scoreboard.js", "test_stats.js",
                    "test_golden.js",

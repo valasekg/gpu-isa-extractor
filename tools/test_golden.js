@@ -573,8 +573,13 @@ check(amd.refusalFor('fragment') === null, 'a stage it CAN compile has no refusa
 // Absence is declared, not discovered.
 check(amd.controlColumn === null && isa.strideFor(amd) === null,
   'RDNA declares no fixed instruction width, so nothing may step by one');
-check(isa.DIALECTS['amd-rdna-isa'].dependency === null,
-  'and no dependency model yet, so the highlighter stands down rather than guessing');
+// The dependency model arrived in increment 6; what stays absent is the fixed instruction
+// width above. A dialect that had neither would get no highlighter at all, which is the
+// mechanism `followable()` in highlight.js exists to provide - so both states are worth
+// asserting, and this one is now "present".
+const amdDependency = isa.DIALECTS['amd-rdna-isa'].dependency;
+check(amdDependency !== null && typeof amdDependency.analyzeAt === 'function',
+  'a dependency model IS present, so the highlighter and F12 work on an RDNA listing');
 check(typeof amd.absences.controlColumn === 'string' &&
   typeof amd.absences.correlation === 'string',
   'each absence carries the reason in words, for the banner to print once');

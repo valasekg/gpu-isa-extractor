@@ -39,6 +39,7 @@
 const path = require('path');
 
 const dataRdna = require('./data_rdna');
+const dependRdna = require('./depend_rdna');
 const parseRdna = require('./parse_rdna');
 const rga = require('./rga');
 
@@ -482,14 +483,23 @@ const dialect = {
   sourceLabels: dataRdna.sourceLabels,
   docUrl: 'https://gpuopen.com/amd-isa-documentation/',
   /**
-   * Null, and the null is the point.
+   * How this ISA expresses "wait for that", and how to follow it.
    *
-   * RDNA does express the arm/wait relation this would follow - `s_wait_loadcnt` drains what a
-   * `buffer_load` armed - but reading it needs a forward FIFO pass that does not exist yet.
-   * Until it does, `highlight.js` stands down rather than running NVIDIA's scoreboard walker
-   * over a listing that has no scoreboards, which would light up plausible and wrong.
+   * `s_wait_loadcnt` drains what a `buffer_load` put in flight, which is the same relation
+   * NVIDIA states in a scoreboard field - so `highlight.js` and its F12 provider work on an
+   * RDNA listing with no change above this cell. The counters are in-order queues rather than
+   * anonymous counters, which makes the answer MORE precise than the SASS side's: a partial
+   * wait can name which operation it was waiting for.
+   *
+   * The two places it cannot be exact are reported rather than smoothed over - a shared
+   * `lgkmcnt` on gfx10/11, and `flat_` addressing that resolves to a queue at run time. See
+   * `depend_rdna.js`, and `test_rdna_depend.js` for what was measured versus documented.
    */
-  dependency: null,
+  dependency: {
+    analyzeAt: dependRdna.analyzeAt,
+    armsFor: dependRdna.producersFor,
+    waitFor: dependRdna.waitFor
+  },
   explain: null
 };
 
