@@ -466,7 +466,11 @@ async function build({ file, source, tools, flags, archInfo, outDir, backend, di
     // modules, because RGA will not emit debug info itself. Asking for it when the setting
     // says the map is not wanted is work whose result is thrown away, and the NVIDIA road
     // already skips its own second pass for the same reason.
-    correlate: (settings.get('compile.correlationStyle') || 'banner') !== 'off',
+    // `config()`, not a `settings` local: this is `build`, and the two functions that hold a
+    // `settings` binding are `run` and `resolveTools`. Reading it here threw ReferenceError on
+    // every compile, and nothing in the gate could see it - the module PARSES, and the suites
+    // cannot load `compileview.js` because it imports `vscode`.
+    correlate: (config().get('compile.correlationStyle') || 'banner') !== 'off',
     // The target `run()` resolved, not the one `compile()` would default to. Without this,
     // `chooseSlangEntry` inside `compile()` fell back to its own `'nvidia'` default and the
     // file was routed TWICE by two different answers: `run()`'s decided which tools to require
@@ -1051,6 +1055,11 @@ module.exports = {
   resolveTarget,
   compileCommand,
   compileForCommand,
+  // Exported for `test_endtoend.js` alone. It assembles the options `compile.compile` is
+  // driven with, it is unreachable from every other export without a real toolchain, and a
+  // scope error in it took down every compile while the gate stayed green - twice now, this
+  // module has shipped a runtime error the suites structurally could not see.
+  build,
   revealSource,
   markersFor,
   refresh,

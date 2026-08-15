@@ -150,6 +150,46 @@ function glBlobs() {
   check(typeof require(path.join(__dirname, '..', 'extension.js')).activate === 'function',
     'extension.js loads and exports activate');
 
+  // Loading the module is not enough, and this file is the only place that can prove more.
+  //
+  // `compileview.build` assembles the options `compile.compile` runs on. Nothing else reaches
+  // it without a real toolchain, so its body was never executed by any check - and it has
+  // twice shipped a runtime error the gate structurally could not see. The first was a
+  // SyntaxError, caught only because modules are parsed; the second was a `settings` reference
+  // in a function that binds no such name, which took down EVERY compile with
+  // "settings is not defined" while the gate read 85 passed, 0 failed.
+  //
+  // Driven with a file extension nothing can compile, so it builds its whole options object
+  // and then fails inside `compile.compile` for a reason this check states exactly. Any
+  // ReferenceError or TypeError escaping instead is a scope bug in `build`.
+  await (async () => {
+    const compileview = require(path.join(__dirname, '..', 'src', 'compileview.js'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvisa-build-'));
+    let thrown = null;
+    try {
+      await compileview.build({
+        file: path.join(dir, 'nothing.unknownext'),
+        source: path.join(dir, 'nothing.unknownext'),
+        tools: {}, flags: { primary: [], nvrtc: [], ptxas: [], slang: [], dirs: [] },
+        archInfo: { arch: '86', from: 'test' }, outDir: dir, backend: 'auto',
+        directive: null, configured: '', progress: { report: () => {} }, token: null,
+        road: 'cuda', controls: null, entry: undefined,
+        target: { id: 'nvidia', vendor: 'NVIDIA', isa: 'SASS' }
+      });
+    } catch (e) {
+      thrown = e;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    check(thrown !== null, 'compileview.build rejects on a file it cannot compile');
+    check(thrown && !(thrown instanceof ReferenceError) && !(thrown instanceof TypeError),
+      'and it gets far enough to REACH that refusal - no scope error while building its ' +
+      'options, which is how "settings is not defined" reached a release',
+      thrown ? `${thrown.constructor.name}: ${thrown.message}`.split('\n')[0] : '');
+    check(thrown && /is not something this can compile/.test(thrown.message || ''),
+      'the refusal is the one this input earns', thrown ? (thrown.message || '').split('\n')[0] : '');
+  })();
+
   section('2. Naming and classification');
   check(output.listingName({ name: 'evalGridTex_2', sha1: 'abcdef0123456789' }, 'SM86')
     === 'evalGridTex_2.abcdef01.SM86.nvsass', 'a listing is named after its object',
