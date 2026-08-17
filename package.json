@@ -39,7 +39,7 @@
       "activitybar": [
         {
           "id": "nvIsaExtractor",
-          "title": "NVIDIA ISA",
+          "title": "GPU ISA",
           "icon": "$(circuit-board)"
         }
       ]
@@ -50,7 +50,7 @@
           "id": "nvIsaExtractor.objects",
           "name": "Shader Objects",
           "icon": "$(symbol-method)",
-          "contextualTitle": "NVIDIA ISA",
+          "contextualTitle": "GPU ISA",
           "visibility": "visible"
         }
       ]
@@ -728,7 +728,7 @@
       }
     ],
     "configuration": {
-      "title": "NVIDIA ISA Extractor",
+      "title": "GPU ISA Extractor",
       "properties": {
         "nvIsaExtractor.nvdisasmPath": {
           "type": "string",
@@ -990,7 +990,7 @@
         "nvIsaExtractor.compile.traceCorrelation": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Log why a source line highlighted nothing to the NVIDIA ISA Extractor output channel."
+          "markdownDescription": "Log why a source line highlighted nothing to the GPU ISA Extractor output channel."
         },
         "nvIsaExtractor.compile.target": {
           "type": "string",
@@ -1000,7 +1000,7 @@
             "amd"
           ],
           "default": "auto",
-          "markdownDescription": "Which ISA to compile a shader for. `auto` decides per road rather than per machine: compute goes to NVIDIA whenever `ptxas` resolves, because it cross-compiles from a machine with no GPU; a graphics stage goes to NVIDIA only when the Vulkan probe finds an NVIDIA device, because that road is the local driver, and to AMD otherwise. The file's own `// gpu-isa-extractor -target` line wins over this."
+          "markdownDescription": "Which ISA to compile a shader for. `auto` decides per road rather than per machine: compute goes to NVIDIA whenever `ptxas` resolves, because it cross-compiles from a machine with no GPU; a graphics stage goes to NVIDIA only when the Vulkan probe finds an NVIDIA device, because that road is the local driver, and to AMD otherwise. The file's own `// nv-isa-extractor -target` line wins over this."
         },
         "nvIsaExtractor.compile.rgaPath": {
           "type": "string",

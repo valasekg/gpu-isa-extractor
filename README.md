@@ -1,6 +1,7 @@
-# NVIDIA ISA Extractor
+# GPU ISA Extractor
 
-Turn an NVIDIA driver shader-cache blob into a readable SASS listing, inside VS Code.
+Read the machine code your shaders really compile to - NVIDIA SASS and AMD RDNA ISA - inside
+VS Code.
 
 Point the extension at a cache file and it decompresses the zstd frames, carves the GPU
 microcode out of the `NVuc` container, disassembles it with `nvdisasm`, decodes the
@@ -45,7 +46,7 @@ hover reports them while making clear it cannot know which path arrived.
   `nvIsaExtractor.arch` manually (e.g. `SM86`).
 - Windows: the shader caches live under `%LOCALAPPDATA%\NVIDIA\GLCache` and `...\DXCache`.
 
-Run **NVIDIA ISA: Doctor** to check all of this at once.
+Run **GPU ISA: Doctor** to check all of this at once.
 
 ## Usage
 
@@ -54,9 +55,9 @@ Open a shader cache any of these ways:
 - **Right-click** a `.bin`, `.toc` or `.nvph` in the Explorer.
 - **With the file already open** — a `.bin` shows as a binary placeholder, and the
   circuit-board button in the editor title bar scans it. `Ctrl+Alt+Shift+D` does the same.
-- **From the palette** — *NVIDIA ISA: Open Shader-Cache File*. With a cache file in the
+- **From the palette** — *GPU ISA: Open Shader-Cache File*. With a cache file in the
   active tab it uses that; otherwise it asks, starting at `%LOCALAPPDATA%\NVIDIA`.
-- **From the view** — the NVIDIA ISA icon in the activity bar.
+- **From the view** — the GPU ISA icon in the activity bar.
 
 Supported inputs: GLCache `.bin` with its `.toc` index (fast path), GLCache `.bin` without
 one (magic scan), DXCache `.nvph`, and any other blob containing zstd frames.
@@ -132,7 +133,7 @@ Some things are deliberately not said:
 
 ## Compiling a shader you are writing
 
-**NVIDIA ISA: Compile and Disassemble** (`Ctrl+Alt+Shift+B`) takes the `.slang` or `.cu` file in
+**GPU ISA: Compile and Disassemble** (`Ctrl+Alt+Shift+B`) takes the `.slang` or `.cu` file in
 the editor, compiles it, and opens its SASS beside the source — with the same control-code
 column, hovers, scoreboard following and statistics a cache listing gets, plus **source
 correlation**:
@@ -327,7 +328,7 @@ you have MSVC. No GPU is needed at all — `ptxas` will target `SM90` from a lap
 a working Vulkan driver, because the driver is the compiler. The Vulkan loader ships with the
 display driver; the SDK is not required.
 
-**NVIDIA ISA: Doctor** reports which of these you have, and names the specific reason when
+**GPU ISA: Doctor** reports which of these you have, and names the specific reason when
 Vulkan is unusable on a machine where everything else works.
 
 ## Language support
