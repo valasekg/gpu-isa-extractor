@@ -35,14 +35,14 @@ function section(title) { console.log(`\n${title}`); }
 /* --------------------------------------------------------- the vscode stub --- */
 
 const settings = {
-  nvIsaExtractor: {
+  gpuIsaExtractor: {
     nvdisasmPath: '', arch: 'auto', minCodeBytes: 0, glcacheMode: 'auto',
     decodeControlCodes: true, keepRawMicrocode: false,
     'output.location': 'temp', 'output.retentionDays': 30,
     'tree.maxBlobs': 8, 'tree.sortBy': 'size', 'tree.autoGroupThreshold': 200,
-    'tree.pageSize': 500, 'batch.confirmAboveBytes': 268435456
-  },
-  nvidiaSass: { semanticHighlighting: true, semanticMaxLines: 100000 }
+    'tree.pageSize': 500, 'batch.confirmAboveBytes': 268435456,
+    semanticHighlighting: true, semanticMaxLines: 100000
+  }
 };
 
 const contextKeys = {};
@@ -281,7 +281,7 @@ function loadRecords(records) {
     const objItem = provider.getTreeItem(children[0]);
     check(objItem.label === 'evalGridTex', 'a shader is labelled with its entry point');
     check(/instr/.test(objItem.description), 'and described by size', objItem.description);
-    check(objItem.command && objItem.command.command === 'nvIsaExtractor.openObject',
+    check(objItem.command && objItem.command.command === 'gpuIsaExtractor.openObject',
       'clicking a shader opens its listing');
     check(provider.getTreeItem(children[2]).label === '(unnamed)',
       'an unnamed shader still gets a label');
@@ -384,7 +384,7 @@ function loadRecords(records) {
       }));
     }
     loadRecords([fakeRecord('big.bin', many)]);
-    settings.nvIsaExtractor['tree.autoGroupThreshold'] = 200;
+    settings.gpuIsaExtractor['tree.autoGroupThreshold'] = 200;
 
     const groups = provider.getChildren(provider.getChildren()[0]);
     check(groups.every(g => g.kind === 'nvGroup'),
@@ -395,8 +395,8 @@ function loadRecords(records) {
     const total = groups.reduce((n, g) => n + g.objects.length, 0);
     check(total === 600, 'and every shader lands in exactly one bucket', String(total));
 
-    settings.nvIsaExtractor['tree.autoGroupThreshold'] = 1000;
-    settings.nvIsaExtractor['tree.pageSize'] = 100;
+    settings.gpuIsaExtractor['tree.autoGroupThreshold'] = 1000;
+    settings.gpuIsaExtractor['tree.pageSize'] = 100;
     provider.refresh();
     const firstPage = provider.getChildren(provider.getChildren()[0]);
     check(firstPage.length === 101 && firstPage[100].kind === 'nvMore',
@@ -434,8 +434,8 @@ function loadRecords(records) {
       empty.map(e => e.kind).join(','));
 
     provider.setFilter('');
-    settings.nvIsaExtractor['tree.pageSize'] = 100;
-    settings.nvIsaExtractor['tree.autoGroupThreshold'] = 1000;
+    settings.gpuIsaExtractor['tree.pageSize'] = 100;
+    settings.gpuIsaExtractor['tree.autoGroupThreshold'] = 1000;
     provider.refresh();
 
     // Marking a shader reviewed must not throw away how far a level was paged. Doing so would
@@ -455,8 +455,8 @@ function loadRecords(records) {
     await review.clear();
 
     provider.setFilter('');
-    settings.nvIsaExtractor['tree.pageSize'] = 500;
-    settings.nvIsaExtractor['tree.autoGroupThreshold'] = 200;
+    settings.gpuIsaExtractor['tree.pageSize'] = 500;
+    settings.gpuIsaExtractor['tree.autoGroupThreshold'] = 200;
     provider.refresh();
   }
 
@@ -472,19 +472,19 @@ function loadRecords(records) {
     const names = () => provider.getChildren(provider.getChildren()[0])
       .map(n => n.object.name).join(',');
 
-    settings.nvIsaExtractor['tree.sortBy'] = 'size';
+    settings.gpuIsaExtractor['tree.sortBy'] = 'size';
     provider.refresh();
     check(names() === 'alpha,mid,zeta', 'size sorts largest first', names());
 
-    settings.nvIsaExtractor['tree.sortBy'] = 'offset';
+    settings.gpuIsaExtractor['tree.sortBy'] = 'offset';
     provider.refresh();
     check(names() === 'alpha,mid,zeta', 'offset sorts in file order', names());
 
-    settings.nvIsaExtractor['tree.sortBy'] = 'name';
+    settings.gpuIsaExtractor['tree.sortBy'] = 'name';
     provider.refresh();
     check(names() === 'alpha,mid,zeta', 'name sorts alphabetically', names());
 
-    settings.nvIsaExtractor['tree.sortBy'] = 'size';
+    settings.gpuIsaExtractor['tree.sortBy'] = 'size';
   }
 
   section('7. Empty and broken files');
@@ -512,12 +512,12 @@ function loadRecords(records) {
     loadRecords([fakeRecord('ctx.bin', [fakeObject(1, { name: 'x' })])]);
     activeTab = null;
     await browser.syncContext();
-    check(contextKeys['nvIsaExtractor.hasBlob'] === true, 'hasBlob tracks the loaded files');
-    check(contextKeys['nvIsaExtractor.activeBlob'] === false, 'activeBlob tracks the tab');
+    check(contextKeys['gpuIsaExtractor.hasBlob'] === true, 'hasBlob tracks the loaded files');
+    check(contextKeys['gpuIsaExtractor.activeBlob'] === false, 'activeBlob tracks the tab');
 
     loadRecords([]);
     await browser.syncContext();
-    check(contextKeys['nvIsaExtractor.hasBlob'] === false, 'and clears when nothing is loaded');
+    check(contextKeys['gpuIsaExtractor.hasBlob'] === false, 'and clears when nothing is loaded');
   }
 
   section('9. Commands invoked without arguments');

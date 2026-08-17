@@ -14,7 +14,7 @@
  * %LOCALAPPDATA%\NVIDIA and have nothing to do with whatever workspace happens to be open.
  */
 
-const KEY = 'nvIsaExtractor.reviewed';
+const KEY = 'gpuIsaExtractor.reviewed';
 
 /** This machine's caches hold ~7,900 distinct shaders; keep a couple of passes' worth. */
 const MAX_ENTRIES = 5000;

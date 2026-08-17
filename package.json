@@ -1,5 +1,5 @@
 {
-  "name": "nv-isa-extractor",
+  "name": "gpu-isa-extractor",
   "displayName": "GPU ISA Extractor",
   "description": "Read the machine code your shaders really compile to - NVIDIA SASS and AMD RDNA ISA - inside VS Code.",
   "version": "0.12.1",
@@ -38,16 +38,16 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "nvIsaExtractor",
+          "id": "gpuIsaExtractor",
           "title": "GPU ISA",
           "icon": "$(circuit-board)"
         }
       ]
     },
     "views": {
-      "nvIsaExtractor": [
+      "gpuIsaExtractor": [
         {
-          "id": "nvIsaExtractor.objects",
+          "id": "gpuIsaExtractor.objects",
           "name": "Shader Objects",
           "icon": "$(symbol-method)",
           "contextualTitle": "GPU ISA",
@@ -57,128 +57,128 @@
     },
     "viewsWelcome": [
       {
-        "view": "nvIsaExtractor.objects",
-        "when": "!nvIsaExtractor.hasBlob && nvIsaExtractor.toolsMissing",
-        "contents": "nvdisasm was not found, so nothing can be disassembled yet. It ships with the CUDA Toolkit and cannot be bundled with this extension.\n[Check the Environment](command:nvIsaExtractor.doctor)\n[Open Settings](command:nvIsaExtractor.openSettings)"
+        "view": "gpuIsaExtractor.objects",
+        "when": "!gpuIsaExtractor.hasBlob && gpuIsaExtractor.toolsMissing",
+        "contents": "nvdisasm was not found, so nothing can be disassembled yet. It ships with the CUDA Toolkit and cannot be bundled with this extension.\n[Check the Environment](command:gpuIsaExtractor.doctor)\n[Open Settings](command:gpuIsaExtractor.openSettings)"
       },
       {
-        "view": "nvIsaExtractor.objects",
-        "when": "!nvIsaExtractor.hasBlob && !nvIsaExtractor.toolsMissing && nvIsaExtractor.activeBlob",
-        "enablement": "!nvIsaExtractor.busy",
-        "contents": "The file open in the editor looks like a shader cache.\n[$(circuit-board) Scan the Active File](command:nvIsaExtractor.disassemble)"
+        "view": "gpuIsaExtractor.objects",
+        "when": "!gpuIsaExtractor.hasBlob && !gpuIsaExtractor.toolsMissing && gpuIsaExtractor.activeBlob",
+        "enablement": "!gpuIsaExtractor.busy",
+        "contents": "The file open in the editor looks like a shader cache.\n[$(circuit-board) Scan the Active File](command:gpuIsaExtractor.disassemble)"
       },
       {
-        "view": "nvIsaExtractor.objects",
-        "when": "!nvIsaExtractor.hasBlob && !nvIsaExtractor.toolsMissing && !nvIsaExtractor.activeBlob",
-        "enablement": "!nvIsaExtractor.busy",
-        "contents": "No shader-cache file is open.\n[Open a Shader Cache...](command:nvIsaExtractor.openBlobDialog)\nYou can also right-click a .bin, .toc or .nvph file in the Explorer, or use the button in the editor title bar when one is already open.\n[Check the Environment](command:nvIsaExtractor.doctor)"
+        "view": "gpuIsaExtractor.objects",
+        "when": "!gpuIsaExtractor.hasBlob && !gpuIsaExtractor.toolsMissing && !gpuIsaExtractor.activeBlob",
+        "enablement": "!gpuIsaExtractor.busy",
+        "contents": "No shader-cache file is open.\n[Open a Shader Cache...](command:gpuIsaExtractor.openBlobDialog)\nYou can also right-click a .bin, .toc or .nvph file in the Explorer, or use the button in the editor title bar when one is already open.\n[Check the Environment](command:gpuIsaExtractor.doctor)"
       }
     ],
     "commands": [
       {
-        "command": "nvIsaExtractor.disassemble",
+        "command": "gpuIsaExtractor.disassemble",
         "title": "Open Shader-Cache File",
         "category": "GPU ISA",
         "icon": "$(circuit-board)"
       },
       {
-        "command": "nvIsaExtractor.openBlobDialog",
+        "command": "gpuIsaExtractor.openBlobDialog",
         "title": "Open Shader-Cache File (Choose File)...",
         "category": "GPU ISA",
         "icon": "$(go-to-file)"
       },
       {
-        "command": "nvIsaExtractor.refreshBlob",
+        "command": "gpuIsaExtractor.refreshBlob",
         "title": "Rescan",
         "category": "GPU ISA",
         "icon": "$(refresh)"
       },
       {
-        "command": "nvIsaExtractor.closeBlob",
+        "command": "gpuIsaExtractor.closeBlob",
         "title": "Remove from the List",
         "category": "GPU ISA",
         "icon": "$(close)"
       },
       {
-        "command": "nvIsaExtractor.filter",
+        "command": "gpuIsaExtractor.filter",
         "title": "Filter Shader Objects...",
         "category": "GPU ISA",
         "icon": "$(filter)"
       },
       {
-        "command": "nvIsaExtractor.openObject",
+        "command": "gpuIsaExtractor.openObject",
         "title": "Open Listing",
         "category": "GPU ISA",
         "icon": "$(go-to-file)"
       },
       {
-        "command": "nvIsaExtractor.disassembleObject",
+        "command": "gpuIsaExtractor.disassembleObject",
         "title": "Disassemble",
         "category": "GPU ISA",
         "icon": "$(play)"
       },
       {
-        "command": "nvIsaExtractor.toggleReviewed",
+        "command": "gpuIsaExtractor.toggleReviewed",
         "title": "Toggle Reviewed",
         "category": "GPU ISA",
         "icon": "$(check)"
       },
       {
-        "command": "nvIsaExtractor.clearReviewed",
+        "command": "gpuIsaExtractor.clearReviewed",
         "title": "Clear Review Marks",
         "category": "GPU ISA",
         "icon": "$(clear-all)"
       },
       {
-        "command": "nvIsaExtractor.nextObject",
+        "command": "gpuIsaExtractor.nextObject",
         "title": "Next Shader Object",
         "category": "GPU ISA"
       },
       {
-        "command": "nvIsaExtractor.previousObject",
+        "command": "gpuIsaExtractor.previousObject",
         "title": "Previous Shader Object",
         "category": "GPU ISA"
       },
       {
-        "command": "nvIsaExtractor.nextUnreviewed",
+        "command": "gpuIsaExtractor.nextUnreviewed",
         "title": "Next Unreviewed Shader Object",
         "category": "GPU ISA"
       },
       {
-        "command": "nvIsaExtractor.loadMore",
+        "command": "gpuIsaExtractor.loadMore",
         "title": "Load More",
         "category": "GPU ISA",
         "icon": "$(ellipsis)"
       },
       {
-        "command": "nvIsaExtractor.openSettings",
+        "command": "gpuIsaExtractor.openSettings",
         "title": "Open Settings",
         "category": "GPU ISA",
         "icon": "$(settings-gear)"
       },
       {
-        "command": "nvIsaExtractor.doctor",
+        "command": "gpuIsaExtractor.doctor",
         "title": "Doctor (Check Environment)",
         "category": "GPU ISA"
       },
       {
-        "command": "nvIsaExtractor.clearOutput",
+        "command": "gpuIsaExtractor.clearOutput",
         "title": "Clear Generated Listings",
         "category": "GPU ISA"
       },
       {
-        "command": "nvIsaExtractor.compileSource",
+        "command": "gpuIsaExtractor.compileSource",
         "title": "Compile and Disassemble",
         "category": "GPU ISA",
         "icon": "$(gear)"
       },
       {
-        "command": "nvIsaExtractor.compileSourceFor",
+        "command": "gpuIsaExtractor.compileSourceFor",
         "title": "Compile and Disassemble For...",
         "category": "GPU ISA"
       },
       {
-        "command": "nvIsaExtractor.revealSource",
+        "command": "gpuIsaExtractor.revealSource",
         "title": "Go to the Source Line for This Instruction",
         "category": "GPU ISA",
         "icon": "$(go-to-file)"
@@ -186,32 +186,32 @@
     ],
     "keybindings": [
       {
-        "command": "nvIsaExtractor.nextObject",
+        "command": "gpuIsaExtractor.nextObject",
         "key": "ctrl+alt+pagedown",
-        "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
+        "when": "focusedView == gpuIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
       },
       {
-        "command": "nvIsaExtractor.previousObject",
+        "command": "gpuIsaExtractor.previousObject",
         "key": "ctrl+alt+pageup",
-        "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
+        "when": "focusedView == gpuIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
       },
       {
-        "command": "nvIsaExtractor.nextUnreviewed",
+        "command": "gpuIsaExtractor.nextUnreviewed",
         "key": "ctrl+alt+shift+n",
-        "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
+        "when": "focusedView == gpuIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
       },
       {
-        "command": "nvIsaExtractor.toggleReviewed",
+        "command": "gpuIsaExtractor.toggleReviewed",
         "key": "ctrl+alt+shift+m",
-        "when": "focusedView == nvIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
+        "when": "focusedView == gpuIsaExtractor.objects || (editorTextFocus && editorLangId == nvidia-sass)"
       },
       {
-        "command": "nvIsaExtractor.compileSource",
+        "command": "gpuIsaExtractor.compileSource",
         "key": "ctrl+alt+shift+b",
         "when": "editorTextFocus && resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
       },
       {
-        "command": "nvIsaExtractor.revealSource",
+        "command": "gpuIsaExtractor.revealSource",
         "key": "ctrl+alt+shift+s",
         "when": "editorTextFocus && (editorLangId == nvidia-sass || editorLangId == amd-rdna-isa)"
       }
@@ -219,179 +219,179 @@
     "menus": {
       "explorer/context": [
         {
-          "command": "nvIsaExtractor.disassemble",
+          "command": "gpuIsaExtractor.disassemble",
           "group": "navigation@50",
           "when": "resourceExtname =~ /^\\.(bin|toc|nvph)$/i"
         },
         {
-          "command": "nvIsaExtractor.compileSource",
+          "command": "gpuIsaExtractor.compileSource",
           "group": "navigation@51",
           "when": "resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
         }
       ],
       "editor/title": [
         {
-          "command": "nvIsaExtractor.disassemble",
+          "command": "gpuIsaExtractor.disassemble",
           "group": "navigation@50",
           "when": "resourceExtname =~ /^\\.(bin|toc|nvph)$/i"
         },
         {
-          "command": "nvIsaExtractor.compileSource",
+          "command": "gpuIsaExtractor.compileSource",
           "group": "navigation@51",
           "when": "resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
         }
       ],
       "view/title": [
         {
-          "command": "nvIsaExtractor.disassemble",
+          "command": "gpuIsaExtractor.disassemble",
           "group": "navigation@10",
-          "when": "view == nvIsaExtractor.objects && nvIsaExtractor.activeBlob"
+          "when": "view == gpuIsaExtractor.objects && gpuIsaExtractor.activeBlob"
         },
         {
-          "command": "nvIsaExtractor.openBlobDialog",
+          "command": "gpuIsaExtractor.openBlobDialog",
           "group": "navigation@20",
-          "when": "view == nvIsaExtractor.objects"
+          "when": "view == gpuIsaExtractor.objects"
         },
         {
-          "command": "nvIsaExtractor.filter",
+          "command": "gpuIsaExtractor.filter",
           "group": "navigation@30",
-          "when": "view == nvIsaExtractor.objects && nvIsaExtractor.hasBlob"
+          "when": "view == gpuIsaExtractor.objects && gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.refreshBlob",
+          "command": "gpuIsaExtractor.refreshBlob",
           "group": "navigation@40",
-          "when": "view == nvIsaExtractor.objects && nvIsaExtractor.hasBlob"
+          "when": "view == gpuIsaExtractor.objects && gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.clearReviewed",
+          "command": "gpuIsaExtractor.clearReviewed",
           "group": "1_review@10",
-          "when": "view == nvIsaExtractor.objects && nvIsaExtractor.hasBlob"
+          "when": "view == gpuIsaExtractor.objects && gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.doctor",
+          "command": "gpuIsaExtractor.doctor",
           "group": "2_tools@10",
-          "when": "view == nvIsaExtractor.objects"
+          "when": "view == gpuIsaExtractor.objects"
         },
         {
-          "command": "nvIsaExtractor.clearOutput",
+          "command": "gpuIsaExtractor.clearOutput",
           "group": "2_tools@20",
-          "when": "view == nvIsaExtractor.objects"
+          "when": "view == gpuIsaExtractor.objects"
         },
         {
-          "command": "nvIsaExtractor.openSettings",
+          "command": "gpuIsaExtractor.openSettings",
           "group": "2_tools@30",
-          "when": "view == nvIsaExtractor.objects"
+          "when": "view == gpuIsaExtractor.objects"
         }
       ],
       "view/item/context": [
         {
-          "command": "nvIsaExtractor.disassembleObject",
+          "command": "gpuIsaExtractor.disassembleObject",
           "group": "inline@10",
-          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+          "when": "view == gpuIsaExtractor.objects && viewItem =~ /^nvObject/"
         },
         {
-          "command": "nvIsaExtractor.toggleReviewed",
+          "command": "gpuIsaExtractor.toggleReviewed",
           "group": "inline@20",
-          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+          "when": "view == gpuIsaExtractor.objects && viewItem =~ /^nvObject/"
         },
         {
-          "command": "nvIsaExtractor.openObject",
+          "command": "gpuIsaExtractor.openObject",
           "group": "1_open@10",
-          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+          "when": "view == gpuIsaExtractor.objects && viewItem =~ /^nvObject/"
         },
         {
-          "command": "nvIsaExtractor.disassembleObject",
+          "command": "gpuIsaExtractor.disassembleObject",
           "group": "1_open@20",
-          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+          "when": "view == gpuIsaExtractor.objects && viewItem =~ /^nvObject/"
         },
         {
-          "command": "nvIsaExtractor.toggleReviewed",
+          "command": "gpuIsaExtractor.toggleReviewed",
           "group": "1_open@30",
-          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvObject/"
+          "when": "view == gpuIsaExtractor.objects && viewItem =~ /^nvObject/"
         },
         {
-          "command": "nvIsaExtractor.disassembleObject",
+          "command": "gpuIsaExtractor.disassembleObject",
           "group": "1_open@10",
-          "when": "view == nvIsaExtractor.objects && viewItem == nvCopy"
+          "when": "view == gpuIsaExtractor.objects && viewItem == nvCopy"
         },
         {
-          "command": "nvIsaExtractor.refreshBlob",
+          "command": "gpuIsaExtractor.refreshBlob",
           "group": "inline@10",
-          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvFile/"
+          "when": "view == gpuIsaExtractor.objects && viewItem =~ /^nvFile/"
         },
         {
-          "command": "nvIsaExtractor.closeBlob",
+          "command": "gpuIsaExtractor.closeBlob",
           "group": "inline@20",
-          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvFile/"
+          "when": "view == gpuIsaExtractor.objects && viewItem =~ /^nvFile/"
         },
         {
-          "command": "nvIsaExtractor.disassembleObject",
+          "command": "gpuIsaExtractor.disassembleObject",
           "group": "1_batch@10",
-          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvFile/"
+          "when": "view == gpuIsaExtractor.objects && viewItem =~ /^nvFile/"
         },
         {
-          "command": "nvIsaExtractor.clearReviewed",
+          "command": "gpuIsaExtractor.clearReviewed",
           "group": "2_review@10",
-          "when": "view == nvIsaExtractor.objects && viewItem =~ /^nvFile/"
+          "when": "view == gpuIsaExtractor.objects && viewItem =~ /^nvFile/"
         },
         {
-          "command": "nvIsaExtractor.disassembleObject",
+          "command": "gpuIsaExtractor.disassembleObject",
           "group": "1_batch@10",
-          "when": "view == nvIsaExtractor.objects && viewItem == nvGroup"
+          "when": "view == gpuIsaExtractor.objects && viewItem == nvGroup"
         }
       ],
       "commandPalette": [
         {
-          "command": "nvIsaExtractor.openObject",
+          "command": "gpuIsaExtractor.openObject",
           "when": "false"
         },
         {
-          "command": "nvIsaExtractor.loadMore",
+          "command": "gpuIsaExtractor.loadMore",
           "when": "false"
         },
         {
-          "command": "nvIsaExtractor.closeBlob",
+          "command": "gpuIsaExtractor.closeBlob",
           "when": "false"
         },
         {
-          "command": "nvIsaExtractor.refreshBlob",
-          "when": "nvIsaExtractor.hasBlob"
+          "command": "gpuIsaExtractor.refreshBlob",
+          "when": "gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.disassembleObject",
-          "when": "nvIsaExtractor.hasBlob"
+          "command": "gpuIsaExtractor.disassembleObject",
+          "when": "gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.toggleReviewed",
-          "when": "nvIsaExtractor.hasBlob"
+          "command": "gpuIsaExtractor.toggleReviewed",
+          "when": "gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.clearReviewed",
-          "when": "nvIsaExtractor.hasBlob"
+          "command": "gpuIsaExtractor.clearReviewed",
+          "when": "gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.nextObject",
-          "when": "nvIsaExtractor.hasBlob"
+          "command": "gpuIsaExtractor.nextObject",
+          "when": "gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.previousObject",
-          "when": "nvIsaExtractor.hasBlob"
+          "command": "gpuIsaExtractor.previousObject",
+          "when": "gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.nextUnreviewed",
-          "when": "nvIsaExtractor.hasBlob"
+          "command": "gpuIsaExtractor.nextUnreviewed",
+          "when": "gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.filter",
-          "when": "nvIsaExtractor.hasBlob"
+          "command": "gpuIsaExtractor.filter",
+          "when": "gpuIsaExtractor.hasBlob"
         },
         {
-          "command": "nvIsaExtractor.compileSourceFor"
+          "command": "gpuIsaExtractor.compileSourceFor"
         }
       ],
       "editor/context": [
         {
-          "command": "nvIsaExtractor.revealSource",
+          "command": "gpuIsaExtractor.revealSource",
           "group": "navigation@10",
           "when": "editorLangId == nvidia-sass || editorLangId == amd-rdna-isa"
         }
@@ -730,21 +730,21 @@
     "configuration": {
       "title": "GPU ISA Extractor",
       "properties": {
-        "nvIsaExtractor.nvdisasmPath": {
+        "gpuIsaExtractor.nvdisasmPath": {
           "type": "string",
           "default": "",
           "markdownDescription": "Path to `nvdisasm`. Leave empty to look on `PATH` and then in `%CUDA_PATH%\\bin`. It ships with the CUDA Toolkit and cannot be bundled with this extension.",
           "scope": "machine",
           "order": 100
         },
-        "nvIsaExtractor.arch": {
+        "gpuIsaExtractor.arch": {
           "type": "string",
           "default": "auto",
           "markdownDescription": "Architecture to disassemble for, e.g. `SM86`. `auto` reads the compute capability of this machine's GPU, which is what compiled the cached shaders in the first place. Set it explicitly when there is no GPU, or more than one.",
           "scope": "machine",
           "order": 110
         },
-        "nvIsaExtractor.minCodeBytes": {
+        "gpuIsaExtractor.minCodeBytes": {
           "type": "number",
           "default": 0,
           "minimum": 0,
@@ -752,7 +752,7 @@
           "scope": "window",
           "order": 120
         },
-        "nvIsaExtractor.glcacheMode": {
+        "gpuIsaExtractor.glcacheMode": {
           "type": "string",
           "default": "auto",
           "enum": [
@@ -774,21 +774,21 @@
           "scope": "window",
           "order": 130
         },
-        "nvIsaExtractor.decodeControlCodes": {
+        "gpuIsaExtractor.decodeControlCodes": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Decode each instruction's scheduling control fields and print them as a `[B------:R-:W0:Y:S04]` column. Turn off to get nvdisasm's output verbatim.",
           "scope": "window",
           "order": 140
         },
-        "nvIsaExtractor.keepRawMicrocode": {
+        "gpuIsaExtractor.keepRawMicrocode": {
           "type": "boolean",
           "default": false,
           "markdownDescription": "Keep the carved microcode next to the listing. It is always kept when nvdisasm fails, so that failure can be reproduced.",
           "scope": "window",
           "order": 150
         },
-        "nvIsaExtractor.tree.sortBy": {
+        "gpuIsaExtractor.tree.sortBy": {
           "type": "string",
           "default": "size",
           "enum": [
@@ -810,7 +810,7 @@
           "scope": "window",
           "order": 190
         },
-        "nvIsaExtractor.tree.autoGroupThreshold": {
+        "gpuIsaExtractor.tree.autoGroupThreshold": {
           "type": "number",
           "default": 200,
           "minimum": 1,
@@ -818,7 +818,7 @@
           "scope": "window",
           "order": 195
         },
-        "nvIsaExtractor.tree.pageSize": {
+        "gpuIsaExtractor.tree.pageSize": {
           "type": "number",
           "default": 500,
           "minimum": 0,
@@ -826,7 +826,7 @@
           "scope": "window",
           "order": 197
         },
-        "nvIsaExtractor.batch.confirmAboveBytes": {
+        "gpuIsaExtractor.batch.confirmAboveBytes": {
           "type": "number",
           "default": 268435456,
           "minimum": 0,
@@ -834,7 +834,7 @@
           "scope": "window",
           "order": 205
         },
-        "nvIsaExtractor.tree.maxBlobs": {
+        "gpuIsaExtractor.tree.maxBlobs": {
           "type": "number",
           "default": 8,
           "minimum": 1,
@@ -842,7 +842,7 @@
           "scope": "window",
           "order": 200
         },
-        "nvIsaExtractor.output.location": {
+        "gpuIsaExtractor.output.location": {
           "type": "string",
           "default": "globalStorage",
           "enum": [
@@ -857,7 +857,7 @@
           "scope": "window",
           "order": 160
         },
-        "nvIsaExtractor.output.retentionDays": {
+        "gpuIsaExtractor.output.retentionDays": {
           "type": "number",
           "default": 30,
           "minimum": 0,
@@ -865,7 +865,7 @@
           "scope": "window",
           "order": 170
         },
-        "nvidiaSass.semanticMaxLines": {
+        "gpuIsaExtractor.semanticMaxLines": {
           "type": "number",
           "default": 100000,
           "minimum": 0,
@@ -873,28 +873,28 @@
           "scope": "window",
           "order": 15
         },
-        "nvidiaSass.scoreboard.highlight": {
+        "gpuIsaExtractor.scoreboard.highlight": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Highlight scoreboard dependencies as you move the cursor. Putting the caret on a scoreboard inside a control column marks the instructions on the other end of that dependency - the arms a wait is waiting to drain, or the wait that drains an arm.",
           "scope": "window",
           "order": 16
         },
-        "nvidiaSass.semanticHighlighting": {
+        "gpuIsaExtractor.semanticHighlighting": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Refine highlighting with a semantic pass that resolves operand roles (destination vs source) correctly, including stores and multi-destination instructions. Disable to fall back to the TextMate grammar alone.",
           "scope": "window",
           "order": 10
         },
-        "nvidiaSass.hover.enabled": {
+        "gpuIsaExtractor.hover.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Show tooltips for opcodes, postfixes, registers, constant banks and control codes.",
           "scope": "window",
           "order": 20
         },
-        "nvidiaSass.hover.detail": {
+        "gpuIsaExtractor.hover.detail": {
           "type": "string",
           "default": "concise",
           "enum": [
@@ -913,7 +913,7 @@
           "scope": "window",
           "order": 30
         },
-        "nvidiaSass.hover.architecture": {
+        "gpuIsaExtractor.hover.architecture": {
           "type": "string",
           "default": "auto",
           "enum": [
@@ -928,12 +928,12 @@
           "scope": "window",
           "order": 40
         },
-        "nvIsaExtractor.compile.flags": {
+        "gpuIsaExtractor.compile.flags": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Flags applied to every compile, before the file's own `// nv-isa-extractor` line, which wins. Bare flags go to the compiler for the language being compiled - `slangc` for Slang (`-O3`, `-fp-mode fast`), NVRTC or `nvcc` for CUDA (`-use_fast_math`). Use `-Xptxas <flag>` for the PTX assembler and `-Xnvrtc <flag>` to reach the CUDA front end from a Slang file. `-I<dir>` adds an include directory for `#include` and `import`; the compiled file's own directory is always searched first, and a relative directory resolves against the file being compiled. `-Xvk <control>` describes the pipeline a vertex or fragment shader is compiled into - `bind=set:binding:type[:count]`, `push=bytes`, `producer=file[:entry]`, `format=`, `depth=`, `samples=` - which is only needed where reflection cannot know how your engine binds the shader."
+          "markdownDescription": "Flags applied to every compile, before the file's own `// gpu-isa-extractor` line, which wins. Bare flags go to the compiler for the language being compiled - `slangc` for Slang (`-O3`, `-fp-mode fast`), NVRTC or `nvcc` for CUDA (`-use_fast_math`). Use `-Xptxas <flag>` for the PTX assembler and `-Xnvrtc <flag>` to reach the CUDA front end from a Slang file. `-I<dir>` adds an include directory for `#include` and `import`; the compiled file's own directory is always searched first, and a relative directory resolves against the file being compiled. `-Xvk <control>` describes the pipeline a vertex or fragment shader is compiled into - `bind=set:binding:type[:count]`, `push=bytes`, `producer=file[:entry]`, `format=`, `depth=`, `samples=` - which is only needed where reflection cannot know how your engine binds the shader."
         },
-        "nvIsaExtractor.compile.backend": {
+        "gpuIsaExtractor.compile.backend": {
           "type": "string",
           "enum": [
             "auto",
@@ -943,36 +943,36 @@
           "default": "auto",
           "markdownDescription": "Which CUDA front end compiles to PTX. `nvrtc` needs no host C++ compiler and is driven through a small Python helper; `nvcc` needs MSVC on Windows and fails with `Cannot find compiler 'cl.exe' in PATH` without it. `auto` prefers NVRTC."
         },
-        "nvIsaExtractor.compile.correlate": {
+        "gpuIsaExtractor.compile.correlate": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Merge `//## <file>:<line>` markers into a compiled listing and light up the matching source line as the cursor moves. Attribution comes from the compiler's own line table; it is provenance, not a cost model."
         },
-        "nvIsaExtractor.compile.slangcPath": {
+        "gpuIsaExtractor.compile.slangcPath": {
           "type": "string",
           "scope": "machine",
           "default": "",
           "markdownDescription": "Explicit `slangc` path; empty auto-locates. Ships with the Vulkan SDK."
         },
-        "nvIsaExtractor.compile.ptxasPath": {
+        "gpuIsaExtractor.compile.ptxasPath": {
           "type": "string",
           "scope": "machine",
           "default": "",
           "markdownDescription": "Explicit `ptxas` path; empty auto-locates via `PATH` and `%CUDA_PATH%\\bin`."
         },
-        "nvIsaExtractor.compile.pythonPath": {
+        "gpuIsaExtractor.compile.pythonPath": {
           "type": "string",
           "scope": "machine",
           "default": "",
           "markdownDescription": "Explicit Python interpreter for the NVRTC helper; empty tries `py`, then `python3`."
         },
-        "nvIsaExtractor.compile.nvrtcPath": {
+        "gpuIsaExtractor.compile.nvrtcPath": {
           "type": "string",
           "scope": "machine",
           "default": "",
           "markdownDescription": "Explicit `nvrtc64_*.dll`; empty searches `%CUDA_PATH%\\bind` and the loader path."
         },
-        "nvIsaExtractor.compile.correlationStyle": {
+        "gpuIsaExtractor.compile.correlationStyle": {
           "type": "string",
           "enum": [
             "banner",
@@ -982,17 +982,17 @@
           "default": "banner",
           "markdownDescription": "Where source correlation is recorded in a generated listing. `banner` keeps the instruction stream clean and puts an address map in the header. `inline` writes a `//## file:line` marker above each run, which survives being pasted as plain text but breaks the column alignment. `off` skips it."
         },
-        "nvIsaExtractor.compile.clickToSass": {
+        "gpuIsaExtractor.compile.clickToSass": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Ctrl+click (Go to Definition) on a source line jumps to the first instruction it produced, when a listing for that file is open beside it."
         },
-        "nvIsaExtractor.compile.traceCorrelation": {
+        "gpuIsaExtractor.compile.traceCorrelation": {
           "type": "boolean",
           "default": false,
           "markdownDescription": "Log why a source line highlighted nothing to the GPU ISA Extractor output channel."
         },
-        "nvIsaExtractor.compile.target": {
+        "gpuIsaExtractor.compile.target": {
           "type": "string",
           "enum": [
             "auto",
@@ -1000,14 +1000,14 @@
             "amd"
           ],
           "default": "auto",
-          "markdownDescription": "Which ISA to compile a shader for. `auto` decides per road rather than per machine: compute goes to NVIDIA whenever `ptxas` resolves, because it cross-compiles from a machine with no GPU; a graphics stage goes to NVIDIA only when the Vulkan probe finds an NVIDIA device, because that road is the local driver, and to AMD otherwise. The file's own `// nv-isa-extractor -target` line wins over this."
+          "markdownDescription": "Which ISA to compile a shader for. `auto` decides per road rather than per machine: compute goes to NVIDIA whenever `ptxas` resolves, because it cross-compiles from a machine with no GPU; a graphics stage goes to NVIDIA only when the Vulkan probe finds an NVIDIA device, because that road is the local driver, and to AMD otherwise. The file's own `// gpu-isa-extractor -target` line wins over this."
         },
-        "nvIsaExtractor.compile.rgaPath": {
+        "gpuIsaExtractor.compile.rgaPath": {
           "type": "string",
           "default": "",
           "markdownDescription": "Explicit `rga` path - either the executable or the unpacked archive holding it. Empty auto-locates: PATH, then `RGA_PATH`, then the usual install roots. The Radeon GPU Analyzer is a free download and is not bundled - it is 227 MB, most of it back ends this road never uses."
         },
-        "nvIsaExtractor.compile.gfx": {
+        "gpuIsaExtractor.compile.gfx": {
           "type": "string",
           "default": "",
           "markdownDescription": "Which AMD target to compile for, e.g. `gfx1201`. Empty asks `rga --list-asics` and takes the newest it offers. The supported list shrinks between RGA releases, so a pinned value can stop working on an upgrade and is checked against the live list."

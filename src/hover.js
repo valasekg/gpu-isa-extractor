@@ -56,7 +56,7 @@ function tablesFor(dialect) {
 
 class SassHoverProvider {
   provideHover(document, position) {
-    if (!vscode.workspace.getConfiguration('nvidiaSass').get('hover.enabled', true)) return null;
+    if (!vscode.workspace.getConfiguration('gpuIsaExtractor').get('hover.enabled', true)) return null;
 
     // Which ISA this document holds decides both how the line is read and which tables the
     // answer comes out of. `dialectFor` keys on the language id, which is the only thing that
@@ -157,7 +157,7 @@ function sourceNote(entry) {
 }
 
 function architectureFor(document) {
-  const configured = vscode.workspace.getConfiguration('nvidiaSass').get('hover.architecture', 'auto');
+  const configured = vscode.workspace.getConfiguration('gpuIsaExtractor').get('hover.architecture', 'auto');
   if (configured && configured !== 'auto' && configured !== 'any') return configured;
   if (configured === 'any') return null;
   // Read through the dialect rather than from `data` directly. Which token names the
@@ -168,7 +168,7 @@ function architectureFor(document) {
 }
 
 function hoverDetail() {
-  return vscode.workspace.getConfiguration('nvidiaSass').get('hover.detail', 'concise');
+  return vscode.workspace.getConfiguration('gpuIsaExtractor').get('hover.detail', 'concise');
 }
 
 /* ------------------------------------------------------------------ opcodes */

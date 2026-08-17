@@ -1,4 +1,4 @@
-// nv-isa-extractor -O3
+// gpu-isa-extractor -O3
 //
 // A complete raytracing pipeline over procedural geometry - as an input for
 // **NVIDIA ISA: Compile and Disassemble** (Ctrl+Alt+Shift+B).

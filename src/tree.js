@@ -36,7 +36,7 @@ const blobstore = require('./blobstore');
 const review = require('./review');
 const nvcache = require('./nvcache');
 
-const VIEW_ID = 'nvIsaExtractor.objects';
+const VIEW_ID = 'gpuIsaExtractor.objects';
 
 /** Size buckets, largest first. A file past the flat threshold is split across these. */
 const BUCKETS = [
@@ -82,7 +82,7 @@ function humanBytes(n) {
 }
 
 function settings() {
-  return vscode.workspace.getConfiguration('nvIsaExtractor');
+  return vscode.workspace.getConfiguration('gpuIsaExtractor');
 }
 
 /** Distinct shaders in a file, each carrying every offset it was stored at. */
@@ -200,7 +200,7 @@ class ShaderObjectsProvider {
    * mistaken for the listing of any shader whose hash starts `deadbeef`, and clicking that
    * shader would open somebody else's disassembly.
    *
-   * The architecture is matched too when it is known, so changing `nvIsaExtractor.arch` does
+   * The architecture is matched too when it is known, so changing `gpuIsaExtractor.arch` does
    * not keep serving listings built for the old one.
    */
   hasListing(obj) {
@@ -464,7 +464,7 @@ class ShaderObjectsProvider {
       ((obj.warnings && obj.warnings.length) ? '.warn' : '');
 
     item.command = {
-      command: 'nvIsaExtractor.openObject',
+      command: 'gpuIsaExtractor.openObject',
       title: 'Open Listing',
       arguments: [node]
     };
@@ -522,7 +522,7 @@ class ShaderObjectsProvider {
     item.iconPath = new vscode.ThemeIcon('versions');
     item.contextValue = 'nvCopy';
     item.command = {
-      command: 'nvIsaExtractor.openObject', title: 'Open Listing', arguments: [node]
+      command: 'gpuIsaExtractor.openObject', title: 'Open Listing', arguments: [node]
     };
     return item;
   }
@@ -534,7 +534,7 @@ class ShaderObjectsProvider {
     item.iconPath = new vscode.ThemeIcon('ellipsis');
     item.contextValue = 'nvMore';
     item.command = {
-      command: 'nvIsaExtractor.loadMore', title: 'Load more', arguments: [node]
+      command: 'gpuIsaExtractor.loadMore', title: 'Load more', arguments: [node]
     };
     return item;
   }
@@ -547,15 +547,15 @@ class ShaderObjectsProvider {
     if (node.action === 'minCode') {
       item.command = {
         command: 'workbench.action.openSettings', title: 'Open the setting',
-        arguments: ['nvIsaExtractor.minCodeBytes']
+        arguments: ['gpuIsaExtractor.minCodeBytes']
       };
     } else if (node.action === 'glcacheMode') {
       item.command = {
         command: 'workbench.action.openSettings', title: 'Open the setting',
-        arguments: ['nvIsaExtractor.glcacheMode']
+        arguments: ['gpuIsaExtractor.glcacheMode']
       };
     } else if (node.action === 'clearFilter') {
-      item.command = { command: 'nvIsaExtractor.filter', title: 'Change the filter' };
+      item.command = { command: 'gpuIsaExtractor.filter', title: 'Change the filter' };
     }
     return item;
   }

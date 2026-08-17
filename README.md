@@ -22,7 +22,7 @@ Hover any field for an explanation.
 Move the cursor onto a scoreboard inside a control column — arrow keys are enough — and the
 other end of that dependency lights up. From a wait, the instructions that armed it; from an
 arm, the wait that drains it and everything else that wait covers. `F12` opens the same set in
-a peek window. Turn it off with `nvidiaSass.scoreboard.highlight`.
+a peek window. Turn it off with `gpuIsaExtractor.scoreboard.highlight`.
 
 The hover says how deep the scoreboard is:
 
@@ -43,7 +43,7 @@ hover reports them while making clear it cannot know which path arrived.
 - **CUDA Toolkit** for `nvdisasm` — located automatically (setting → `PATH` → `%CUDA_PATH%\bin`),
   never bundled (NVIDIA's license does not permit redistribution).
 - An NVIDIA GPU for automatic architecture detection (`nvidia-smi`), or set
-  `nvIsaExtractor.arch` manually (e.g. `SM86`).
+  `gpuIsaExtractor.arch` manually (e.g. `SM86`).
 - Windows: the shader caches live under `%LOCALAPPDATA%\NVIDIA\GLCache` and `...\DXCache`.
 
 Run **GPU ISA: Doctor** to check all of this at once.
@@ -151,7 +151,7 @@ is interleaved with the code:
 ```
 
 Each entry starts a run that holds until the next. Set
-`nvIsaExtractor.compile.correlationStyle` to `inline` for the older
+`gpuIsaExtractor.compile.correlationStyle` to `inline` for the older
 `//## file:line` markers above each run, which survive being pasted as plain text.
 
 Put the cursor on an instruction and the line that produced it lights up in the source; put it
@@ -170,7 +170,7 @@ anything you wrote.
 written into the listing itself, so all of this still works on one saved and reopened later.
 
 If a selection highlights nothing and you expected it to, turn on
-`nvIsaExtractor.compile.traceCorrelation` — it says whether the listing has no map, names a
+`gpuIsaExtractor.compile.traceCorrelation` — it says whether the listing has no map, names a
 different path, or simply attributes no instructions to those lines.
 
 A shader takes one of two roads, chosen by its stage:
@@ -195,7 +195,7 @@ shaders name the entry point host-side instead — is read from its filename:
 Where neither says it — an entry point not called `main`, say — the directive does:
 
 ```
-// nv-isa-extractor -stage fragment -entry shadeIt
+// gpu-isa-extractor -stage fragment -entry shadeIt
 ```
 
 Most specific wins: the directive, then the attribute, then the filename. A file that says it
@@ -222,13 +222,13 @@ make the code move.
 Flags live with the code they change, on the first line of the file:
 
 ```hlsl
-// nv-isa-extractor -O3 -fp-mode fast -Xptxas -maxrregcount=32
+// gpu-isa-extractor -O3 -fp-mode fast -Xptxas -maxrregcount=32
 ```
 
 A bare flag goes to the compiler for that language — `slangc` for Slang (`-O3`, `-fp-mode`),
 NVRTC or `nvcc` for CUDA (`-use_fast_math`, `-ffp-contract`). Later stages are reached with
 `-Xptxas <flag>` and, from a Slang file, `-Xnvrtc <flag>`, following nvcc's own convention.
-`nvIsaExtractor.compile.flags` sets defaults; the file's own line wins.
+`gpuIsaExtractor.compile.flags` sets defaults; the file's own line wins.
 
 ### Graphics shaders
 
@@ -254,8 +254,8 @@ Where you know better than reflection can — because you know how your engine b
 — say so on the line that already carries the compile flags:
 
 ```hlsl
-// nv-isa-extractor -Xvk bind=0:0:8:1 -Xvk samples=4
-// nv-isa-extractor -Xvk producer=fullscreen.slang:vsMain
+// gpu-isa-extractor -Xvk bind=0:0:8:1 -Xvk samples=4
+// gpu-isa-extractor -Xvk producer=fullscreen.slang:vsMain
 ```
 
 `bind=<set>:<binding>:<type>[:<count>]` (type is `VkDescriptorType`'s own numbering),
@@ -275,7 +275,7 @@ this is the only thing that makes a sibling header work.
 Anywhere else goes on the same first line, relative to the file:
 
 ```hlsl
-// nv-isa-extractor -I../common -I"C:\Program Files\shaders\inc"
+// gpu-isa-extractor -I../common -I"C:\Program Files\shaders\inc"
 ```
 
 Relative means *relative to the shader*, not to whatever directory the editor was started in,
@@ -321,7 +321,7 @@ module are attributed to *that* file, which is listed in the banner's source map
 
 **Compute** additionally wants `ptxas` (CUDA Toolkit, beside `nvdisasm`) and a CUDA front end.
 NVRTC is the default and needs no host C++ compiler; because it is a DLL with no CLI it is
-driven through a small Python helper. Set `nvIsaExtractor.compile.backend` to `nvcc` instead if
+driven through a small Python helper. Set `gpuIsaExtractor.compile.backend` to `nvcc` instead if
 you have MSVC. No GPU is needed at all — `ptxas` will target `SM90` from a laptop.
 
 **Every graphics stage** needs neither `ptxas` nor NVRTC, but does need an NVIDIA GPU with
@@ -402,32 +402,32 @@ id, grammar and themes.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `nvIsaExtractor.nvdisasmPath` | `""` | Explicit `nvdisasm` path; empty = auto-locate |
-| `nvIsaExtractor.arch` | `auto` | `auto` reads the GPU's compute capability; else e.g. `SM86` |
-| `nvIsaExtractor.minCodeBytes` | `0` | Ignore objects smaller than this (try `65536` on DXCache) |
-| `nvIsaExtractor.glcacheMode` | `auto` | `auto` uses the `.toc` index and falls back to scanning |
-| `nvIsaExtractor.decodeControlCodes` | `true` | Emit the `[B…]` scheduling column |
-| `nvIsaExtractor.keepRawMicrocode` | `false` | Keep the carved binary beside the listing |
-| `nvIsaExtractor.output.location` | `globalStorage` | Where listings are written |
-| `nvIsaExtractor.output.retentionDays` | `30` | Prune listings older than this; `0` = never |
-| `nvIsaExtractor.tree.sortBy` | `size` | Order in the view: `size`, `offset` (file order) or `name` |
-| `nvIsaExtractor.tree.autoGroupThreshold` | `200` | Above this many shaders, split into size buckets |
-| `nvIsaExtractor.tree.pageSize` | `500` | Rows per level before a `Load more…` entry; `0` = all |
-| `nvIsaExtractor.tree.maxBlobs` | `8` | How many cache files stay listed at once |
-| `nvIsaExtractor.batch.confirmAboveBytes` | `256 MB` | Ask before a batch producing more than this |
-| `nvIsaExtractor.compile.flags` | `""` | Default compile flags; the file's own line wins |
-| `nvIsaExtractor.compile.backend` | `auto` | CUDA front end: `nvrtc` (no host compiler) or `nvcc`. Compute only — the graphics road uses neither |
-| `nvIsaExtractor.compile.correlate` | `true` | Highlight the matching lines as the selection moves |
-| `nvIsaExtractor.compile.correlationStyle` | `banner` | Where the map is recorded: `banner`, `inline` or `off` |
-| `nvIsaExtractor.compile.clickToSass` | `true` | Ctrl+click a source line to jump to its first instruction |
-| `nvIsaExtractor.compile.traceCorrelation` | `false` | Log why a line highlighted nothing |
-| `nvIsaExtractor.compile.slangcPath` | `""` | Explicit `slangc`; empty = auto-locate |
-| `nvIsaExtractor.compile.ptxasPath` | `""` | Explicit `ptxas`; empty = auto-locate |
-| `nvIsaExtractor.compile.pythonPath` | `""` | Interpreter for the NVRTC helper; empty tries `py`, `python3` |
-| `nvIsaExtractor.compile.nvrtcPath` | `""` | Explicit `nvrtc64_*.dll`; empty searches `%CUDA_PATH%` |
+| `gpuIsaExtractor.nvdisasmPath` | `""` | Explicit `nvdisasm` path; empty = auto-locate |
+| `gpuIsaExtractor.arch` | `auto` | `auto` reads the GPU's compute capability; else e.g. `SM86` |
+| `gpuIsaExtractor.minCodeBytes` | `0` | Ignore objects smaller than this (try `65536` on DXCache) |
+| `gpuIsaExtractor.glcacheMode` | `auto` | `auto` uses the `.toc` index and falls back to scanning |
+| `gpuIsaExtractor.decodeControlCodes` | `true` | Emit the `[B…]` scheduling column |
+| `gpuIsaExtractor.keepRawMicrocode` | `false` | Keep the carved binary beside the listing |
+| `gpuIsaExtractor.output.location` | `globalStorage` | Where listings are written |
+| `gpuIsaExtractor.output.retentionDays` | `30` | Prune listings older than this; `0` = never |
+| `gpuIsaExtractor.tree.sortBy` | `size` | Order in the view: `size`, `offset` (file order) or `name` |
+| `gpuIsaExtractor.tree.autoGroupThreshold` | `200` | Above this many shaders, split into size buckets |
+| `gpuIsaExtractor.tree.pageSize` | `500` | Rows per level before a `Load more…` entry; `0` = all |
+| `gpuIsaExtractor.tree.maxBlobs` | `8` | How many cache files stay listed at once |
+| `gpuIsaExtractor.batch.confirmAboveBytes` | `256 MB` | Ask before a batch producing more than this |
+| `gpuIsaExtractor.compile.flags` | `""` | Default compile flags; the file's own line wins |
+| `gpuIsaExtractor.compile.backend` | `auto` | CUDA front end: `nvrtc` (no host compiler) or `nvcc`. Compute only — the graphics road uses neither |
+| `gpuIsaExtractor.compile.correlate` | `true` | Highlight the matching lines as the selection moves |
+| `gpuIsaExtractor.compile.correlationStyle` | `banner` | Where the map is recorded: `banner`, `inline` or `off` |
+| `gpuIsaExtractor.compile.clickToSass` | `true` | Ctrl+click a source line to jump to its first instruction |
+| `gpuIsaExtractor.compile.traceCorrelation` | `false` | Log why a line highlighted nothing |
+| `gpuIsaExtractor.compile.slangcPath` | `""` | Explicit `slangc`; empty = auto-locate |
+| `gpuIsaExtractor.compile.ptxasPath` | `""` | Explicit `ptxas`; empty = auto-locate |
+| `gpuIsaExtractor.compile.pythonPath` | `""` | Interpreter for the NVRTC helper; empty tries `py`, `python3` |
+| `gpuIsaExtractor.compile.nvrtcPath` | `""` | Explicit `nvrtc64_*.dll`; empty searches `%CUDA_PATH%` |
 
-The `nvidiaSass.*` settings (semantic highlighting, hover detail, architecture) carry over
-from the highlighter unchanged, plus `nvidiaSass.semanticMaxLines` which skips the semantic
+The `gpuIsaExtractor.*` settings (semantic highlighting, hover detail, architecture) carry over
+from the highlighter unchanged, plus `gpuIsaExtractor.semanticMaxLines` which skips the semantic
 pass on very large listings.
 
 ## Honesty

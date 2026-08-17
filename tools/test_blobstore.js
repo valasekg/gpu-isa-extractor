@@ -37,12 +37,12 @@ function section(title) { console.log(`\n${title}`); }
 /* --------------------------------------------------------- the vscode stub --- */
 
 const settings = {
-  nvIsaExtractor: {
+  gpuIsaExtractor: {
     nvdisasmPath: '', arch: 'auto', minCodeBytes: 0, glcacheMode: 'auto',
     decodeControlCodes: true, keepRawMicrocode: false,
-    'output.location': 'temp', 'output.retentionDays': 30, 'tree.maxBlobs': 8
-  },
-  nvidiaSass: { semanticHighlighting: true, semanticMaxLines: 100000 }
+    'output.location': 'temp', 'output.retentionDays': 30, 'tree.maxBlobs': 8,
+    semanticHighlighting: true, semanticMaxLines: 100000
+  }
 };
 
 const globalStateBacking = {};
@@ -323,7 +323,7 @@ const rssMB = () => process.memoryUsage().rss / MB;
       fs.writeFileSync(f, Buffer.alloc(64, i));
       made.push(f);
     }
-    settings.nvIsaExtractor['tree.maxBlobs'] = 2;
+    settings.gpuIsaExtractor['tree.maxBlobs'] = 2;
     for (const f of made) await blobstore.open(f);
 
     check(blobstore.all().length === 2, 'no more than maxBlobs files stay loaded',
@@ -338,7 +338,7 @@ const rssMB = () => process.memoryUsage().rss / MB;
     check(blobstore.has(made[2]) && blobstore.has(made[0]) && !blobstore.has(made[3]),
       're-opening a loaded file makes it recent again');
 
-    settings.nvIsaExtractor['tree.maxBlobs'] = 8;
+    settings.gpuIsaExtractor['tree.maxBlobs'] = 8;
     blobstore.closeAll();
     fs.rmSync(dir, { recursive: true, force: true });
   }

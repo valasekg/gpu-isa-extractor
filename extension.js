@@ -116,34 +116,34 @@ function activate(context) {
     // Every handler lives in src/browser.js; these registrations stay one per line and
     // single-quoted because tools/verify.py scrapes this file to prove that each declared
     // command really is registered.
-    vscode.commands.registerCommand('nvIsaExtractor.disassemble', uri => browser.openBlob(uri)),
-    vscode.commands.registerCommand('nvIsaExtractor.openBlobDialog', () => browser.openBlobDialog()),
-    vscode.commands.registerCommand('nvIsaExtractor.refreshBlob', node => browser.refreshBlob(node)),
-    vscode.commands.registerCommand('nvIsaExtractor.closeBlob', node => browser.closeBlob(node)),
-    vscode.commands.registerCommand('nvIsaExtractor.filter', () => browser.filterObjects()),
-    vscode.commands.registerCommand('nvIsaExtractor.openObject', node => browser.openObject(node)),
-    vscode.commands.registerCommand('nvIsaExtractor.disassembleObject', (node, selection) => browser.disassembleObject(node, selection)),
-    vscode.commands.registerCommand('nvIsaExtractor.toggleReviewed', (node, selection) => browser.toggleReviewed(node, selection)),
-    vscode.commands.registerCommand('nvIsaExtractor.clearReviewed', node => browser.clearReviewed(node)),
-    vscode.commands.registerCommand('nvIsaExtractor.nextObject', () => browser.walk(1)),
-    vscode.commands.registerCommand('nvIsaExtractor.previousObject', () => browser.walk(-1)),
-    vscode.commands.registerCommand('nvIsaExtractor.nextUnreviewed', () => browser.walk(1, { unreviewedOnly: true })),
-    vscode.commands.registerCommand('nvIsaExtractor.loadMore', node => browser.loadMore(node)),
-    vscode.commands.registerCommand('nvIsaExtractor.compileSource', uri => compileview.compileCommand(uri)),
-    vscode.commands.registerCommand('nvIsaExtractor.compileSourceFor', uri => compileview.compileForCommand(uri)),
-    vscode.commands.registerCommand('nvIsaExtractor.revealSource', () => compileview.revealSource()),
-    vscode.commands.registerCommand('nvIsaExtractor.openSettings', () => browser.openSettings()),
-    vscode.commands.registerCommand('nvIsaExtractor.doctor', () => doctorCommand(context)),
-    vscode.commands.registerCommand('nvIsaExtractor.clearOutput', () => clearOutputCommand(context)),
+    vscode.commands.registerCommand('gpuIsaExtractor.disassemble', uri => browser.openBlob(uri)),
+    vscode.commands.registerCommand('gpuIsaExtractor.openBlobDialog', () => browser.openBlobDialog()),
+    vscode.commands.registerCommand('gpuIsaExtractor.refreshBlob', node => browser.refreshBlob(node)),
+    vscode.commands.registerCommand('gpuIsaExtractor.closeBlob', node => browser.closeBlob(node)),
+    vscode.commands.registerCommand('gpuIsaExtractor.filter', () => browser.filterObjects()),
+    vscode.commands.registerCommand('gpuIsaExtractor.openObject', node => browser.openObject(node)),
+    vscode.commands.registerCommand('gpuIsaExtractor.disassembleObject', (node, selection) => browser.disassembleObject(node, selection)),
+    vscode.commands.registerCommand('gpuIsaExtractor.toggleReviewed', (node, selection) => browser.toggleReviewed(node, selection)),
+    vscode.commands.registerCommand('gpuIsaExtractor.clearReviewed', node => browser.clearReviewed(node)),
+    vscode.commands.registerCommand('gpuIsaExtractor.nextObject', () => browser.walk(1)),
+    vscode.commands.registerCommand('gpuIsaExtractor.previousObject', () => browser.walk(-1)),
+    vscode.commands.registerCommand('gpuIsaExtractor.nextUnreviewed', () => browser.walk(1, { unreviewedOnly: true })),
+    vscode.commands.registerCommand('gpuIsaExtractor.loadMore', node => browser.loadMore(node)),
+    vscode.commands.registerCommand('gpuIsaExtractor.compileSource', uri => compileview.compileCommand(uri)),
+    vscode.commands.registerCommand('gpuIsaExtractor.compileSourceFor', uri => compileview.compileForCommand(uri)),
+    vscode.commands.registerCommand('gpuIsaExtractor.revealSource', () => compileview.revealSource()),
+    vscode.commands.registerCommand('gpuIsaExtractor.openSettings', () => browser.openSettings()),
+    vscode.commands.registerCommand('gpuIsaExtractor.doctor', () => doctorCommand(context)),
+    vscode.commands.registerCommand('gpuIsaExtractor.clearOutput', () => clearOutputCommand(context)),
 
     vscode.workspace.onDidChangeConfiguration(e => {
       // Semantic tokens are cached per document, so toggling the setting has to invalidate them.
-      if (e.affectsConfiguration('nvidiaSass.semanticHighlighting') ||
-          e.affectsConfiguration('nvidiaSass.semanticMaxLines')) semantic.refresh();
-      if (e.affectsConfiguration('nvidiaSass.scoreboard.highlight')) highlighter.refresh();
+      if (e.affectsConfiguration('gpuIsaExtractor.semanticHighlighting') ||
+          e.affectsConfiguration('gpuIsaExtractor.semanticMaxLines')) semantic.refresh();
+      if (e.affectsConfiguration('gpuIsaExtractor.scoreboard.highlight')) highlighter.refresh();
       // The compile toolchain is probed once and cached; a path setting changes the answer.
-      if (e.affectsConfiguration('nvIsaExtractor.compile')) compileview.resetToolCache();
-      if (e.affectsConfiguration('nvIsaExtractor.arch')) {
+      if (e.affectsConfiguration('gpuIsaExtractor.compile')) compileview.resetToolCache();
+      if (e.affectsConfiguration('gpuIsaExtractor.arch')) {
         // Listings are named after the architecture, so which ones count as already-generated
         // changes with it.
         pipeline.resetArchCache();
@@ -151,9 +151,9 @@ function activate(context) {
       }
       // These change what a sweep would find. Say so rather than silently re-reading every
       // loaded file on a settings keystroke.
-      if (e.affectsConfiguration('nvIsaExtractor.minCodeBytes') ||
-          e.affectsConfiguration('nvIsaExtractor.glcacheMode')) blobstore.markStale();
-      if (e.affectsConfiguration('nvIsaExtractor.tree')) provider.refresh();
+      if (e.affectsConfiguration('gpuIsaExtractor.minCodeBytes') ||
+          e.affectsConfiguration('gpuIsaExtractor.glcacheMode')) blobstore.markStale();
+      if (e.affectsConfiguration('gpuIsaExtractor.tree')) provider.refresh();
     }),
 
     vscode.window.tabGroups.onDidChangeTabs(() => browser.syncContext()),
@@ -172,8 +172,8 @@ function activate(context) {
   // the probe - reads as "nothing wrong yet" instead of accusing the user of a missing
   // toolkit for the moment it takes to find one.
   pipeline.resolveNvdisasm()
-    .then(() => vscode.commands.executeCommand('setContext', 'nvIsaExtractor.toolsMissing', false))
-    .catch(() => vscode.commands.executeCommand('setContext', 'nvIsaExtractor.toolsMissing', true));
+    .then(() => vscode.commands.executeCommand('setContext', 'gpuIsaExtractor.toolsMissing', false))
+    .catch(() => vscode.commands.executeCommand('setContext', 'gpuIsaExtractor.toolsMissing', true));
 
   browser.syncContext();
   browser.refreshListingIndex();

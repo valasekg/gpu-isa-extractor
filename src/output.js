@@ -66,8 +66,8 @@ function listingName(object, arch, dialect = isa.DIALECTS[LANGUAGE_ID]) {
  * can prune it without touching anything the user put there.
  */
 function listingDir(context) {
-  const where = vscode.workspace.getConfiguration('nvIsaExtractor').get('output.location');
-  if (where === 'temp') return path.join(os.tmpdir(), 'nv-isa-extractor');
+  const where = vscode.workspace.getConfiguration('gpuIsaExtractor').get('output.location');
+  if (where === 'temp') return path.join(os.tmpdir(), 'gpu-isa-extractor');
   return path.join(context.globalStorageUri.fsPath, 'listings');
 }
 
@@ -334,7 +334,7 @@ async function showListing(file, show = { preview: false }) {
  * "file has been deleted" prompt on a document they are reading.
  */
 async function pruneListings(context, log) {
-  const days = Number(vscode.workspace.getConfiguration('nvIsaExtractor')
+  const days = Number(vscode.workspace.getConfiguration('gpuIsaExtractor')
     .get('output.retentionDays'));
   if (!days || days <= 0) return 0;
 

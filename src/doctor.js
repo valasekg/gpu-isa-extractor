@@ -20,7 +20,20 @@ const output = require('./output');
 const zstd = require('./zstd');
 const nvcache = require('./nvcache');
 
-const OLD_EXTENSION = 'gvalasek.nvidia-sass-highlighter';
+/**
+ * Extensions that contribute the same language id and grammar scope as this one.
+ *
+ * Two entries rather than one, and the second is this extension's own former self. Renaming
+ * `name` from `nv-isa-extractor` to `gpu-isa-extractor` changed the extension ID, so VS Code
+ * treats the new build as a different extension and installs it ALONGSIDE the old one rather
+ * than over it. Both then register `nvidia-sass` and `source.nvidia-sass`, which is the exact
+ * collision this check exists to name - and it would have gone unreported for the one upgrade
+ * where it is guaranteed to happen.
+ */
+const OLD_EXTENSIONS = [
+  'gvalasek.nvidia-sass-highlighter',
+  'gvalasek.nv-isa-extractor'
+];
 
 /**
  * A real 39-byte zstd frame whose payload is a known 491 bytes. Decoding it proves the
@@ -94,7 +107,7 @@ async function diagnose(context) {
       `determined from ${info.from}`,
       info.multiple
         ? `this machine reports ${info.multiple.length} GPUs (${info.multiple.join(', ')}); the ` +
-          'first is used. Set `nvIsaExtractor.arch` to choose another.'
+          'first is used. Set `gpuIsaExtractor.arch` to choose another.'
         : null);
   } catch (e) {
     add('fail', 'GPU architecture unknown', e.message);
@@ -177,15 +190,18 @@ async function diagnose(context) {
     add('fail', 'zstd decompressor is broken', e.message);
   }
 
-  // 6. the extension this one supersedes
+  // 6. the extensions this one supersedes
   {
-    const old = vscode.extensions.getExtension(OLD_EXTENSION);
-    add(old ? 'warn' : 'ok',
-      old ? 'the older highlighter extension is still installed' : 'no conflicting extension',
-      old
-        ? `${OLD_EXTENSION} contributes the same language id, grammar scope and theme names as ` +
-          'this extension. With both installed, which contribution wins is not defined. ' +
-          'Uninstall it - this extension contains all of it.'
+    const found = OLD_EXTENSIONS.filter(id => vscode.extensions.getExtension(id));
+    add(found.length ? 'warn' : 'ok',
+      found.length
+        ? `${found.length === 1 ? 'an earlier extension is' : 'earlier extensions are'} ` +
+          'still installed'
+        : 'no conflicting extension',
+      found.length
+        ? `${found.join(' and ')} contributes the same language id, grammar scope and theme ` +
+          'names as this extension. With both installed, which contribution wins is not ' +
+          'defined. Uninstall it - this extension contains all of it.'
         : null);
   }
 
@@ -213,10 +229,10 @@ async function diagnose(context) {
       detail.push(loaded
         ? `NVRTC: ${loaded[0]} via ${tools.python}`
         : `NVRTC: ${tools.python} found, but the nvrtc library did not load. ` +
-          'Set `nvIsaExtractor.compile.nvrtcPath` to an nvrtc64_*.dll, or CUDA_PATH.');
+          'Set `gpuIsaExtractor.compile.nvrtcPath` to an nvrtc64_*.dll, or CUDA_PATH.');
     } else {
       detail.push('NVRTC: no Python interpreter found, so the no-host-compiler backend is ' +
-        'unavailable. Set `nvIsaExtractor.compile.pythonPath`.');
+        'unavailable. Set `gpuIsaExtractor.compile.pythonPath`.');
     }
     detail.push(tools.nvcc
       ? `nvcc: ${tools.nvcc} (needs a host C++ compiler; on Windows that means MSVC)`
@@ -254,7 +270,7 @@ async function diagnose(context) {
       }
     } else {
       detail.push('Vulkan: no Python interpreter, so vertex and fragment shaders cannot be ' +
-        'compiled. Set `nvIsaExtractor.compile.pythonPath`.');
+        'compiled. Set `gpuIsaExtractor.compile.pythonPath`.');
     }
 
     const canCuda = tools.ptxas && (tools.python || tools.nvcc);
@@ -287,7 +303,7 @@ async function diagnose(context) {
         'rga: not found. The Radeon GPU Analyzer is a free download from ' +
         'https://github.com/GPUOpen-Tools/radeon_gpu_analyzer/releases and is not bundled - ' +
         'it is 227 MB, most of it back ends this road never uses. Set ' +
-        '`nvIsaExtractor.compile.rgaPath` to one, or put it on PATH.',
+        '`gpuIsaExtractor.compile.rgaPath` to one, or put it on PATH.',
         'Nothing else is needed for it: no AMD GPU, no AMD driver, no Python. Both of RGA\'s ' +
         'Vulkan modes cross-compile for any target they list.');
     } else {
@@ -347,7 +363,7 @@ async function diagnose(context) {
   // 8. storage
   {
     const stats = await output.storageStats(context);
-    const days = vscode.workspace.getConfiguration('nvIsaExtractor').get('output.retentionDays');
+    const days = vscode.workspace.getConfiguration('gpuIsaExtractor').get('output.retentionDays');
     add('ok', 'listing storage', stats.dir,
       `${stats.files} file(s), ${human(stats.bytes)}`,
       Number(days) > 0 ? `pruned after ${days} days` : 'kept indefinitely (retentionDays is 0)');
@@ -381,4 +397,4 @@ function render(findings, context) {
   return { text: lines.join('\n'), failed, warned };
 }
 
-module.exports = { diagnose, render, OLD_EXTENSION };
+module.exports = { diagnose, render, OLD_EXTENSIONS };

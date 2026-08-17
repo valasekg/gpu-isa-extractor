@@ -1,4 +1,4 @@
-// nv-isa-extractor -O3
+// gpu-isa-extractor -O3
 //
 // A vertex shader and the fragment shader it feeds, as an input for
 // **NVIDIA ISA: Compile and Disassemble** (Ctrl+Alt+Shift+B).
@@ -70,7 +70,7 @@
 // laptop with no NVIDIA card in it. This road asks the local driver to compile, so it needs an
 // NVIDIA GPU present and a working Vulkan driver, and it answers for *that* device. The
 // architecture in the banner is probed from the hardware and deliberately ignores the
-// `nvIsaExtractor.arch` setting, which exists for reading a cache written by a GPU that is not
+// `gpuIsaExtractor.arch` setting, which exists for reading a cache written by a GPU that is not
 // here.
 //
 // ## Telling it about your pipeline
@@ -80,7 +80,7 @@
 // reflected out of the SPIR-V by default and printed in the banner. Where you know better -
 // because you know how your engine binds this shader - say so on the directive line:
 //
-//     // nv-isa-extractor -Xvk bind=0:0:8:1 -Xvk bind=0:1:2:1 -Xvk bind=0:2:0:1
+//     // gpu-isa-extractor -Xvk bind=0:0:8:1 -Xvk bind=0:1:2:1 -Xvk bind=0:2:0:1
 //
 // That declares binding 0 a *dynamic* uniform buffer, which is how many engines bind their
 // per-draw constants, and restates the other two so the layout is complete - any `bind` at all

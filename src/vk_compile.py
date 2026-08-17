@@ -619,7 +619,7 @@ def refuse_interpreter():
     if C.sizeof(C.c_void_p) != 8:
         return ("this is a 32-bit Python (%d-bit pointers). Vulkan's dispatchable handles and "
                 "every struct offset here assume 64 bits. Install a 64-bit Python 3, or set "
-                "nvIsaExtractor.compile.pythonPath to one." % (C.sizeof(C.c_void_p) * 8))
+                "gpuIsaExtractor.compile.pythonPath to one." % (C.sizeof(C.c_void_p) * 8))
 
     # A Microsoft Store Python runs under packaged-app filesystem redirection, which retargets
     # writes under %LOCALAPPDATA% - including the shader cache directory this whole feature
@@ -630,7 +630,7 @@ def refuse_interpreter():
             return ("this is a Microsoft Store Python (%s). Its filesystem redirection moves "
                     "the shader cache this feature reads back, so the compile would appear to "
                     "produce nothing. Install Python 3 from python.org, or set "
-                    "nvIsaExtractor.compile.pythonPath to a real interpreter." % candidate)
+                    "gpuIsaExtractor.compile.pythonPath to a real interpreter." % candidate)
     return None
 
 

@@ -1,4 +1,4 @@
-// nv-isa-extractor -O3 -fp-mode fast
+// gpu-isa-extractor -O3 -fp-mode fast
 //
 // A Slang compute shader, as an input for **NVIDIA ISA: Compile and Disassemble**
 // (Ctrl+Alt+Shift+B).

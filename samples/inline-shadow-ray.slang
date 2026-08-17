@@ -1,4 +1,4 @@
-// nv-isa-extractor -O3
+// gpu-isa-extractor -O3
 //
 // A shadow ray traced from inside a fragment shader, as an input for
 // **NVIDIA ISA: Compile and Disassemble** (Ctrl+Alt+Shift+B).

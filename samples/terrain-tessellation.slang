@@ -1,4 +1,4 @@
-// nv-isa-extractor -O3
+// gpu-isa-extractor -O3
 //
 // A tessellated terrain patch - hull shader, domain shader and the vertex shader that feeds
 // them - as an input for **NVIDIA ISA: Compile and Disassemble** (Ctrl+Alt+Shift+B).

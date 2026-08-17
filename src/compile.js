@@ -89,8 +89,8 @@ const SNIFF_FOR_CODE_OBJECT = new Set(['.bin', '.elf']);
 /**
  * The first-line escape hatch:
  *
- *     // nv-isa-extractor -O3 -use_fast_math -Xptxas -maxrregcount=32
- *     // nv-isa-extractor -I../common -I"C:\Program Files\shaders\inc"
+ *     // gpu-isa-extractor -O3 -use_fast_math -Xptxas -maxrregcount=32
+ *     // gpu-isa-extractor -I../common -I"C:\Program Files\shaders\inc"
  *
  * Flags belong with the code they change - a shader compiled `-use_fast_math` is a different
  * shader, and keeping that in the file means the listing can be reproduced by anyone who has
@@ -99,7 +99,7 @@ const SNIFF_FOR_CODE_OBJECT = new Set(['.bin', '.elf']);
  * without knowing where the module is, and a relative one written here resolves against the
  * file rather than against whatever directory the editor was started in.
  */
-const DIRECTIVE_RE = /^\s*(?:\/\/|#)\s*nv-isa-extractor\b[:=]?\s*(.*)$/;
+const DIRECTIVE_RE = /^\s*(?:\/\/|#)\s*gpu-isa-extractor\b[:=]?\s*(.*)$/;
 
 /** How many leading lines are searched for it. */
 const DIRECTIVE_LINES = 5;
@@ -240,8 +240,8 @@ function effectiveFlags(directive, configured) {
  * defaults cannot know is how *your engine* binds the shader, and that is not guessable. So
  * the file can say, on the same line that already carries its compile flags:
  *
- *     // nv-isa-extractor -Xvk bind=0:0:8:1 -Xvk samples=4
- *     // nv-isa-extractor -Xvk producer=fullscreen.slang:vsMain
+ *     // gpu-isa-extractor -Xvk bind=0:0:8:1 -Xvk samples=4
+ *     // gpu-isa-extractor -Xvk producer=fullscreen.slang:vsMain
  *
  * Anything stated here is recorded in the listing's banner, because a listing that does not
  * say which pipeline it describes is claiming more than it knows.
@@ -830,7 +830,7 @@ function chooseSlangEntry(text, wanted, file, stated, targetId = 'nvidia') {
       'this file declares no entry point this can see. Slang finds one through a ' +
       '[shader("...")] attribute; without one, say which it is - name the file ' +
       `<name>.<stage>.slang (${Object.keys(FILENAME_STAGES).join(', ')}), or put ` +
-      '`// nv-isa-extractor -stage <stage> -entry <name>` at the top of it.');
+      '`// gpu-isa-extractor -stage <stage> -entry <name>` at the top of it.');
   }
 
   if (compute.length === found.length) {

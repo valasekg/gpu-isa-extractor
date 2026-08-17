@@ -19,7 +19,7 @@ const nvcache = require('./nvcache');
 const spawn = require('./spawn');
 const ctrl = require('./ctrl');
 
-const CONFIG = 'nvIsaExtractor';
+const CONFIG = 'gpuIsaExtractor';
 
 function config() {
   return vscode.workspace.getConfiguration(CONFIG);
@@ -93,7 +93,7 @@ async function resolveNvdisasm() {
   throw new Error(
     `nvdisasm not found. Looked in: ${tried.join(', ')}. It ships with the CUDA Toolkit and ` +
     'cannot be bundled with this extension; install the toolkit, or set ' +
-    '`nvIsaExtractor.nvdisasmPath` to an existing nvdisasm.');
+    '`gpuIsaExtractor.nvdisasmPath` to an existing nvdisasm.');
 }
 
 async function nvdisasmVersion(exe) {
@@ -133,11 +133,11 @@ async function resolveArch({ probed = false } = {}) {
     throw new Error(probed
       ? 'Could not determine the GPU architecture: nvidia-smi is not available or reported ' +
         'nothing. These bytes were just produced by this machine\'s driver, so the ' +
-        '`nvIsaExtractor.arch` setting cannot answer for them and is ignored here - put ' +
+        '`gpuIsaExtractor.arch` setting cannot answer for them and is ignored here - put ' +
         'nvidia-smi on PATH (it installs beside the display driver) so the architecture can ' +
         'be read from the hardware that compiled them.'
       : 'Could not determine the GPU architecture: nvidia-smi is not available or reported ' +
-        'nothing. Set `nvIsaExtractor.arch` to the compute capability of the GPU that ' +
+        'nothing. Set `gpuIsaExtractor.arch` to the compute capability of the GPU that ' +
         'compiled these shaders, for example SM86.');
   }
 

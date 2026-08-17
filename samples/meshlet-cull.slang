@@ -1,4 +1,4 @@
-// nv-isa-extractor -O3
+// gpu-isa-extractor -O3
 //
 // An amplification shader that picks a level of detail per meshlet, and the mesh shader it
 // dispatches - as an input for **NVIDIA ISA: Compile and Disassemble** (Ctrl+Alt+Shift+B).

@@ -564,7 +564,7 @@ JS_SOURCES = tuple(
 # A configuration section is reached either directly (`getConfiguration('x').get('y')`) or
 # through a local (`const s = getConfiguration('x'); ... s.get('y')`). Both forms are in use,
 # so resolve the locals rather than only matching the chained call.
-PIPELINE_SECTION = "nvIsaExtractor"
+PIPELINE_SECTION = "gpuIsaExtractor"
 
 
 def settings_read(text):
@@ -578,7 +578,7 @@ def settings_read(text):
         bindings[name] = section
 
     # A module that reads several settings usually wraps the lookup:
-    #     function settings() { return vscode.workspace.getConfiguration('nvIsaExtractor'); }
+    #     function settings() { return vscode.workspace.getConfiguration('gpuIsaExtractor'); }
     # Resolve those, so the check does not depend on every module naming the helper alike.
     for name, section in re.findall(
             r"function\s+(\w+)\s*\(\s*\)\s*\{\s*return\s+(?:vscode\.workspace\.)?"
@@ -641,20 +641,20 @@ else:
 set_keys = set()
 for js in JS_SOURCES:
     text = open(rel(*js.split("/")), encoding="utf-8").read()
-    set_keys.update(re.findall(r"setContext['\"]?\s*,\s*['\"`]nvIsaExtractor\.([\w.]+)", text))
+    set_keys.update(re.findall(r"setContext['\"]?\s*,\s*['\"`]gpuIsaExtractor\.([\w.]+)", text))
     set_keys.update(re.findall(r"setContext\(\s*['\"]([\w.]+)['\"]", text))
-    set_keys.update(re.findall(r"nvIsaExtractor\.\$\{?([\w.]+)", text))
-    # the template form: setContext(`nvIsaExtractor.${key}`) with the keys passed in
+    set_keys.update(re.findall(r"gpuIsaExtractor\.\$\{?([\w.]+)", text))
+    # the template form: setContext(`gpuIsaExtractor.${key}`) with the keys passed in
     for call in re.findall(r"setContext\(\s*['\"]([\w.]+)['\"]\s*,", text):
         set_keys.add(call)
 # Every own context key the manifest tests, found rather than listed - a hand-kept whitelist
 # quietly stops covering a key the moment one is renamed or mistyped.
 used_keys = set()
 for clause in re.findall(r'"(?:when|enablement)"\s*:\s*"((?:[^"\\]|\\.)*)"', manifest_text):
-    for name in re.findall(r"nvIsaExtractor\.([A-Za-z][\w.]*)", clause):
-        # `view == nvIsaExtractor.objects` names a view, not a context key, and views are
+    for name in re.findall(r"gpuIsaExtractor\.([A-Za-z][\w.]*)", clause):
+        # `view == gpuIsaExtractor.objects` names a view, not a context key, and views are
         # checked separately above.
-        if "nvIsaExtractor.%s" % name not in declared_views:
+        if "gpuIsaExtractor.%s" % name not in declared_views:
             used_keys.add(name)
 missing_keys = used_keys - set_keys
 if missing_keys:
@@ -685,7 +685,7 @@ else:
     ok("no API newer than the declared engine floor (%s) is in use" % floor)
 
 hover_detail = contributes.get("configuration", {}).get("properties", {}).get(
-    "nvidiaSass.hover.detail", {})
+    "gpuIsaExtractor.hover.detail", {})
 if (hover_detail.get("default") == "concise"
         and hover_detail.get("enum") == ["concise", "elaborate"]
         and hover_detail.get("enumItemLabels") == ["Concise", "Elaborate"]):

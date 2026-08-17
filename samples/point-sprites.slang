@@ -1,4 +1,4 @@
-// nv-isa-extractor -O3
+// gpu-isa-extractor -O3
 //
 // A geometry shader that expands one point into a camera-facing quad, as an input for
 // **NVIDIA ISA: Compile and Disassemble** (Ctrl+Alt+Shift+B).

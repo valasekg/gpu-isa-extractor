@@ -218,7 +218,7 @@ and read the diff - that is the step it exists to stop anyone skipping.
 under. A regex change involving lookbehind or heavy nesting needs a live check:
 
 ```powershell
-& "D:\Development\Programs\Microsoft VS Code\bin\code.cmd" --extensionDevelopmentPath="D:\Development\Repositories\nv-isa-extractor" "D:\Development\Repositories\nv-isa-extractor\samples\formats.sass"
+& "D:\Development\Programs\Microsoft VS Code\bin\code.cmd" --extensionDevelopmentPath="D:\Development\Repositories\gpu-isa-extractor" "D:\Development\Repositories\gpu-isa-extractor\samples\formats.sass"
 ```
 
 ### The oracle
@@ -413,7 +413,7 @@ breaks, the compiled path is the thing to change, not the shared code.
 - **Pass NVRTC the absolute source path as the program name.** It is written verbatim into
   the PTX `.file` record, and a bare basename is later resolved against whatever directory
   the editor is running in — producing a source map that points at a file which does not
-  exist. This was a real bug; the banner said `nv-isa-extractor/s.cu`.
+  exist. This was a real bug; the banner said `gpu-isa-extractor/s.cu`.
 - **`-lineinfo` is codegen-neutral** — the `.text` bytes are identical with and without it,
   measured — so listings are what would have been produced anyway. `-G` is not, and is never
   passed implicitly.
@@ -574,7 +574,7 @@ breaks, the compiled path is the thing to change, not the shared code.
   modifiers; stock themes did not understand the combinations and opcodes flashed blue to
   black when the async semantic pass landed.
 - **The semantic pass re-reads the whole document** every time VS Code asks, which is after
-  every edit. `nvidiaSass.semanticMaxLines` (default 100k) is what keeps a half-million-line
+  every edit. `gpuIsaExtractor.semanticMaxLines` (default 100k) is what keeps a half-million-line
   listing usable. There is no range or delta provider; adding one is the obvious next step.
 
 ## Data provenance

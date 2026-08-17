@@ -84,7 +84,7 @@ class SassSemanticTokensProvider {
 
   provideDocumentSemanticTokens(document) {
     const builder = new vscode.SemanticTokensBuilder(legend);
-    const settings = vscode.workspace.getConfiguration('nvidiaSass');
+    const settings = vscode.workspace.getConfiguration('gpuIsaExtractor');
     if (!settings.get('semanticHighlighting', true)) {
       return builder.build();
     }

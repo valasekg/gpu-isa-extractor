@@ -142,7 +142,7 @@ class ScoreboardHighlighter {
   }
 
   enabled() {
-    return vscode.workspace.getConfiguration('nvidiaSass')
+    return vscode.workspace.getConfiguration('gpuIsaExtractor')
       .get('scoreboard.highlight', true);
   }
 

@@ -1,4 +1,4 @@
-// nv-isa-extractor -use_fast_math -Xptxas -v
+// gpu-isa-extractor -use_fast_math -Xptxas -v
 //
 // A tiled matrix multiply, as an input for **NVIDIA ISA: Compile and Disassemble**
 // (Ctrl+Alt+Shift+B). Nothing here is novel - it is the textbook kernel - and that is the

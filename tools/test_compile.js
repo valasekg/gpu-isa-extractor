@@ -42,30 +42,30 @@ function section(title) {
 section('1. The compile-flags directive');
 
 {
-  const d = compile.readDirective('// nv-isa-extractor -O3 -use_fast_math\nfloat x;');
+  const d = compile.readDirective('// gpu-isa-extractor -O3 -use_fast_math\nfloat x;');
   check(!!d, 'a leading // directive is found');
   equal(d.flags.join(' '), '-O3 -use_fast_math', 'its flags are tokenised');
   equal(d.line, 0, 'its line is reported');
 
-  const hash = compile.readDirective('#  nv-isa-extractor -O0\n');
+  const hash = compile.readDirective('#  gpu-isa-extractor -O0\n');
   check(hash && hash.flags[0] === '-O0', '# is accepted as a comment leader too');
 
-  const colon = compile.readDirective('// nv-isa-extractor: -O0');
+  const colon = compile.readDirective('// gpu-isa-extractor: -O0');
   check(colon && colon.flags[0] === '-O0', 'a colon after the name is optional');
 
-  const later = compile.readDirective('// a comment\n\n// nv-isa-extractor -G\nvoid f();');
+  const later = compile.readDirective('// a comment\n\n// gpu-isa-extractor -G\nvoid f();');
   check(later && later.flags[0] === '-G', 'the directive may sit below other leading comments');
 
   check(compile.readDirective('void f();\n') === null, 'a file without one gets null');
 
-  const deep = 'x\n'.repeat(20) + '// nv-isa-extractor -O3';
+  const deep = 'x\n'.repeat(20) + '// gpu-isa-extractor -O3';
   check(compile.readDirective(deep) === null,
     'a directive far down the file is not treated as one');
 
   // CRLF is the Windows default and git checks this repo out that way. `DIRECTIVE_RE` ends
   // in `(.*)$`, and JavaScript's `.` does not match `\r`, so the trailing carriage return
   // used to make the whole match fail and every flag in the file was silently dropped.
-  const crlf = compile.readDirective('// nv-isa-extractor -O3 -Xptxas -v\r\nvoid f();\r\n');
+  const crlf = compile.readDirective('// gpu-isa-extractor -O3 -Xptxas -v\r\nvoid f();\r\n');
   check(!!crlf, 'a CRLF file still yields its directive');
   equal(crlf && crlf.flags.join(' '), '-O3 -Xptxas -v',
     'with every flag, and no stray carriage return in the last one');
@@ -75,7 +75,7 @@ section('1. The compile-flags directive');
 
 {
   // Quoting is what makes an include path with a space survive.
-  const d = compile.readDirective('// nv-isa-extractor -I"C:\\Program Files\\inc" -DA=1');
+  const d = compile.readDirective('// gpu-isa-extractor -I"C:\\Program Files\\inc" -DA=1');
   equal(d.flags.length, 2, 'a quoted path stays one argument');
   equal(d.flags[0], '-IC:\\Program Files\\inc', 'the quotes are consumed, the space kept');
 }
@@ -264,7 +264,7 @@ function dirsOf(args) {
 {
   // The whole path from a line of text to an argument list, which is what the feature is.
   const directive = compile.readDirective(
-    '// nv-isa-extractor -I"../my shaders/inc" -Xptxas -v\nimport helpers;');
+    '// gpu-isa-extractor -I"../my shaders/inc" -Xptxas -v\nimport helpers;');
   const f = compile.toolFlags(compile.effectiveFlags(directive, ''),
     { home: HOME, language: 'slang' });
   equal(dirsOf(f.slang)[1], path.resolve(HOME, '../my shaders/inc'),

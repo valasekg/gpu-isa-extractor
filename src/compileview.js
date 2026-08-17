@@ -34,7 +34,7 @@ const pipeline = require('./pipeline');
 const spawn = require('./spawn');
 const stats = require('./stats');
 
-const CONFIG = 'nvIsaExtractor';
+const CONFIG = 'gpuIsaExtractor';
 
 /** Source files with a compile in progress, keyed by scratch-directory tag. */
 const inFlight = new Set();
@@ -175,23 +175,23 @@ async function targetAvailability(tools) {
 /** A tool that is missing, phrased so the message says what to install. */
 const WHERE_FROM = {
   slangc: 'slangc compiles Slang. It ships with the Vulkan SDK (Bin/slangc.exe) and with ' +
-    'Slang\'s own releases. Set `nvIsaExtractor.compile.slangcPath` to one.',
+    'Slang\'s own releases. Set `gpuIsaExtractor.compile.slangcPath` to one.',
   ptxas: 'ptxas assembles PTX into a cubin. It ships with the CUDA Toolkit, next to ' +
-    'nvdisasm. Set `nvIsaExtractor.compile.ptxasPath` to one.',
+    'nvdisasm. Set `gpuIsaExtractor.compile.ptxasPath` to one.',
   rga: 'rga is the Radeon GPU Analyzer, which compiles SPIR-V to RDNA ISA and reads AMD code ' +
     'objects. It is a free download from https://github.com/GPUOpen-Tools/radeon_gpu_analyzer ' +
     'and is not bundled with this extension. It needs no AMD GPU. Set ' +
-    '`nvIsaExtractor.compile.rgaPath` to one.',
+    '`gpuIsaExtractor.compile.rgaPath` to one.',
   // Two roads need Python for different reasons, and only one of them has an escape hatch.
   // Offering `backend: nvcc` to someone compiling a fragment shader sends them in a circle:
   // the Vulkan harness and the SPIR-V reflector are Python scripts whatever the CUDA backend
   // is set to.
   python: 'Python drives NVRTC, which is the only CUDA front end that needs no host C++ ' +
-    'compiler. Install Python 3, or set `nvIsaExtractor.compile.backend` to `nvcc` if you ' +
+    'compiler. Install Python 3, or set `gpuIsaExtractor.compile.backend` to `nvcc` if you ' +
     'have MSVC.',
   pythonGraphics: 'Python runs the Vulkan harness and the SPIR-V reflector, which is how a ' +
     'graphics or raytracing shader reaches the driver. Install Python 3, or set ' +
-    '`nvIsaExtractor.compile.pythonPath`. The `compile.backend` setting does not apply here - ' +
+    '`gpuIsaExtractor.compile.pythonPath`. The `compile.backend` setting does not apply here - ' +
     'it chooses between NVRTC and nvcc on the CUDA road, and this shader does not take it.'
 };
 
@@ -314,7 +314,7 @@ async function run(sourceUri, progress, token, requestedTarget) {
   const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === file);
 
   // A container is not read as text. `.cubin` and `.co` hold no entry-point declarations and
-  // no `// nv-isa-extractor` directive - nothing below wants their contents - and slurping one
+  // no `// gpu-isa-extractor` directive - nothing below wants their contents - and slurping one
   // as UTF-8 to find that out costs the whole file. A GLCache `.bin` sniffed as a code object
   // can be hundreds of megabytes.
   const isContainer = ['cubin', 'codeobject'].includes(compile.languageOf(file));

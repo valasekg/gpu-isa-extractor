@@ -107,7 +107,7 @@ function activeTabIsBlob() {
 // --------------------------------------------------------------------------- context keys
 
 function setContext(key, value) {
-  return vscode.commands.executeCommand('setContext', `nvIsaExtractor.${key}`, value);
+  return vscode.commands.executeCommand('setContext', `gpuIsaExtractor.${key}`, value);
 }
 
 async function syncContext() {
@@ -406,7 +406,7 @@ async function runBatch(targets) {
   const instructions = pending.reduce((n, t) => n + t.object.instructions, 0);
   const bytes = instructions * BYTES_PER_INSTRUCTION;
   const seconds = Math.ceil(instructions / INSTRUCTIONS_PER_SECOND);
-  const threshold = Number(vscode.workspace.getConfiguration('nvIsaExtractor')
+  const threshold = Number(vscode.workspace.getConfiguration('gpuIsaExtractor')
     .get('batch.confirmAboveBytes'));
 
   if (Number.isFinite(threshold) && threshold > 0 && bytes > threshold) {
@@ -655,7 +655,7 @@ async function filterObjects() {
 }
 
 function openSettings() {
-  return vscode.commands.executeCommand('workbench.action.openSettings', 'nvIsaExtractor');
+  return vscode.commands.executeCommand('workbench.action.openSettings', 'gpuIsaExtractor');
 }
 
 function loadMore(node) {

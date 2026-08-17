@@ -159,7 +159,7 @@ async function resolve(configured, run) {
   throw new Error(
     `rga not found. Looked in: ${tried.join(', ')}. The Radeon GPU Analyzer is a free ` +
     'download from https://github.com/GPUOpen-Tools/radeon_gpu_analyzer/releases and is not ' +
-    'bundled with this extension; install it, or set `nvIsaExtractor.compile.rgaPath` to an ' +
+    'bundled with this extension; install it, or set `gpuIsaExtractor.compile.rgaPath` to an ' +
     'existing rga executable or to the unpacked archive holding one.');
 }
 

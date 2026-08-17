@@ -43,13 +43,16 @@ function section(title) {
 
 /* --------------------------------------------------------- the vscode stub --- */
 
+// One bag, because the two namespaces merged into one. They were separate keys here, and
+// leaving them that way after the rename made the second silently discard the first - a
+// duplicate object literal key is not an error, it is the later value.
 const settings = {
-  nvIsaExtractor: {
+  gpuIsaExtractor: {
     nvdisasmPath: '', arch: 'auto', minCodeBytes: 0, glcacheMode: 'auto',
     decodeControlCodes: true, keepRawMicrocode: false,
-    'output.location': 'temp', 'output.retentionDays': 30
-  },
-  nvidiaSass: { semanticHighlighting: true, semanticMaxLines: 100000 }
+    'output.location': 'temp', 'output.retentionDays': 30,
+    semanticHighlighting: true, semanticMaxLines: 100000
+  }
 };
 
 const opened = [];
@@ -401,7 +404,7 @@ function glBlobs() {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvisa-compile-'));
       const source = path.join(dir, 'k.cu');
       fs.writeFileSync(source,
-        '// nv-isa-extractor -use_fast_math -Xptxas -maxrregcount=32\n' +
+        '// gpu-isa-extractor -use_fast_math -Xptxas -maxrregcount=32\n' +
         'extern "C" __global__ void saxpy(const float* x, float* y, float a, int n)\n' +
         '{\n' +
         '    int i = blockIdx.x * blockDim.x + threadIdx.x;\n' +
@@ -600,7 +603,7 @@ function glBlobs() {
   }
 
   fs.rmSync(storage, { recursive: true, force: true });
-  const tempDir = path.join(os.tmpdir(), 'nv-isa-extractor');
+  const tempDir = path.join(os.tmpdir(), 'gpu-isa-extractor');
   fs.rmSync(tempDir, { recursive: true, force: true });
 
   console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures, ` +

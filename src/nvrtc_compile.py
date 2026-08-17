@@ -60,7 +60,7 @@ def load(explicit):
     sys.stderr.write(
         "could not load the NVRTC library. Looked for: %s\n"
         "It ships with the CUDA Toolkit as nvrtc64_<version>.dll (bin/x64 on Windows). "
-        "Set nvIsaExtractor.compile.nvrtcPath to one, or set CUDA_PATH.\n"
+        "Set gpuIsaExtractor.compile.nvrtcPath to one, or set CUDA_PATH.\n"
         % ", ".join(tried[:6]))
     return None, None
 
