@@ -488,6 +488,13 @@ function stageFromName(file) {
  *             else goes to the display driver, which is a *different backend* - and the right
  *             one, because it is the compiler that runs when the shader is part of a frame.
  *   slot      the field `vk_compile.py` takes it in.
+ *   label     what it is called in a menu. The Slang keyword is the id everything routes on and
+ *             is not always the name the reader knows the stage by - `amplification` is a task
+ *             shader in half the documentation, `fragment` is a pixel shader in the other half,
+ *             and `hull`/`domain` say nothing about tessellation to someone who has not met
+ *             them. The label is here rather than in a table of its own for the reason the rest
+ *             of the row is: a new stage that forgets it is a stage with no name in the picker,
+ *             which is visible immediately, rather than a stage missing from a second table.
  *   producer  a stage that must run BEFORE it. Every classic graphics stage needs a vertex
  *             shader; a vertex shader needs nothing, because rasterizer discard with nothing
  *             downstream was measured to produce byte-identical code to a full consumer - the
@@ -529,31 +536,42 @@ const STAGES = {
   // Compute is the one stage whose two targets take structurally different roads: NVIDIA
   // lowers it to CUDA and gets a line table out of the cubin, AMD sends it through SPIR-V like
   // every other stage and gets none. That asymmetry is why `road` is keyed by target.
-  compute: { lineage: 'cuda', road: { nvidia: 'cuda', amd: 'rga' } },
-  vertex: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'vs' },
-  hull: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'hs', producer: 'vertex', pair: 'domain', patch: true },
-  domain: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'ds', producer: 'vertex', pair: 'hull', patch: true },
-  geometry: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'gs', producer: 'vertex' },
-  fragment: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'fs', producer: 'vertex' },
+  compute: { lineage: 'cuda', road: { nvidia: 'cuda', amd: 'rga' }, label: 'Compute shader' },
+  vertex: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'vs', label: 'Vertex shader' },
+  hull: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'hs', producer: 'vertex', pair: 'domain', patch: true, label: 'Hull shader (tessellation control)' },
+  domain: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'ds', producer: 'vertex', pair: 'hull', patch: true, label: 'Domain shader (tessellation evaluation)' },
+  geometry: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'gs', producer: 'vertex', label: 'Geometry shader' },
+  fragment: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'fs', producer: 'vertex', label: 'Fragment shader (pixel)' },
   // A mesh shader replaces the whole vertex stage, so it stands alone. An amplification shader
   // exists only to dispatch one, so it never does.
   // A mesh shader stands alone, but it reads a payload when a task shader supplies one -
   // and that changes its code, measured: 79fc9202f25d alone against 815104fa01b4 paired.
   // So the pair is used when the file has one and not required when it does not.
-  mesh: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'ms', pair: 'amplification', pairOptional: true },
-  amplification: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'ts', pair: 'mesh' },
+  mesh: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'ms', pair: 'amplification', pairOptional: true, label: 'Mesh shader' },
+  amplification: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'rga' }, slot: 'ts', pair: 'mesh', label: 'Amplification shader (task)' },
   // The raytracing stages are one pipeline between them, not a chain: a raygeneration
   // shader reaches the others through the shader groups rather than by feeding them, so
   // `group` means "compile every raytracing entry point in this file together", which is
   // what a real pipeline holds. A raygeneration shader is mandatory in one; every other
   // raytracing stage is reached from one, and alone is not a pipeline.
-  raygeneration: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'rgen', group: 'raytracing' },
-  miss: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'miss', group: 'raytracing' },
-  closesthit: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'chit', group: 'raytracing' },
-  anyhit: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'ahit', group: 'raytracing' },
-  intersection: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'sect', group: 'raytracing' },
-  callable: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'call', group: 'raytracing' }
+  raygeneration: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'rgen', group: 'raytracing', label: 'Ray generation shader' },
+  miss: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'miss', group: 'raytracing', label: 'Miss shader' },
+  closesthit: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'chit', group: 'raytracing', label: 'Closest-hit shader' },
+  anyhit: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'ahit', group: 'raytracing', label: 'Any-hit shader' },
+  intersection: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'sect', group: 'raytracing', label: 'Intersection shader' },
+  callable: { lineage: 'graphics', road: { nvidia: 'graphics', amd: 'dxr' }, slot: 'call', group: 'raytracing', label: 'Callable shader' }
 };
+
+/**
+ * What to call a stage in a menu.
+ *
+ * Falls back to the id rather than to nothing: a stage carved out of a driver container is
+ * named by `nvcache`'s stage code, and a code this table has never heard of still has to render
+ * as a line the reader can pick.
+ */
+function stageLabel(stage) {
+  return (STAGES[stage] || {}).label || `${stage} shader`;
+}
 
 /**
  * The road a stage takes on one target, or null where that target cannot compile it.
@@ -1447,7 +1465,16 @@ async function graphicsCompile(tools, file, options) {
   const step = await spirvToCache(tools, outDir, { modules, layout, state, cacheDir, token });
   steps.push({ tool: 'driver', command: quote(step.argv), log: step.log });
 
-  const entries = await carveCache(cacheDir, stage, chosen.entry, group);
+  // What the stages nobody asked for are called. Only the ones written in THIS file get a
+  // name: a generated producer's entry point is called `vsMain` in a file the user has never
+  // seen, and a listing named after it would send them looking for a function that is not
+  // theirs. Those fall back to the stage's own name inside `carveCache`.
+  const names = {};
+  if (chosen.producer) names[chosen.producer.stage] = chosen.producer.name;
+  if (controls.producer && controls.producer.entry) names.vertex = controls.producer.entry;
+  if (chosen.counterpart) names[chosen.counterpart.stage] = chosen.counterpart.name;
+
+  const entries = await carveCache(cacheDir, { stage, entry: chosen.entry, group, names });
   if (!entries.length) {
     throw new CompileError(
       'the driver created the pipeline but wrote nothing this can read back. The shader disk ' +
@@ -1462,8 +1489,17 @@ async function graphicsCompile(tools, file, options) {
   // The stage and its layout are true of every pipeline kind; what follows them is not. The
   // Head shared, tail per pipeline kind, one filter and one join over both - so a nullable
   // entry cannot render as an empty segment on one road and vanish on the other.
-  const head = [
-    `${stage} stage`,
+  //
+  // The head is per ENTRY rather than per pipeline, because several entries come back now and
+  // they are different stages of it. The tail is not: it describes the pipeline, which is the
+  // same pipeline whichever of its objects is being read.
+  const headFor = e => [
+    `${e.stage} stage`,
+    // Said on the sibling rather than left to be inferred from the producer clause below. A
+    // vertex listing whose banner reads "producer vsMain from this file" is describing itself
+    // in the third person, and the reader has no way to tell that the code they are looking at
+    // is the vertex half of a geometry pipeline rather than a vertex pipeline of its own.
+    e.sibling ? `compiled into this ${stage} pipeline, not on its own` : null,
     bindings
       ? `${bindings} binding(s) ${stated ? 'from the file' : 'by reflection'}`
       : 'no descriptors'
@@ -1483,7 +1519,23 @@ async function graphicsCompile(tools, file, options) {
         : null,
       describeState(state)
     ];
-  const describe = [...head, ...tail].filter(Boolean).join(', ');
+  const describe = [...headFor({ stage, sibling: false }), ...tail].filter(Boolean).join(', ');
+  // Why each stage is in the pipeline at all, for the picker to put under its name. The
+  // requested stage needs no explanation - it is what was asked for.
+  for (const e of entries) {
+    e.pipeline = [...headFor(e), ...tail].filter(Boolean).join(', ');
+    e.role = !e.sibling ? null
+      : e.stage === STAGES[stage].producer
+        ? (names[e.stage] ? 'its producer, from this file' : 'a producer generated to match')
+        : e.stage === spec.pair
+          ? (names[e.stage] ? 'the other half of the pair, from this file'
+            : 'the other half of the pair, generated')
+          : 'compiled into the same pipeline';
+  }
+  // The stage that was asked for first, so `chooseEntry` and every caller that takes the head
+  // of this list gets the answer to the question rather than whichever object the driver
+  // happened to write into the container first.
+  entries.sort((a, b) => (a.sibling ? 1 : 0) - (b.sibling ? 1 : 0));
 
   return {
     entries,
@@ -1769,7 +1821,8 @@ async function rdnaCorrelationUnguarded(tools, { asic, modules, outDir, rgaBinar
  *
  * @param {string} options.origin    a key in `isa_amd`'s PROVENANCE: 'compiled' or 'binary'
  */
-function rdnaEntry({ name, stage, text, statsCsv, origin, localSize = null }) {
+function rdnaEntry({ name, stage, text, statsCsv, origin, localSize = null,
+  sibling = false, role = null }) {
   const rga = require('./rga');
   const crypto = require('crypto');
   const parseRdna = require('./parse_rdna');
@@ -1780,6 +1833,10 @@ function rdnaEntry({ name, stage, text, statsCsv, origin, localSize = null }) {
     name,
     stage,
     stages: [stage],
+    // Nobody asked for this stage; the pipeline needed it. See `carveCache` for why it is kept
+    // rather than dropped, and `chooseEntry` for why the distinction has to survive to the UI.
+    sibling,
+    role,
     hardwareStage: parseRdna.entryLabel(text),
     origin,
     // No microcode: RGA emits one ELF for the whole pipeline, not one per stage, so there
@@ -2049,14 +2106,27 @@ async function rgaCompile(tools, file, options) {
     }
   }
 
+  // What the stages nobody asked for are called, on the same terms as the graphics road: a
+  // name only where the file wrote one, and the stage's own name where RGA's input was
+  // synthesised.
+  const names = {};
+  if (chosen.producer) names[chosen.producer.stage] = chosen.producer.name;
+
+  // Every stage RGA built becomes a listing, not only the one that was asked for - the same
+  // trade the NVIDIA graphics road makes, for the same reason. A producer is part of the
+  // pipeline rather than the answer, but it is also the only copy of that vertex shader as it
+  // exists in THIS pipeline, and RGA has already written it out. `sibling` marks the ones
+  // nobody asked for so nothing downstream mistakes one for the answer.
   const entries = [];
   for (const [which, text] of Object.entries(built.listings)) {
-    // Only the stage that was asked for becomes a listing. A producer compiled alongside is
-    // part of the pipeline rather than the answer, exactly as on the NVIDIA graphics road.
-    if (which !== stage) continue;
     entries.push(rdnaEntry({
-      name: chosen.entry || stage,
+      name: which === stage ? (chosen.entry || stage) : (names[which] || which),
       stage: which,
+      sibling: which !== stage,
+      role: which === stage ? null
+        : which === STAGES[stage].producer
+          ? (names[which] ? 'its producer, from this file' : 'a producer generated to match')
+          : 'compiled into the same pipeline',
       text,
       statsCsv: built.statistics[which],
       origin: 'compiled',
@@ -2064,10 +2134,15 @@ async function rgaCompile(tools, file, options) {
     }));
   }
 
-  if (!entries.length) {
+  if (!entries.some(e => !e.sibling)) {
     throw new CompileError(
       `rga produced no listing for the ${stage} stage. It writes one file per stage it built, ` +
       `and it built: ${Object.keys(built.listings).join(', ') || 'nothing'}.`);
+  }
+  // The stage that was asked for first; see the same sort on the graphics road.
+  entries.sort((a, b) => (a.sibling ? 1 : 0) - (b.sibling ? 1 : 0));
+  for (const e of entries) {
+    e.pipeline = describePipeline(e.stage, chosen, built.mode, e.sibling ? stage : null);
   }
 
   return {
@@ -2143,9 +2218,13 @@ async function slangToHlsl(tools, source, outDir, { flags = [] } = {}) {
 }
 
 /** What the listing describes, in the banner's one-line form. */
-function describePipeline(stage, chosen, mode) {
+function describePipeline(stage, chosen, mode, within = null) {
   const parts = [`${stage} stage`];
-  if (STAGES[stage].producer) {
+  // `within` is the stage that was asked for, on a listing for one of the others. Said here
+  // rather than inferred from the producer clause, which describes the pipeline and would
+  // otherwise leave a vertex listing looking like a vertex pipeline of its own.
+  if (within) parts.push(`compiled into this ${within} pipeline, not on its own`);
+  if (STAGES[stage] && STAGES[stage].producer) {
     parts.push(chosen.producer
       ? `producer ${chosen.producer.name} from this file`
       : 'compiled alone, with RGA synthesising the input layout');
@@ -2308,12 +2387,29 @@ async function reflectLayout(tools, modules) {
 }
 
 /**
- * Read back what the driver wrote, keeping the object for the stage that was asked for.
+ * Read back what the driver wrote - every stage of the pipeline, not just the one asked for.
  *
- * A graphics pipeline deposits several objects - at least the producer and the consumer - so
+ * A graphics pipeline deposits several objects - at least the producer and the consumer - and
  * they are told apart by the stage code the container records, not by position.
+ *
+ * All of them are kept. This used to drop everything but the requested stage, on the reasonable
+ * grounds that a producer is part of the pipeline rather than the answer - but the producer's
+ * microcode is the vertex shader as it exists *in this pipeline*, which is a thing the compile
+ * road cannot otherwise produce: asking for the vertex stage on its own builds a different
+ * pipeline (rasterizer discard, nothing consuming its outputs) and the driver is free to
+ * compile it differently. Discarding it meant the only faithful copy was thrown away seconds
+ * after the driver made it. `sibling` marks the ones nobody asked for, so a picker can offer
+ * them and `chooseEntry` can go on not prompting about them.
+ *
+ * @param {object} opts
+ * @param {string} opts.stage    the stage that was asked for, in Slang's spelling
+ * @param {string} opts.entry    what to call that stage's object
+ * @param {Array}  [opts.group]  members of a grouped (raytracing) pipeline; carved whole
+ * @param {object} [opts.names]  stage -> entry-point name, for the stages nobody asked for.
+ *   A generated producer has no name in the file, so a stage missing from here is named after
+ *   itself rather than after some function the user cannot find.
  */
-async function carveCache(cacheDir, stage, entryName, group) {
+async function carveCache(cacheDir, { stage, entry: entryName, group, names = {} }) {
   const nvcache = require('./nvcache');
   const bins = [];
   const walk = async dir => {
@@ -2327,8 +2423,11 @@ async function carveCache(cacheDir, stage, entryName, group) {
 
   // The container names the pixel stage `pixel` where Slang calls it `fragment`; everything
   // else agrees. Geometry is stage code 4, established by building a pipeline that had only
-  // one of them in it.
+  // one of them in it. Both directions are needed now: the request is matched against the
+  // container's spelling, and every object's stage is reported back in Slang's, because that
+  // is the vocabulary `STAGES` and every label in the UI are keyed on.
   const wanted = stage === 'fragment' ? 'pixel' : stage;
+  const slangStage = carved => (carved === 'pixel' ? 'fragment' : carved);
   // A grouped pipeline is carved whole. The Slang entry point is READ OUT of the driver's
   // name by the parser that owns that mangling, and matched exactly. Searching for the member
   // name as a substring instead put `shadow_miss`'s code under the name `miss`, because
@@ -2347,9 +2446,23 @@ async function carveCache(cacheDir, stage, entryName, group) {
     });
     for (const o of objects) {
       const member = group ? memberOf(o.name) : null;
-      if (group ? !member : (o.metadata && o.metadata.stage !== wanted)) continue;
-      const named = member ? member.name : entryName;
+      // An object whose stage code the container did not record is skipped on the ordinary
+      // road, exactly as it was when only one stage was kept: with no stage there is nothing
+      // to name it after and nothing to say about it in a picker.
+      const carved = o.metadata && o.metadata.stage ? slangStage(o.metadata.stage) : null;
+      if (group ? !member : !carved) continue;
+      // A grouped pipeline's members are all equally asked-for - the group IS the request.
+      const sibling = group ? false : carved !== stage;
+      const named = member ? member.name : (sibling ? (names[carved] || carved) : entryName);
       out.push({
+        // Which stage of the pipeline this object is, in Slang's spelling. The banner used to
+        // take this from the pipeline as a whole, which was the same answer while only one
+        // object survived the carve and the wrong one for every object that now does.
+        stage: member ? member.stage : (carved || stage),
+        // Nobody asked for it; it came along because the pipeline needed it. `chooseEntry`
+        // reads this to go on not prompting, and the stage picker reads it to say why the
+        // stage is there at all.
+        sibling,
         // The entry point the user asked for, not the name the driver wrote into the
         // container - which is the Slang name with a suffix the linker chose (`fsMain_2`).
         // The listing is named after this, and a file named after someone else's mangling is
@@ -2358,7 +2471,7 @@ async function carveCache(cacheDir, stage, entryName, group) {
         // Except the `_ss_N` a raytracing shader carries, which is not mangling: a shader that
         // calls TraceRay is SPLIT at the trace point, and each piece is separately scheduled
         // code. Two listings called the same thing would be two different shaders.
-        name: (named ? named + splitSuffix(o.name) : null) || o.name || `${wanted}Main`,
+        name: (named ? named + splitSuffix(o.name) : null) || o.name || `${carved || wanted}Main`,
         driverName: o.name || null,
         microcode: o.microcode,
         codeBytes: o.codeBytes,
@@ -2549,6 +2662,11 @@ module.exports = {
   chooseSlangEntry,
   stageRefusal,
   stagesFor,
+  stageLabel,
+  // Exported for `test_golden.js`, which pins the banner an RDNA listing produces. Building the
+  // entry by hand there would pin the fixture's own idea of an entry rather than this one's,
+  // and it is this one that got the stage wrong.
+  rdnaEntry,
   STAGES,
   lineageOf,
   roadOf,

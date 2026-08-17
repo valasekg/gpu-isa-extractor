@@ -178,6 +178,12 @@
         "category": "GPU ISA"
       },
       {
+        "command": "gpuIsaExtractor.switchStage",
+        "title": "Show Another Shader Stage",
+        "category": "GPU ISA",
+        "icon": "$(list-selection)"
+      },
+      {
         "command": "gpuIsaExtractor.revealSource",
         "title": "Go to the Source Line for This Instruction",
         "category": "GPU ISA",
@@ -211,6 +217,11 @@
         "when": "editorTextFocus && resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
       },
       {
+        "command": "gpuIsaExtractor.switchStage",
+        "key": "ctrl+alt+shift+g",
+        "when": "editorTextFocus && (editorLangId == nvidia-sass || editorLangId == amd-rdna-isa || resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i)"
+      },
+      {
         "command": "gpuIsaExtractor.revealSource",
         "key": "ctrl+alt+shift+s",
         "when": "editorTextFocus && (editorLangId == nvidia-sass || editorLangId == amd-rdna-isa)"
@@ -239,6 +250,11 @@
           "command": "gpuIsaExtractor.compileSource",
           "group": "navigation@51",
           "when": "resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
+        },
+        {
+          "command": "gpuIsaExtractor.switchStage",
+          "group": "navigation@52",
+          "when": "editorLangId == nvidia-sass || editorLangId == amd-rdna-isa"
         }
       ],
       "view/title": [

@@ -602,6 +602,95 @@ function glBlobs() {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
+  section('8. Every stage of a graphics pipeline, not just the one asked for');
+
+  {
+    // The driver compiles a whole pipeline whatever stage was asked for, and this is the check
+    // that its other stages survive the carve. It cannot be done on the CUDA road: a compute
+    // pipeline has exactly one stage, so "the producer is kept" has nothing to be true of.
+    //
+    // Needs an NVIDIA device, because this road IS the local driver.
+    const compile = require(path.join(__dirname, '..', 'src', 'compile.js'));
+    const compileview = require(path.join(__dirname, '..', 'src', 'compileview.js'));
+
+    const tools = await compileview.resolveTools();
+    if (!tools.slangc || !tools.python) {
+      skip('slangc or Python is not installed, so no shader can reach the driver');
+    } else {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvisa-stages-'));
+      const source = path.join(dir, 'pair.slang');
+      fs.writeFileSync(source,
+        'struct V2F { float4 pos : SV_Position; float2 uv : TEXCOORD0; };\n\n' +
+        '[shader("vertex")]\n' +
+        'V2F vsMain(uint vid : SV_VertexID)\n' +
+        '{\n' +
+        '    V2F o;\n' +
+        '    o.uv = float2((vid << 1) & 2, vid & 2);\n' +
+        '    o.pos = float4(o.uv * 2.0f - 1.0f, 0.0f, 1.0f);\n' +
+        '    return o;\n' +
+        '}\n\n' +
+        '[shader("fragment")]\n' +
+        'float4 fsMain(V2F i) : SV_Target\n' +
+        '{\n' +
+        '    return float4(i.uv, sin(i.uv.x * 6.0f), 1.0f);\n' +
+        '}\n');
+
+      let built = null;
+      try {
+        built = await compile.compile(tools, source, {
+          outDir: path.join(dir, 'out'), flags: compile.effectiveFlags(null, '')
+        });
+      } catch (e) {
+        skip(`the driver could not build a pipeline here: ${e.message.split('\n')[0]}`);
+      }
+
+      if (built) {
+        check(built.road === 'graphics', 'a fragment shader takes the driver road', built.road);
+
+        const asked = built.entries.filter(e => !e.sibling);
+        check(asked.length === 1 && asked[0].stage === 'fragment' &&
+          asked[0].name === 'fsMain',
+          'exactly one entry is the stage that was asked for',
+          built.entries.map(e => `${e.name} (${e.stage}${e.sibling ? ', sibling' : ''})`)
+            .join(', '));
+
+        const vertex = built.entries.find(e => e.stage === 'vertex');
+        check(!!vertex, 'the producer survives the carve rather than being discarded',
+          built.entries.map(e => e.stage).join(', '));
+        if (vertex) {
+          check(vertex.sibling === true, 'and is marked as a stage nobody asked for');
+          check(vertex.name === 'vsMain',
+            'named after the entry point in the file, not the driver\'s mangling',
+            `${vertex.name} (driver: ${vertex.driverName})`);
+          check(!!vertex.role && /producer/.test(vertex.role),
+            'and says why it is in the pipeline at all', vertex.role);
+          check(/vertex stage/.test(vertex.pipeline) &&
+            /fragment pipeline/.test(vertex.pipeline),
+            'its banner names its own stage AND the pipeline it was compiled into, so the ' +
+            'listing cannot be read as a vertex pipeline of its own',
+            vertex.pipeline);
+          check(vertex.microcode && vertex.microcode.length > 0 &&
+            vertex.microcode.length !== asked[0].microcode.length,
+            'and carries its own microcode rather than the fragment shader\'s',
+            `vertex ${vertex.codeBytes} bytes, fragment ${asked[0].codeBytes} bytes`);
+        }
+
+        check(built.entries[0] === asked[0],
+          'the stage that was asked for sorts first, so anything taking the head of the ' +
+          'list still gets the answer to the question');
+
+        // The labels the pickers render. Checked here rather than in the unit suite because
+        // the stage names come off a carved object, not out of `chooseSlangEntry`.
+        check(built.entries.every(e => compile.stageLabel(e.stage) &&
+          !/undefined/.test(compile.stageLabel(e.stage))),
+          'every carved stage has a name a menu can show',
+          built.entries.map(e => compile.stageLabel(e.stage)).join(' | '));
+      }
+
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
   fs.rmSync(storage, { recursive: true, force: true });
   const tempDir = path.join(os.tmpdir(), 'gpu-isa-extractor');
   fs.rmSync(tempDir, { recursive: true, force: true });

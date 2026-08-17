@@ -491,26 +491,211 @@ async function build({ file, source, tools, flags, archInfo, outDir, backend, di
   if (!entry) throw new Error('cancelled');
 
   progress.report({ message: `disassembling ${entry.name}` });
-  await openEntry({
-    built, entry, source: file, compiledFrom: source, directive, configured,
+  const ctx = {
+    built, source: file, compiledFrom: source, directive, configured,
     archInfo, token, outDir, target
-  });
+  };
+  const opened = await openEntry({ ...ctx, entry });
+
+  // The rest of the pipeline, written but not shown. The driver has already compiled every
+  // stage and `carveCache` has already carved them; all that is left is a disassembly and a
+  // file each, which is why this is done eagerly rather than on demand - it costs one nvdisasm
+  // run per sibling and it means `switchStage` opens a file instead of rebuilding a pipeline.
+  await writeSiblings(file, built, ctx, entry, opened.file, progress);
+  return opened.doc;
 }
 
-/** One entry point compiles silently; several are worth asking about. */
+/**
+ * One entry point compiles silently; several are worth asking about.
+ *
+ * A sibling stage is not one of the several. It is a stage of the pipeline that was built
+ * around the shader that WAS asked for, and prompting about it would put a dialog in front of
+ * every graphics compile - which is the thing `compileSourceFor`'s own comment says this
+ * extension does not do. They are reached through `switchStage` instead.
+ */
 async function chooseEntry(entries, target) {
-  if (entries.length === 1) return entries[0];
-  // The description is the target's to write. These three figures happen to be the ones a
-  // cubin carries; a target whose entries record different ones would render "undefined
-  // instructions, undefined bytes" here rather than saying what it does know.
+  const asked = entries.filter(e => !e.sibling);
+  // `asked` is empty only if a road returns nothing but siblings, which no road does. Falling
+  // back to the whole list rather than to nothing keeps that a display question rather than a
+  // "cancelled" the user never asked for.
+  const choices = asked.length ? asked : entries;
+  if (choices.length === 1) return choices[0];
   const picked = await vscode.window.showQuickPick(
-    entries.map(e => ({
-      label: e.name,
-      description: target.describeEntry(e),
+    choices.map(e => ({
+      ...stagePick(e, choices),
+      detail: [target.describeEntry(e), e.role].filter(Boolean).join(' - '),
       entry: e
     })),
     { title: 'Which entry point?', matchOnDescription: true });
   return picked && picked.entry;
+}
+
+/**
+ * The two halves of a quick-pick line, and which of them leads.
+ *
+ * Which one leads depends on what distinguishes the choices. Several kernels in one cubin are
+ * all compute, so the stage label says nothing and the function name says everything; the
+ * stages of a pipeline are one entry point each, so the reverse. Leading with `Compute shader`
+ * four times over would be a menu that cannot be read.
+ *
+ * Takes `{stage, name}` rather than an entry, so the pick that happens during a compile and the
+ * one that happens hours later off a recorded path are laid out by the same rule - the record
+ * keeps paths, not entries, and a second copy of this would be a second answer.
+ */
+function stagePick(what, among) {
+  const stages = new Set((among || []).map(e => e.stage));
+  const byStage = what.stage && stages.size > 1;
+  const label = compile.stageLabel(what.stage);
+  return {
+    label: byStage ? label : what.name,
+    description: byStage ? what.name : (what.stage ? label : '')
+  };
+}
+
+// --------------------------------------------------------------------------- stage switching
+
+/**
+ * Which listing holds each stage of the pipeline last compiled from a source file.
+ *
+ * A graphics compile builds a whole pipeline and the driver writes out every stage of it, so
+ * one command produces several listings and only one of them is shown. This is how the others
+ * are found again - keyed by the source file, and reachable from any of the listings it wrote,
+ * because the file the user is looking at when they want the vertex half is usually the
+ * fragment listing rather than the shader.
+ *
+ * Paths only. The microcode is not kept: it is on disk in the listing, and holding a pipeline's
+ * worth of buffers per compiled file for the rest of the session is a lot of memory to spend on
+ * a menu.
+ */
+const stageListings = new Map();      // source key -> {source, target, stages: [...]}
+const listingSource = new Map();      // listing key -> source key
+
+/** Paths compare case-insensitively on Windows, and both maps are keyed on one. */
+const pathKey = file => path.resolve(file).toLowerCase();
+
+/** The record for a source file or for any listing compiled from one. */
+function stagesOf(file) {
+  if (!file) return null;
+  const key = pathKey(file);
+  return stageListings.get(key) || stageListings.get(listingSource.get(key)) || null;
+}
+
+/**
+ * Write a listing for every other stage of the pipeline, and remember where they went.
+ *
+ * Not shown, and not optional. The alternative was to disassemble a stage when it is asked for,
+ * which reads as cheaper and is not: the entries are in hand now, and re-deriving one later
+ * means keeping the whole compile alive - or rebuilding the pipeline, which is a second driver
+ * round trip that can disagree with the first.
+ */
+async function writeSiblings(sourceFile, built, ctx, opened, openedFile, progress) {
+  const written = [{ entry: opened, file: openedFile }];
+  for (const entry of built.entries) {
+    if (entry === opened) continue;
+    if (ctx.token && ctx.token.isCancellationRequested) break;
+    try {
+      progress.report({ message: `disassembling ${entry.name}` });
+      const out = await openEntry({ ...ctx, entry, show: false });
+      written.push({ entry, file: out.file });
+    } catch (e) {
+      if (e && e.message === 'cancelled') break;
+      // A sibling that will not disassemble costs its own line in the menu, not the listing
+      // the user actually asked for.
+      log(`the ${entry.stage} stage could not be disassembled: ${(e && e.message) || e}`);
+    }
+  }
+
+  const record = {
+    source: sourceFile,
+    target: ctx.target.id,
+    // What the menu will say, resolved now while the entries are still in hand. The figures
+    // especially: `describeEntry` is the target's, and the target is not carried on the record.
+    stages: written.map(w => ({
+      stage: w.entry.stage || null,
+      name: w.entry.name,
+      role: w.entry.role || null,
+      detail: ctx.target.describeEntry(w.entry),
+      file: w.file
+    }))
+  };
+  const key = pathKey(sourceFile);
+  stageListings.set(key, record);
+  for (const s of record.stages) listingSource.set(pathKey(s.file), key);
+  if (record.stages.length > 1) {
+    log(`${record.stages.length} stages available: ` +
+      record.stages.map(s => `${s.stage || s.name}`).join(', '));
+  }
+}
+
+/**
+ * Show another stage of the pipeline this listing came from.
+ *
+ * Reached from either end - the shader or one of its listings - because both are places the
+ * question gets asked from. A file nobody has compiled yet is compiled rather than refused:
+ * "there is nothing to switch between" is true and useless when the fix is the command next
+ * to this one.
+ */
+async function switchStageCommand(uri) {
+  const from = (uri && uri.fsPath) || activePath();
+  let record = stagesOf(from);
+  if (!record) {
+    const sourceUri = resolveTarget(uri);
+    if (!sourceUri) {
+      vscode.window.showErrorMessage(
+        'Open a shader or one of its listings first - this switches between the stages of a ' +
+        'pipeline that was compiled from one file.');
+      return;
+    }
+    await compileCommand(sourceUri);
+    record = stagesOf(sourceUri.fsPath);
+    if (!record) return;                     // the compile failed and has already said so
+  }
+
+  const name = path.basename(record.source);
+  if (record.stages.length === 1) {
+    const only = record.stages[0];
+    vscode.window.showInformationMessage(
+      `${name} compiled one thing: ${compile.stageLabel(only.stage).toLowerCase()} ` +
+      `${only.name}. A compute shader is a pipeline by itself, and a graphics shader has as ` +
+      'many stages as the pipeline built around it needed.');
+    return;
+  }
+
+  const picked = await vscode.window.showQuickPick(
+    record.stages.map(s => ({
+      ...stagePick(s, record.stages),
+      detail: [s.detail, s.role].filter(Boolean).join(' - '),
+      stage: s
+    })),
+    { title: `Stages of the pipeline compiled from ${name}`,
+      placeHolder: 'Which stage should be shown?', matchOnDescription: true });
+  if (!picked) return;                       // dismissed: not an error
+
+  // The listing may be gone - `clearOutput` deletes them, and so does the retention sweep.
+  // Compiling again is what the user would do next anyway, and it is the only way to get the
+  // bytes back: they came out of a scratch directory that no longer describes anything.
+  if (!fs.existsSync(picked.stage.file)) {
+    log(`${picked.stage.file} is gone; compiling ${name} again`);
+    await compileCommand(vscode.Uri.file(record.source));
+    const fresh = stagesOf(record.source);
+    const again = fresh && fresh.stages.find(s => s.stage === picked.stage.stage);
+    if (!again) return;
+    picked.stage = again;
+  }
+  await output.showListing(picked.stage.file, {
+    preview: false,
+    viewColumn: vscode.ViewColumn.Active
+  });
+}
+
+/** The file the editor is showing, whether or not it has a text document behind it. */
+function activePath() {
+  const editor = vscode.window.activeTextEditor;
+  if (editor) return editor.document.uri.fsPath;
+  const tab = vscode.window.tabGroups.activeTabGroup &&
+    vscode.window.tabGroups.activeTabGroup.activeTab;
+  const input = tab && tab.input;
+  return (input && input.uri && input.uri.fsPath) || null;
 }
 
 /**
@@ -538,7 +723,7 @@ function addressesIn(text) {
 }
 
 async function openEntry({ built, entry, source, compiledFrom, directive, configured,
-  archInfo, token, outDir, target }) {
+  archInfo, token, outDir, target, show = true }) {
   const graphics = built.road === 'graphics';
   // Two roads can correlate, for different reasons, and neither is "not graphics".
   //
@@ -719,17 +904,22 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
       directive: directive ? directive.raw : null,
       configuredFlags: configured || null,
       device: built.device || null,
-      pipeline: built.pipeline || null
+      // The entry's own account of the pipeline, which is not the same sentence for every
+      // object the pipeline deposited: they are different stages of it, and one of them is the
+      // one that was asked for. `built.pipeline` is the fallback for a road whose entries do
+      // not describe themselves - the CUDA road, which has no pipeline to describe.
+      pipeline: entry.pipeline || built.pipeline || null
     }
   };
 
   const file = await writeCompiledListing(result);
+  if (!show) return { file, doc: null };
   const doc = await output.showListing(file, {
     preview: false,
     viewColumn: vscode.ViewColumn.Beside
   });
   refresh(vscode.window.activeTextEditor);
-  return doc;
+  return { file, doc };
 }
 
 function sha1(buf) {
@@ -1055,6 +1245,7 @@ module.exports = {
   resolveTarget,
   compileCommand,
   compileForCommand,
+  switchStageCommand,
   // Exported for `test_endtoend.js` alone. It assembles the options `compile.compile` is
   // driven with, it is unreachable from every other export without a real toolchain, and a
   // scope error in it took down every compile while the gate stayed green - twice now, this

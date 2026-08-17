@@ -131,6 +131,7 @@ function activate(context) {
     vscode.commands.registerCommand('gpuIsaExtractor.loadMore', node => browser.loadMore(node)),
     vscode.commands.registerCommand('gpuIsaExtractor.compileSource', uri => compileview.compileCommand(uri)),
     vscode.commands.registerCommand('gpuIsaExtractor.compileSourceFor', uri => compileview.compileForCommand(uri)),
+    vscode.commands.registerCommand('gpuIsaExtractor.switchStage', uri => compileview.switchStageCommand(uri)),
     vscode.commands.registerCommand('gpuIsaExtractor.revealSource', () => compileview.revealSource()),
     vscode.commands.registerCommand('gpuIsaExtractor.openSettings', () => browser.openSettings()),
     vscode.commands.registerCommand('gpuIsaExtractor.doctor', () => doctorCommand(context)),
