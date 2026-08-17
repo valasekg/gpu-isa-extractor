@@ -31,8 +31,31 @@
 // Compare that with `surface-shading.slang`, whose fragment listing is all `IPA` reads and no
 // stores: the two stages sit on opposite ends of the same attribute traffic.
 //
-// The vertex half is 40 instructions - press the key on a copy with `gsMain` commented out to
-// see it, since a consuming stage wins when both are present.
+// ## The vertex half is in the same pipeline
+//
+// A consuming stage wins when both are present, so `gsMain` is what the key compiles - but the
+// driver builds the whole pipeline either way, and both stages are kept. **GPU ISA: Show
+// Another Shader Stage** (Ctrl+Alt+Shift+G) switches to the vertex listing without recompiling.
+//
+// It is worth switching to, because it is not the listing you get by asking for `vsMain` on its
+// own. Measured here:
+//
+//   vsMain inside this pipeline    24 instructions - what runs with a geometry stage next
+//   vsMain compiled alone          40 instructions - rasterizer discard, nothing consuming it
+//
+// Same source, same driver, 40% apart. It is worth being exact about what that does and does
+// not show, because the obvious reading of it is wrong: this is NOT a general "a consumer
+// narrows its producer" rule. A vertex shader compiled alone is BYTE-IDENTICAL to the same
+// shader under a *fragment* consumer - measured on a vs/fs pair, 640 bytes and the same sha1
+// either way, which is the measurement the `STAGES` table cites for giving `vertex` no producer
+// of its own. A GEOMETRY consumer is what changes it.
+//
+// Why it changes is not established by this measurement. The vertex stage is arranged
+// differently in hardware when a geometry shader is present, and 24 against 40 is the size of
+// that difference rather than an account of its cause.
+//
+// Asking for `vsMain` by name - `-entry vsMain` in the directive - builds that second pipeline.
+// It is a real thing to measure and it is not the vertex shader of *this* one.
 //
 // ## The topology is read out of the shader, not chosen
 //

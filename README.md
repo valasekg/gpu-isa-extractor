@@ -173,6 +173,17 @@ If a selection highlights nothing and you expected it to, turn on
 `gpuIsaExtractor.compile.traceCorrelation` — it says whether the listing has no map, names a
 different path, or simply attributes no instructions to those lines.
 
+Three commands compile, and they differ only in what they ask first:
+
+| | | |
+|---|---|---|
+| **Compile and Disassemble** | `Ctrl+Alt+Shift+B` | compiles what the file says to compile, asking nothing |
+| **Compile and Disassemble For...** | `Ctrl+Alt+Shift+C` | asks which ISA first — NVIDIA SASS or AMD RDNA — for one compile, without changing `compile.target` |
+| **Show Another Shader Stage** | `Ctrl+Alt+Shift+G` | switches between the stages of the pipeline already compiled from this file; compiles it first if nothing has been |
+
+A modal appears only where there is a real ambiguity the file has not resolved, which is why
+choosing is a command of its own rather than a prompt on every build.
+
 A shader takes one of two roads, chosen by its stage:
 
 ```
@@ -186,6 +197,31 @@ intersection, callable
 
 Both end in the same place — microcode, in the same shape as bytes carved out of a cache — so
 the listing is produced by the extension's ordinary `nvdisasm --binary` path either way.
+
+### Every stage of the pipeline, not just the one you asked for
+
+A graphics shader has no SASS of its own — only SASS for a pipeline. Compiling a fragment
+shader builds one around it, and the driver writes out *every* stage it compiled. All of them
+are kept, and **GPU ISA: Show Another Shader Stage** (`Ctrl+Alt+Shift+G`) switches between them
+without recompiling. The stages are listed by name — *Vertex shader*, *Hull shader
+(tessellation control)* — with the entry point and what it costs beside each.
+
+This is not always the same thing as compiling that stage on its own, and where it differs, it
+is measured. `point-sprites.slang` declares `vsMain` and `gsMain`; the geometry stage wins, and
+the vertex shader in its pipeline is **24 instructions**. Asking for `vsMain` by name compiles a
+*different* pipeline — rasterizer discard, nothing consuming its outputs — and that one is **40
+instructions**. The stage switcher gives you the first; `-entry vsMain` gives you the second.
+
+Which consumer it is matters, and only measurement separates the cases: under a **fragment**
+consumer the vertex shader is byte-identical to the same shader compiled alone (640 bytes, same
+sha1), which is why `vertex` needs no producer of its own. Under a **geometry** consumer it is
+not. Each listing's banner says which pipeline it came out of:
+
+```
+// pipeline      : vertex stage, compiled into this geometry pipeline, not on its own,
+//                 1 binding(s) by reflection, producer vsMain from this file, point_list in,
+//                 into r8g8b8a8_unorm
+```
 
 The stage comes from the `[shader("...")]` attribute. A file that carries none — Falcor's
 shaders name the entry point host-side instead — is read from its filename:
