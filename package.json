@@ -217,6 +217,11 @@
         "when": "editorTextFocus && resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
       },
       {
+        "command": "gpuIsaExtractor.compileSourceFor",
+        "key": "ctrl+alt+shift+c",
+        "when": "editorTextFocus && resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i"
+      },
+      {
         "command": "gpuIsaExtractor.switchStage",
         "key": "ctrl+alt+shift+g",
         "when": "editorTextFocus && (editorLangId == nvidia-sass || editorLangId == amd-rdna-isa || resourceExtname =~ /^\\.(slang|cu|cuh|ptx|cubin)$/i)"
