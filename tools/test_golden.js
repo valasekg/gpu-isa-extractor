@@ -626,5 +626,135 @@ try { isa.resolveTarget({ requested: 'intel' }); } catch (e) { badTarget = e.mes
 check(badTarget !== null && /not a target/.test(badTarget),
   'and an unknown one is refused by name', badTarget);
 
+section('10. An RDNA listing says which stage it actually is');
+
+/**
+ * The banner a compiled AMD listing produces, pinned.
+ *
+ * This exists because of a bug it would have caught on the day it was written. `openEntry`
+ * assembled the metadata with `road === 'graphics' ? entry.metadata : <a compute stub>`, which
+ * was right while `graphics` and `cuda` were the only roads. The AMD roads are neither, so
+ * every RDNA listing took the stub: a raygeneration shader announced itself as `stage: compute`
+ * and lost the VGPR, LDS and scratch counts RGA had already stated in its statistics CSV.
+ *
+ * Nothing caught it. `test_endtoend.js` skips the AMD road wherever RGA is not installed, which
+ * is most machines including CI, and the golden above is an NVIDIA cache listing whose metadata
+ * is built by hand in `goldenResult` rather than by the code under test. So this section builds
+ * the entry with the real `rdnaEntry`, runs it through the real `metadataFor`, and pins the
+ * result - no RGA required, because the CSV and the ISA text are fixtures.
+ *
+ * A raytracing shader is the sharpest case available. On RDNA there is no raytracing hardware
+ * stage - the code really is a compute shader, and the `_amdgpu_cs_main` label in the fixture
+ * really does say so - which is exactly why the API stage has to be carried separately and
+ * cannot be inferred from the code. `hardwareStage` says `cs`; `stage` must say `raygeneration`.
+ */
+const rdnaIsa = fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'rdna', 'gfx1201-compute.isa'), 'utf8');
+const rdnaCsv = fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'rdna', 'gfx1201-raygen.csv'), 'utf8');
+
+const rayEntry = compile.rdnaEntry({
+  name: 'rayGen',
+  stage: 'raygeneration',
+  text: rdnaIsa,
+  statsCsv: rdnaCsv,
+  origin: 'compiled'
+});
+
+check(rayEntry.metadata && rayEntry.metadata.stage === 'raygeneration',
+  'the AMD entry builder records the API stage, not the hardware one',
+  rayEntry.metadata && rayEntry.metadata.stage);
+check(rayEntry.hardwareStage === '_amdgpu_cs_main',
+  'and records the hardware stage separately, where RGA states it',
+  rayEntry.hardwareStage);
+
+// The two calls `openEntry` makes, in the order it makes them. The AMD road's `ptxasInfo`
+// returns all-nulls by construction - ptxas never ran - which is precisely the input that used
+// to overwrite everything RGA said.
+const amdPtxasInfo = {
+  registers: null, localBytes: null, sharedBytes: null, spillStores: null, spillLoads: null
+};
+const rayNormalised = isaEntry.normalize(rayEntry,
+  { target: amd, origin: rayEntry.origin || 'compiled' });
+rayNormalised.metadata = isaEntry.metadataFor(rayEntry, amdPtxasInfo);
+
+check(rayNormalised.metadata.stage === 'raygeneration',
+  'an entry that brought its own metadata keeps it through the compile path',
+  rayNormalised.metadata.stage);
+check(rayNormalised.metadata.registers === 40,
+  'and keeps the VGPR count RGA stated, rather than ptxas\'s null',
+  rayNormalised.metadata.registers);
+
+// A cubin entry states none, and is the one road that still needs the stub.
+const cubinShaped = isaEntry.metadataFor({ name: 'saxpy', registers: 24 },
+  { registers: 32, localBytes: 0, sharedBytes: 0 });
+check(cubinShaped.stage === 'compute' && cubinShaped.registers === 32,
+  'an entry with no metadata of its own still gets the CUDA road\'s account',
+  `${cubinShaped.stage}, ${cubinShaped.registers} registers`);
+check(isaEntry.metadataFor({ name: 'saxpy', registers: 24 }, amdPtxasInfo).registers === 24,
+  'falling back to the entry\'s own count where ptxas stated none');
+check(isaEntry.metadataFor({ name: 'saxpy' }, amdPtxasInfo).registers === null,
+  'and to null rather than undefined where neither did - the banner tests against null');
+
+const rayResult = {
+  text: rayEntry.isa,
+  object: isaEntry.asObject(rayNormalised, {
+    source: 'C:\\shaders\\procedural-spheres.slang'
+  }),
+  target: amd,
+  arch: 'gfx1201',
+  archFrom: 'the newest target rga offers',
+  nvdisasm: 'C:\\rga\\rga.exe',
+  nvdisasmVersion: 'Radeon GPU Analyzer 2.14.2',
+  command: '"C:\\rga\\rga.exe" -s dxr --offline -c gfx1201 --hlsl "C:\\scratch\\library.hlsl"',
+  annotation: null,
+  correlation: null,
+  compile: {
+    steps: [
+      { tool: 'slangc', command: '"C:\\vulkan\\slangc.exe" -target hlsl "C:\\shaders\\procedural-spheres.slang"' },
+      { tool: 'rga', command: '"C:\\rga\\rga.exe" -s dxr --offline -c gfx1201 --hlsl "C:\\scratch\\library.hlsl"' }
+    ],
+    sources: ['C:\\shaders\\procedural-spheres.slang'],
+    notes: [],
+    directive: '-O3',
+    configuredFlags: null,
+    device: null,
+    pipeline: 'one raytracing pipeline: raygeneration, miss, closesthit'
+  }
+};
+
+const rayBanner = output.banner(rayResult, null);
+compare('listing-banner-rdna.skeleton.txt', canonicalise(rayBanner));
+
+// Said as its own check as well as pinned in the fixture. A skeleton failure reports a diff;
+// this reports what the diff MEANS, which is the half a reader needs at 2am.
+check(/^\/\/ stage\s+: raygeneration$/m.test(rayBanner),
+  'the banner names the API stage - not `compute`, which is only what the hardware runs it as',
+  rayBanner.split('\n').find(l => l.includes('stage')));
+check(/^\/\/ registers\s+: 40 reported by RGA, cap 256$/m.test(rayBanner),
+  'and attributes the register count to RGA, which is what stated it - with the cap, so the ' +
+  '40 is readable as a share of the file rather than as a bare number',
+  rayBanner.split('\n').find(l => l.includes('registers')));
+check(/rayGen - raygeneration shader/.test(rayBanner),
+  'and the identifying line agrees with it');
+
+// The other half of the same defect: an entry that states its origin keeps it. A code object
+// read back with `-s bin` has no source file and no compile command, and its provenance block
+// says "read from" rather than "compiled" - which the road-shaped ternary overwrote.
+const binaryNormalised = isaEntry.normalize(
+  compile.rdnaEntry({ name: 'rayGen', stage: 'raygeneration', text: rdnaIsa,
+    statsCsv: rdnaCsv, origin: 'binary' }),
+  { target: amd, origin: 'binary' });
+const binaryBanner = output.banner({
+  ...rayResult,
+  object: isaEntry.asObject(binaryNormalised, { source: 'C:\\objects\\pipeline.bin' }),
+  compile: { ...rayResult.compile, asic: 'gfx1201' }
+}, null);
+check(/^\/\/ read from\s+: /m.test(binaryBanner),
+  'a code object read back says where it was read from, not what compiled it',
+  binaryBanner.split('\n').find(l => l.includes('read from') || l.includes('source')));
+check(/detected in the code object/.test(binaryBanner),
+  'and says the target was the object\'s own word');
+
 console.log(`\n${failures ? 'FAIL' : 'PASS'}  ${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);

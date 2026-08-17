@@ -1,0 +1,42 @@
+//============================================================================
+// rayGen - raygeneration shader
+//============================================================================
+// stage         : raygeneration
+// registers     : 40 reported by RGA, cap 256
+// local mem     : 256 bytes
+// shared mem    : 0 bytes
+// instructions  : 18
+// mix           : Scalar 33%   Vector 33%   Wait 22%   Memory 11%
+//                 by encoding class, from the mnemonic prefix
+// code size     : 1024 bytes
+// vector regs   : 40 of 256 VGPR allocated by RGA; the code reaches v2
+// scalar regs   : 18 of 106 SGPR allocated by RGA; the code reaches s3
+// LDS           : 0 of 65536 bytes
+// scratch       : 256 bytes - private memory, so something spilled or was indexed
+// spills        : none
+// waits         : 2 s_wait_* / s_waitcnt, 2 s_delay_alu
+//                 RDNA states dependency resolution as instructions, so these are counted rather than decoded from a column.
+//----------------------------------------------------------------------------
+// source        : <dir>\procedural-spheres.slang
+// compiled      : slangc -> rga
+//                 "<dir>\slangc.exe" -target hlsl "<dir>\procedural-spheres.slang"
+//                 "<dir>\rga.exe" -s dxr --offline -c gfx1201 --hlsl "<dir>\library.hlsl"
+// pipeline      : one raytracing pipeline: raygeneration, miss, closesthit
+// flags         : -O3 (from the file)
+// code          : 1024 bytes of ISA, sha1 <sha1>
+//                 digest of the ISA text
+// asic          : gfx1201
+// rga           : <dir>\rga.exe
+//                 Radeon GPU Analyzer <version>
+//                 "<dir>\rga.exe" -s dxr --offline -c gfx1201 --hlsl "<dir>\library.hlsl"
+// tool          : GPU ISA Extractor <version>
+//
+// No control-code column: RDNA states dependency resolution as separate instructions
+//   (s_wait_*, s_delay_alu) rather than as a field inside every instruction, so the
+//   scheduling is in the code below and carries hovers. Some gfx11+ encodings do hold
+//   embedded wait fields - wait_exp, wait_va_vdst - and those print as ordinary
+//   modifiers.
+// Instruction width varies (4, 8 or 12 bytes), so addresses are printed as RGA emits
+//   them and no instruction index is derived from them.
+// No source correlation: RGA offers none in any mode, and the separate debug compile
+//   that would supply one did not run or did not agree with this listing.

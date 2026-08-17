@@ -724,7 +724,6 @@ function addressesIn(text) {
 
 async function openEntry({ built, entry, source, compiledFrom, directive, configured,
   archInfo, token, outDir, target, show = true }) {
-  const graphics = built.road === 'graphics';
   // Two roads can correlate, for different reasons, and neither is "not graphics".
   //
   //   - CUDA reads a line table out of the cubin with a second nvdisasm pass.
@@ -743,7 +742,12 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
   // of what this restructuring buys.
   const compiled = isaEntry.normalize(entry, {
     target,
-    origin: graphics ? 'driver' : 'compiled'
+    // The entry's own word first. This was `graphics ? 'driver' : 'compiled'` - the same
+    // two-road ternary that made every AMD listing a compute shader, and wrong in the same
+    // way: an AMD code object read back states `binary`, which has its own provenance block
+    // saying "read from" and was being overwritten with "compiled". A road that states
+    // nothing - CUDA, whose entries come straight off a cubin - still gets `compiled`.
+    origin: entry.origin || 'compiled'
   });
   const emission = await compiled.emit({
     outDir,
@@ -858,24 +862,11 @@ async function openEntry({ built, entry, source, compiledFrom, directive, config
     }
   }
 
-  const info = built.ptxasInfo(entry.name);
-  // The CUDA road has to state these, because a cubin records almost none of them and
-  // `stage: 'compute'` is true there by construction. The graphics road does not have to state
-  // anything: its bytes came out of a real cache container, so the driver's own account of the
-  // shader travels with them - the stage as a code rather than an assumption, and
-  // `killsPixels`, which is meaningful for a fragment shader and meaningless for a kernel.
-  // Hardcoding `compute` here would have quietly labelled every pixel shader wrong.
-  compiled.metadata = graphics ? entry.metadata : {
-    stage: 'compute',
-    stageCode: null,
-    // ptxas's own account of the kernel, which the banner then cross-checks against what the
-    // code is measured to use - the same two-source comparison the cache path makes.
-    registers: info.registers !== null ? info.registers : entry.registers,
-    registerCap: null,
-    localBytes: info.localBytes,
-    sharedBytes: info.sharedBytes,
-    killsPixels: null
-  };
+  // Whose account of the shader this listing carries. `isa_entry` owns that decision, because
+  // it is a question about the entry rather than about the road that produced it - and asking
+  // it as "is this the graphics road" is exactly how every AMD listing came to call itself a
+  // compute shader.
+  compiled.metadata = isaEntry.metadataFor(entry, built.ptxasInfo(entry.name));
 
   // Flattened back to the shape `output.banner` and `stats` still read. That flattening is the
   // seam that disappears when they move onto the entry themselves; until then it lives in one

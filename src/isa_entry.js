@@ -154,6 +154,47 @@ function sha1Of(buf) {
 }
 
 /**
+ * What the banner says this listing IS - its stage, its register file, its memory.
+ *
+ * An entry that brought its own account keeps it. A driver cache container records the stage as
+ * a code and the register count the driver declared; RGA's statistics CSV records the VGPRs, the
+ * LDS and the scratch. Both are the producing tool's own description of the shader, and there is
+ * nothing better to replace them with.
+ *
+ * The CUDA road is the one that has none: a cubin records almost nothing, which is why the
+ * fields below are assembled from `ptxas -v` instead - and why `stage: 'compute'` is safe to
+ * state there rather than read. Compute is the only stage with a CUDA lowering, so a listing on
+ * that road is a compute shader by construction.
+ *
+ * That last sentence used to be the whole justification for a ternary on `road === 'graphics'`,
+ * written when `graphics` and `cuda` were the only two roads there were. The AMD roads are
+ * neither, so they took the else branch: every RDNA listing - vertex, fragment and raygeneration
+ * alike - announced itself as a compute shader, and threw away the register figures RGA had
+ * already handed over. The test is `did anything describe this shader`, which is the question
+ * that was being asked all along; the road was only ever a proxy for it.
+ */
+function metadataFor(entry, ptxasInfo = {}) {
+  if (entry.metadata) return entry.metadata;
+
+  const stated = key => (ptxasInfo[key] !== undefined ? ptxasInfo[key] : null);
+  const registers = stated('registers');
+  return {
+    stage: 'compute',
+    stageCode: null,
+    // ptxas's own account of the kernel, which the banner then cross-checks against what the
+    // code is measured to use - the same two-source comparison the cache path makes. A cubin
+    // entry's own count is the fallback, and `null` rather than `undefined` when there is
+    // neither: the banner tests this field against null to decide whether to print the line.
+    registers: registers !== null ? registers
+      : (entry.registers !== undefined ? entry.registers : null),
+    registerCap: null,
+    localBytes: stated('localBytes'),
+    sharedBytes: stated('sharedBytes'),
+    killsPixels: null
+  };
+}
+
+/**
  * The old flat shape, for the parts of the extension that still speak it.
  *
  * `output.banner`, `stats` and the cache browser read `object.microcode`, `object.codeBytes`
@@ -180,4 +221,4 @@ function asObject(entry, extra = {}) {
   };
 }
 
-module.exports = { normalize, asObject, sha1Of, EMPTY_DECLARED };
+module.exports = { normalize, asObject, metadataFor, sha1Of, EMPTY_DECLARED };

@@ -404,6 +404,16 @@ contiguous run of 128-bit instructions starting at address 0, which is exactly w
 `scoreboard.js`, `stats.js` — is reused rather than reimplemented. If that equivalence ever
 breaks, the compiled path is the thing to change, not the shared code.
 
+- **Never branch on "which road is this" where the question is "what does this entry carry".**
+  `openEntry` chose the listing's metadata with `road === 'graphics' ? entry.metadata : <a
+  compute stub>`, correct while `graphics` and `cuda` were the only two roads. `rga` and `dxr`
+  are neither, so every RDNA listing took the CUDA branch: a raygeneration shader announced
+  `stage: compute` and threw away the VGPR, LDS and scratch counts RGA had already stated. The
+  same ternary next door overwrote a code object's `binary` origin with `compiled`, so a listing
+  that was *read* claimed to have been built. Both are now `isa_entry.metadataFor` and
+  `entry.origin || 'compiled'`. Section 10 of `test_golden.js` pins the RDNA banner and needs no
+  RGA installed, which is why this survived so long — `test_endtoend.js` skips the AMD road
+  wherever RGA is absent, and that is most machines.
 - **`nvcc` needs a host C++ compiler for every mode**, `-ptx` and `-E` included. Without MSVC
   it fails at `Cannot find compiler 'cl.exe' in PATH` before doing anything, and `-ccbin`
   pointed at MinGW fails deeper with `Host compiler targets unsupported OS`. **NVRTC needs
