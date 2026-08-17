@@ -162,10 +162,16 @@ async function main() {
     return;
   }
 
+  // Checked before the skip, following `test_rga.js`. An rga that resolved and then lists
+  // nothing has not declined to answer, it has answered wrongly - a directory accepted as the
+  // executable reported exactly this - and skipping on it turned a broken resolution into a
+  // green run. Only the target-specific work below is allowed to skip.
   const listed = await rga.targets(found.path, run, rga.MODE_DXR);
+  check(listed.length > 0, 'it lists at least one DXR target', `${listed.length} listed`);
+
   const asic = listed.length ? listed[listed.length - 1].codename : null;
   if (!asic) {
-    skip('this rga lists no DXR targets');
+    skip('this rga lists no DXR targets, so the library was never compiled');
     return;
   }
   console.log(`        rga: ${found.path}, DXR target ${asic}`);

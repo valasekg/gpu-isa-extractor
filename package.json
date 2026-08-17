@@ -1005,7 +1005,7 @@
         "nvIsaExtractor.compile.rgaPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Explicit `rga` path; empty auto-locates. The Radeon GPU Analyzer is a free download and is not bundled - it is 227 MB, most of it back ends this road never uses."
+          "markdownDescription": "Explicit `rga` path - either the executable or the unpacked archive holding it. Empty auto-locates: PATH, then `RGA_PATH`, then the usual install roots. The Radeon GPU Analyzer is a free download and is not bundled - it is 227 MB, most of it back ends this road never uses."
         },
         "nvIsaExtractor.compile.gfx": {
           "type": "string",

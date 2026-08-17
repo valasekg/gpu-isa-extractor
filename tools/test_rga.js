@@ -34,6 +34,9 @@ const rga = require(path.join(__dirname, '..', 'src', 'rga.js'));
 const FIXTURES = path.join(__dirname, 'fixtures', 'rdna');
 const SPV = path.join(__dirname, 'fixtures', 'gfx');
 
+/** What `rga.js` looks for inside a directory, spelled the same way it spells it. */
+const RGA_EXE = process.platform === 'win32' ? 'rga.exe' : 'rga';
+
 let checks = 0;
 let failures = 0;
 let skipped = 0;
@@ -169,6 +172,75 @@ async function main() {
   check(rga.MODE_OFFLINE === 'vk-spv-offline',
     'the offline mode string is the one `rga -h` reports, not the one its README documents',
     rga.MODE_OFFLINE);
+
+  section('2b. Resolution, which needs no RGA to be wrong');
+
+  // A directory used to be returned AS the executable, because `existsSync` is true for one.
+  // Nothing failed at that point: `version` then read "version unknown", `--list-asics` listed
+  // nothing, and the doctor reported an RGA that could build for no target - a bad path
+  // reported as a useless install. These use this repository's own tree as a directory that
+  // certainly exists and certainly holds no rga.
+  const notRga = path.join(__dirname, '..');
+  check(rga.asExecutable(notRga) === null,
+    'a directory with no rga in it resolves to nothing, rather than to itself');
+  check(rga.asExecutable(path.join(notRga, 'no-such-thing-here')) === null,
+    'and so does a path that does not exist');
+  check(rga.asExecutable(__filename) === __filename,
+    'while a file is taken as the executable it names');
+
+  // The PATH probe rejects rather than returning `failed` when the executable cannot be
+  // started at all, and unguarded that exception left `resolve` before it reached the install
+  // roots - making RGA_PATH and every root below it unreachable. A runner that always throws
+  // reproduces the machine that has no rga on PATH, which is most machines.
+  //
+  // The install roots are read from the environment, so they are emptied for the length of
+  // this check rather than inherited: on a machine that HAS an RGA in one of them, `resolve`
+  // rightly finds it, and the assertion would then be measuring this machine instead of the
+  // code. The whole point here is the road taken when nothing is found anywhere.
+  const throwing = () => Promise.reject(new Error('could not run rga.exe: spawn rga.exe ENOENT'));
+  const ROOT_VARS = ['RGA_PATH', 'ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA'];
+  const saved = ROOT_VARS.map(name => [name, process.env[name]]);
+  const planted = fs.mkdtempSync(path.join(os.tmpdir(), 'rga-root-'));
+  for (const name of ROOT_VARS) delete process.env[name];
+  try {
+    let reached = false;
+    try {
+      await rga.resolve('', throwing);
+    } catch (e) {
+      reached = /Looked in: .*PATH/.test(e.message);
+    }
+    check(reached,
+      'an unstartable rga on PATH is an answer, so the search continues past it',
+      'resolve rethrew the spawn error instead of reporting where it looked');
+
+    // The configured path is consulted BEFORE the probe, so it survives the same runner.
+    const configured = await rga.resolve(notRga, throwing).then(f => f.from, () => null);
+    check(configured === null,
+      'a configured directory holding no rga falls through rather than being believed');
+
+    // The half that was unreachable: a root IS consulted after the probe fails. Only the
+    // name is needed, since `asExecutable` asks the filesystem and not the loader, so this
+    // pins the road without a 227 MB download.
+    fs.writeFileSync(path.join(planted, RGA_EXE), '');
+    process.env.RGA_PATH = planted;
+    check(rga.installRoots()[0] === planted, 'RGA_PATH is the first root consulted');
+    const viaRoot = await rga.resolve('', throwing).then(f => f.path, () => null);
+    check(viaRoot === path.join(planted, RGA_EXE),
+      'and an rga sitting in it is found, which is what the failed probe used to prevent',
+      String(viaRoot));
+
+    // Same root, spelled as the executable rather than as the archive holding it.
+    process.env.RGA_PATH = path.join(planted, RGA_EXE);
+    const spelledExe = await rga.resolve('', throwing).then(f => f.path, () => null);
+    check(spelledExe === path.join(planted, RGA_EXE),
+      'and RGA_PATH means the same thing spelled either way');
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    fs.rmSync(planted, { recursive: true, force: true });
+  }
 
   /* ------------------------------------------------- 3. what needs an RGA --- */
 

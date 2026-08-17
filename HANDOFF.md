@@ -52,9 +52,27 @@ TypeScript, no `vsce`. Plain CommonJS that the extension host runs directly.
   slangc and CUDA: not bundled, free, and resolved at run time. It needs **no AMD GPU** - the
   offline mode is a static compiler, the live-driver mode falls back to the AMDVLK driver RGA
   ships with, and the DXR mode takes `--offline` and uses the `amdxc64.dll` it bundles. All
-  three measured working on an NVIDIA-only machine. Version measured here is **2.14.2**.
-  `tools/test_rga.js` and `tools/test_dxr.js` take **`RGA_PATH`** for an unpacked archive,
-  mirroring `VSCODE_EXE`; without it the checks needing a real binary skip.
+  three measured working on an NVIDIA-only machine. Versions measured here are **2.14.2.7** and
+  **2.14.2.8** (the latter as shipped inside the Radeon Developer Tool Suite, whose tree puts
+  `rga.exe` and `utils/amdllpc.exe` exactly where the standalone archive does).
+  `tools/test_rga.js` and `tools/test_dxr.js` take **`RGA_PATH`**, mirroring `VSCODE_EXE`;
+  without it the checks needing a real binary skip.
+
+  **`RGA_PATH` may name the unpacked archive or the `rga` inside it**, and so may the
+  `compile.rgaPath` setting. Everything that takes a path runs it through `rga.asExecutable`,
+  which asks the filesystem which one it is. Before that, a directory passed `existsSync` and
+  was returned AS the executable: `version` read `version unknown`, `--list-asics` listed
+  nothing, and the doctor reported an RGA that could build for no target. A bad path must fail
+  as a bad path.
+
+  **Auto-location was dead code until it was fixed, and the failure looked like absence.**
+  `rga.resolve` probes PATH before consulting `RGA_PATH`, `%ProgramFiles%\RGA` and
+  `%LOCALAPPDATA%\RGA`, and the runner *rejects* rather than returning `failed` when a program
+  cannot be started at all - ENOENT arrives on the child's `error` event. Unguarded, that
+  exception left `resolve` before any install root was read, so on every machine without `rga`
+  on PATH the roots were unreachable and an installed RGA was reported as not installed. The
+  probe is now guarded. This is the same lesson `compileview.resolveTools` records at its own
+  `onPath`, about the same runner - if a third tool ever grows a probe, guard it there too.
 
   Three AMD roads, and they are not variations on one:
 

@@ -97,6 +97,29 @@ function exe(name) {
 }
 
 /**
+ * The executable behind a path that may name either it or the directory holding it.
+ *
+ * Both spellings arrive in practice and neither is a mistake: `compile.rgaPath` reads like a
+ * path to rga, while `RGA_PATH` and the install roots read like the unpacked archive. Testing
+ * `existsSync` alone accepted a DIRECTORY as the executable and returned it, and the failure
+ * then surfaced three calls later as `version unknown` and an empty target list - a bad path
+ * reported as an RGA that can build for nothing.
+ *
+ * @returns {?string} the executable, or null if this names neither one nor a directory holding one
+ */
+function asExecutable(candidate) {
+  let stat;
+  try {
+    stat = fs.statSync(candidate);
+  } catch (e) {
+    return null;
+  }
+  if (!stat.isDirectory()) return candidate;
+  const inside = path.join(candidate, exe('rga'));
+  return fs.existsSync(inside) ? inside : null;
+}
+
+/**
  * Locate rga, in the same order every other tool here is located.
  *
  * Never bundled. RGA is MIT-licensed, so this is a size decision rather than a licence one -
@@ -107,18 +130,29 @@ async function resolve(configured, run) {
   const tried = [];
 
   if (configured) {
-    if (fs.existsSync(configured)) return { path: configured, from: 'the rgaPath setting' };
+    const exact = asExecutable(configured);
+    if (exact) return { path: exact, from: 'the rgaPath setting' };
     tried.push(`the rgaPath setting (${configured})`);
   }
 
+  // Guarded, because the runner REJECTS when the process cannot be started at all - ENOENT
+  // arrives on the child's `error` event rather than as a non-zero exit. Unguarded, a machine
+  // with no rga on PATH threw out of `resolve` here, before the install roots below were ever
+  // consulted: RGA_PATH and every install root were unreachable, and an RGA sitting in one of
+  // them was reported as not installed. `compileview.resolveTools` records the same lesson
+  // about the same runner.
   const bare = exe('rga');
-  const probe = await run(bare, ['--version'], { timeout: 15000 });
-  if (!probe.failed) return { path: bare, from: 'PATH' };
+  try {
+    const probe = await run(bare, ['--version'], { timeout: 15000 });
+    if (!probe.failed) return { path: bare, from: 'PATH' };
+  } catch (e) {
+    // Not startable is an answer, not an exception.
+  }
   tried.push('PATH');
 
   for (const root of installRoots()) {
-    const candidate = path.join(root, bare);
-    if (fs.existsSync(candidate)) return { path: candidate, from: root };
+    const candidate = asExecutable(root);
+    if (candidate) return { path: candidate, from: root };
     tried.push(root);
   }
 
@@ -126,10 +160,18 @@ async function resolve(configured, run) {
     `rga not found. Looked in: ${tried.join(', ')}. The Radeon GPU Analyzer is a free ` +
     'download from https://github.com/GPUOpen-Tools/radeon_gpu_analyzer/releases and is not ' +
     'bundled with this extension; install it, or set `nvIsaExtractor.compile.rgaPath` to an ' +
-    'existing rga executable.');
+    'existing rga executable or to the unpacked archive holding one.');
 }
 
-/** Where an RGA archive is usually unpacked or installed. */
+/**
+ * Where an RGA archive is usually unpacked or installed.
+ *
+ * `RGA_PATH` is read here as a directory and by the test suites as an override handed to
+ * `resolve` as `configured`. Both go through `asExecutable`, so it may be spelled either as the
+ * unpacked archive or as the executable inside it; the only difference between the two
+ * positions is precedence, and an explicit override outranking PATH is what a test harness
+ * wants for the same reason `VSCODE_EXE` does.
+ */
 function installRoots() {
   const roots = [];
   if (process.env.RGA_PATH) roots.push(process.env.RGA_PATH);
@@ -461,6 +503,7 @@ module.exports = {
   OUTPUT_STAGE,
   STAGE_OF_OUTPUT,
   ALWAYS_ZERO,
+  asExecutable,
   resolve,
   version,
   targets,
